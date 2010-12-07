@@ -203,6 +203,7 @@ namespace internal {
   V(string_symbol, "string")                                             \
   V(String_symbol, "String")                                             \
   V(Date_symbol, "Date")                                                 \
+  V(Error_symbol, "Error")                                               \
   V(this_symbol, "this")                                                 \
   V(to_string_symbol, "toString")                                        \
   V(char_at_symbol, "CharAt")                                            \
