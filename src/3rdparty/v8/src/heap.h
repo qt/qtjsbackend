@@ -214,6 +214,7 @@ namespace internal {
   V(string_string, "string")                                             \
   V(String_string, "String")                                             \
   V(Date_string, "Date")                                                 \
+  V(Error_string, "Error")                                               \
   V(this_string, "this")                                                 \
   V(to_string_string, "toString")                                        \
   V(char_at_string, "CharAt")                                            \
