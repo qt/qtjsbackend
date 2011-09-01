@@ -11121,6 +11121,7 @@ template class Dictionary<StringDictionaryShape, String*>;
 
 template class Dictionary<NumberDictionaryShape, uint32_t>;
 
+#ifndef __INTEL_COMPILER
 template MaybeObject* Dictionary<NumberDictionaryShape, uint32_t>::Allocate(
     int);
 
@@ -11195,7 +11196,7 @@ int Dictionary<StringDictionaryShape, String*>::NumberOfEnumElements();
 
 template
 int HashTable<NumberDictionaryShape, uint32_t>::FindEntry(uint32_t);
-
+#endif
 
 // Collates undefined and unexisting elements below limit from position
 // zero of the elements. The object stays in Dictionary mode.
