@@ -671,8 +671,9 @@ class ScriptOrigin {
 class V8EXPORT Script {
  public:
   enum CompileFlags {
-      Default = 0x00,
-      QmlMode = 0x01
+      Default    = 0x00,
+      QmlMode    = 0x01,
+      NativeMode = 0x02
   };
 
   /**
