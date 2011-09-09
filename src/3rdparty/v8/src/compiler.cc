@@ -499,7 +499,7 @@ Handle<SharedFunctionInfo> Compiler::Compile(Handle<String> source,
 
     // Create a script object describing the script to be compiled.
     Handle<Script> script = FACTORY->NewScript(source);
-    if (natives == NATIVES_CODE) {
+    if (natives == NATIVES_CODE || compile_flags & v8::Script::NativeMode) {
       script->set_type(Smi::FromInt(Script::TYPE_NATIVE));
     }
     if (!script_name.is_null()) {
