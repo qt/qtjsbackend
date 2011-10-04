@@ -1760,6 +1760,9 @@ class JSObject: public JSReceiver {
   inline Object* GetInternalField(int index);
   inline void SetInternalField(int index, Object* value);
 
+  inline void SetExternalResourceObject(Object *);
+  inline Object *GetExternalResourceObject();
+
   // The following lookup functions skip interceptors.
   void LocalLookupRealNamedProperty(String* name, LookupResult* result);
   void LookupRealNamedProperty(String* name, LookupResult* result);
@@ -4171,11 +4174,11 @@ class Map: public HeapObject {
 
   // Tells whether the instance has a call-as-function handler.
   inline void set_has_instance_call_handler() {
-    set_bit_field(bit_field() | (1 << kHasInstanceCallHandler));
+    set_bit_field3(bit_field3() | (1 << kHasInstanceCallHandler));
   }
 
   inline bool has_instance_call_handler() {
-    return ((1 << kHasInstanceCallHandler) & bit_field()) != 0;
+    return ((1 << kHasInstanceCallHandler) & bit_field3()) != 0;
   }
 
   inline void set_is_extensible(bool value);
@@ -4246,6 +4249,11 @@ class Map: public HeapObject {
   // Whether the named interceptor is a fallback interceptor or not
   inline void set_named_interceptor_is_fallback(bool value);
   inline bool named_interceptor_is_fallback();
+
+  // Tells whether the instance has the space for an external resource
+  // object
+  inline void set_has_external_resource(bool value);
+  inline bool has_external_resource();
 
   // [prototype]: implicit prototype object.
   DECL_ACCESSORS(prototype, Object)
@@ -4487,7 +4495,7 @@ class Map: public HeapObject {
   static const int kHasNamedInterceptor = 3;
   static const int kHasIndexedInterceptor = 4;
   static const int kIsUndetectable = 5;
-  static const int kHasInstanceCallHandler = 6;
+  static const int kHasExternalResource = 6;
   static const int kIsAccessCheckNeeded = 7;
 
   // Bit positions for bit field 2
@@ -4512,6 +4520,7 @@ class Map: public HeapObject {
   // Bit positions for bit field 3
   static const int kIsShared = 0;
   static const int kNamedInterceptorIsFallback = 1;
+  static const int kHasInstanceCallHandler = 2;
 
   // Layout of the default cache. It holds alternating name and code objects.
   static const int kCodeCacheEntrySize = 2;
@@ -7539,6 +7548,7 @@ class ObjectTemplateInfo: public TemplateInfo {
  public:
   DECL_ACCESSORS(constructor, Object)
   DECL_ACCESSORS(internal_field_count, Object)
+  DECL_ACCESSORS(has_external_resource, Object)
 
   static inline ObjectTemplateInfo* cast(Object* obj);
 
@@ -7555,7 +7565,8 @@ class ObjectTemplateInfo: public TemplateInfo {
   static const int kConstructorOffset = TemplateInfo::kHeaderSize;
   static const int kInternalFieldCountOffset =
       kConstructorOffset + kPointerSize;
-  static const int kSize = kInternalFieldCountOffset + kPointerSize;
+  static const int kHasExternalResourceOffset = kInternalFieldCountOffset + kPointerSize;
+  static const int kSize = kHasExternalResourceOffset + kPointerSize;
 };
 
 

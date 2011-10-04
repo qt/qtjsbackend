@@ -222,21 +222,36 @@ MaybeObject* Heap::NumberFromUint32(uint32_t value) {
 }
 
 
-void Heap::FinalizeExternalString(String* string) {
-  ASSERT(string->IsExternalString());
-  v8::String::ExternalStringResourceBase** resource_addr =
-      reinterpret_cast<v8::String::ExternalStringResourceBase**>(
-          reinterpret_cast<byte*>(string) +
-          ExternalString::kResourceOffset -
-          kHeapObjectTag);
+void Heap::FinalizeExternalString(HeapObject* string) {
+  ASSERT(string->IsExternalString() || string->map()->has_external_resource());
 
-  // Dispose of the C++ object if it has not already been disposed.
-  if (*resource_addr != NULL) {
-    (*resource_addr)->Dispose();
+  if (string->IsExternalString()) {
+    v8::String::ExternalStringResourceBase** resource_addr =
+        reinterpret_cast<v8::String::ExternalStringResourceBase**>(
+            reinterpret_cast<byte*>(string) +
+            ExternalString::kResourceOffset -
+            kHeapObjectTag);
+    
+    // Dispose of the C++ object if it has not already been disposed.
+    if (*resource_addr != NULL) {
+      (*resource_addr)->Dispose();
+    }
+    
+    // Clear the resource pointer in the string.
+    *resource_addr = NULL;
+  } else {
+    JSObject *object = JSObject::cast(string);
+    Object *value = object->GetExternalResourceObject();
+    v8::Object::ExternalResource *resource = 0;
+    if (value->IsSmi()) {
+        resource = reinterpret_cast<v8::Object::ExternalResource*>(Internals::GetExternalPointerFromSmi(value));
+    } else if (value->IsForeign()) {
+        resource = reinterpret_cast<v8::Object::ExternalResource*>(Foreign::cast(value)->foreign_address());
+    } 
+    if (resource) {
+        resource->Dispose();
+    }
   }
-
-  // Clear the resource pointer in the string.
-  *resource_addr = NULL;
 }
 
 
@@ -555,6 +570,16 @@ void ExternalStringTable::AddString(String* string) {
 }
 
 
+void ExternalStringTable::AddObject(HeapObject* object) {
+  ASSERT(object->map()->has_external_resource());
+  if (heap_->InNewSpace(object)) {
+    new_space_strings_.Add(object);
+  } else {
+    old_space_strings_.Add(object);
+  }
+}
+
+
 void ExternalStringTable::Iterate(ObjectVisitor* v) {
   if (!new_space_strings_.is_empty()) {
     Object** start = &new_space_strings_[0];
@@ -583,14 +608,14 @@ void ExternalStringTable::Verify() {
 }
 
 
-void ExternalStringTable::AddOldString(String* string) {
-  ASSERT(string->IsExternalString());
-  ASSERT(!heap_->InNewSpace(string));
-  old_space_strings_.Add(string);
+void ExternalStringTable::AddOldObject(HeapObject* object) {
+  ASSERT(object->IsExternalString() || object->map()->has_external_resource());
+  ASSERT(!heap_->InNewSpace(object));
+  old_space_strings_.Add(object);
 }
 
 
-void ExternalStringTable::ShrinkNewStrings(int position) {
+void ExternalStringTable::ShrinkNewObjects(int position) {
   new_space_strings_.Rewind(position);
   if (FLAG_verify_heap) {
     Verify();
