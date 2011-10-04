@@ -1099,18 +1099,18 @@ void Heap::Scavenge() {
 }
 
 
-String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
-                                                                Object** p) {
+HeapObject* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
+                                                                    Object** p) {
   MapWord first_word = HeapObject::cast(*p)->map_word();
 
   if (!first_word.IsForwardingAddress()) {
     // Unreachable external string can be finalized.
-    heap->FinalizeExternalString(String::cast(*p));
+    heap->FinalizeExternalString(HeapObject::cast(*p));
     return NULL;
   }
 
   // String is still reachable.
-  return String::cast(first_word.ToForwardingAddress());
+  return HeapObject::cast(first_word.ToForwardingAddress());
 }
 
 
@@ -1128,11 +1128,11 @@ void Heap::UpdateNewSpaceReferencesInExternalStringTable(
 
   for (Object** p = start; p < end; ++p) {
     ASSERT(InFromSpace(*p));
-    String* target = updater_func(this, p);
+    HeapObject* target = updater_func(this, p);
 
     if (target == NULL) continue;
 
-    ASSERT(target->IsExternalString());
+    ASSERT(target->IsExternalString() || target->map()->has_external_resource());
 
     if (InNewSpace(target)) {
       // String is still in new space.  Update the table entry.
@@ -1140,12 +1140,12 @@ void Heap::UpdateNewSpaceReferencesInExternalStringTable(
       ++last;
     } else {
       // String got promoted.  Move it to the old string list.
-      external_string_table_.AddOldString(target);
+      external_string_table_.AddOldObject(target);
     }
   }
 
   ASSERT(last <= end);
-  external_string_table_.ShrinkNewStrings(static_cast<int>(last - start));
+  external_string_table_.ShrinkNewObjects(static_cast<int>(last - start));
 }
 
 
@@ -6367,6 +6367,19 @@ void ExternalStringTable::CleanUp() {
 
 
 void ExternalStringTable::TearDown() {
+  for (int i = 0; i < new_space_strings_.length(); ++i) { 
+    if (new_space_strings_[i] == heap_->raw_unchecked_null_value()) continue;
+    HeapObject *object = HeapObject::cast(new_space_strings_[i]);
+    if (!object->IsExternalString())
+        heap_->FinalizeExternalString(object);
+  }
+  for (int i = 0; i < old_space_strings_.length(); ++i) { 
+    if (old_space_strings_[i] == heap_->raw_unchecked_null_value()) continue;
+    HeapObject *object = HeapObject::cast(old_space_strings_[i]);
+    if (!object->IsExternalString())
+        heap_->FinalizeExternalString(object);
+  }
+
   new_space_strings_.Free();
   old_space_strings_.Free();
 }
