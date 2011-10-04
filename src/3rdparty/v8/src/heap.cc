@@ -4009,6 +4009,7 @@ MaybeObject* Heap::AllocateInternalSymbol(unibrow::CharacterStream* buffer,
   String* answer = String::cast(result);
   answer->set_length(chars);
   answer->set_hash_field(hash_field);
+  SeqString::cast(answer)->set_symbol_id(0);
 
   ASSERT_EQ(size, answer->Size());
 
@@ -4051,6 +4052,7 @@ MaybeObject* Heap::AllocateRawAsciiString(int length, PretenureFlag pretenure) {
   HeapObject::cast(result)->set_map(ascii_string_map());
   String::cast(result)->set_length(length);
   String::cast(result)->set_hash_field(String::kEmptyHashField);
+  SeqString::cast(result)->set_symbol_id(0);
   ASSERT_EQ(size, HeapObject::cast(result)->Size());
   return result;
 }
@@ -4086,6 +4088,7 @@ MaybeObject* Heap::AllocateRawTwoByteString(int length,
   HeapObject::cast(result)->set_map(string_map());
   String::cast(result)->set_length(length);
   String::cast(result)->set_hash_field(String::kEmptyHashField);
+  SeqString::cast(result)->set_symbol_id(0);
   ASSERT_EQ(size, HeapObject::cast(result)->Size());
   return result;
 }
