@@ -3812,6 +3812,59 @@ bool String::MayContainNonAscii() const {
 }
 
 
+uint32_t String::Hash() const {
+  i::Handle<i::String> str = Utils::OpenHandle(this);
+  if (IsDeadCheck(str->GetIsolate(), "v8::String::Hash()")) return 0;
+  return str->Hash();
+}
+
+
+String::CompleteHashData String::CompleteHash() const {
+  i::Handle<i::String> str = Utils::OpenHandle(this);
+  if (IsDeadCheck(str->GetIsolate(), "v8::String::CompleteHash()")) {
+    return CompleteHashData();
+  }
+  CompleteHashData result;
+  result.length = str->length();
+  result.hash = str->Hash();
+  if (str->IsSeqString())
+      result.symbol_id = i::SeqString::cast(*str)->symbol_id();
+  return result;
+}
+
+
+uint32_t String::ComputeHash(uint16_t *string, int length) {
+  return i::HashSequentialString<i::uc16>(string, length, i::kZeroHashSeed) >>
+      i::String::kHashShift;
+}
+
+
+uint32_t String::ComputeHash(char *string, int length) {
+  return i::HashSequentialString<char>(string, length, i::kZeroHashSeed) >>
+      i::String::kHashShift;
+}
+
+
+uint16_t String::GetCharacter(int index) {
+  i::Handle<i::String> str = Utils::OpenHandle(this);
+  return str->Get(index);
+}
+
+
+bool String::Equals(uint16_t *string, int length) {
+  i::Handle<i::String> str = Utils::OpenHandle(this);
+  if (IsDeadCheck(str->GetIsolate(), "v8::String::Equals()")) return 0;
+  return str->SlowEqualsExternal(string, length);
+}
+
+
+bool String::Equals(char *string, int length) {
+  i::Handle<i::String> str = Utils::OpenHandle(this);
+  if (IsDeadCheck(str->GetIsolate(), "v8::String::Equals()")) return 0;
+  return str->SlowEqualsExternal(string, length);
+}
+
+
 int String::WriteUtf8(char* buffer,
                       int capacity,
                       int* nchars_ref,
