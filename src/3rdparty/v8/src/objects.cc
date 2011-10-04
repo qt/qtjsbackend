@@ -11802,9 +11802,27 @@ class OneByteStringKey : public SequentialStringKey<uint8_t> {
 
   MaybeObject* AsObject() {
     if (hash_field_ == 0) Hash();
-    return HEAP->AllocateOneByteInternalizedString(string_, hash_field_);
+    MaybeObject* result = HEAP->AllocateOneByteInternalizedString(string_, hash_field_);
+    if (!result->IsFailure() && result->ToObjectUnchecked()->IsSeqString()) {
+        while (true) {
+            Atomic32 my_symbol_id = next_symbol_id;
+            if (my_symbol_id > Smi::kMaxValue)
+                break;
+            if (my_symbol_id == NoBarrier_CompareAndSwap(&next_symbol_id,
+                                                         my_symbol_id,
+                                                         my_symbol_id + 1)) {
+                SeqString::cast(result->ToObjectUnchecked())->
+                    set_symbol_id(my_symbol_id);
+                break;
+            }
+        }
+    }
+    return result;
   }
+
+  static Atomic32 next_symbol_id;
 };
+Atomic32 OneByteStringKey::next_symbol_id = 1;
 
 
 class SubStringOneByteStringKey : public HashTableKey {

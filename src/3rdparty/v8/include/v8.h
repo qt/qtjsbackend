@@ -1127,6 +1127,41 @@ class V8EXPORT String : public Primitive {
   bool IsOneByte() const;
 
   /**
+   * Returns the hash of this string.
+   */
+  uint32_t Hash() const;
+
+  struct CompleteHashData {
+    CompleteHashData() : length(0), hash(0), symbol_id(0) {}
+    int length;
+    uint32_t hash;
+    uint32_t symbol_id;
+  };
+
+  /**
+   * Returns the "complete" hash of the string.  This is
+   * all the information about the string needed to implement
+   * a very efficient hash keyed on the string.
+   *
+   * The members of CompleteHashData are:
+   *    length: The length of the string.  Equivalent to Length()
+   *    hash: The hash of the string.  Equivalent to Hash()
+   *    symbol_id: If the string is a sequential symbol, the symbol
+   *        id, otherwise 0.  If the symbol ids of two strings are
+   *        the same (and non-zero) the two strings are identical.
+   *        If the symbol ids are different the strings may still be
+   *        identical, but an Equals() check must be performed.
+   */
+  CompleteHashData CompleteHash() const;
+
+  /**
+   * Compute a hash value for the passed UTF16 string
+   * data.
+   */
+  static uint32_t ComputeHash(uint16_t *string, int length);
+  static uint32_t ComputeHash(char *string, int length);
+
+  /**
    * Write the contents of the string to an external buffer.
    * If no arguments are given, expects the buffer to be large
    * enough to hold the entire string and NULL terminator. Copies

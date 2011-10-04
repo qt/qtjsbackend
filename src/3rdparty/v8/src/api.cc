@@ -4047,6 +4047,39 @@ class Utf8WriterVisitor {
 };
 
 
+uint32_t String::Hash() const {
+  i::Handle<i::String> str = Utils::OpenHandle(this);
+  if (IsDeadCheck(str->GetIsolate(), "v8::String::Hash()")) return 0;
+  return str->Hash();
+}
+
+
+String::CompleteHashData String::CompleteHash() const {
+  i::Handle<i::String> str = Utils::OpenHandle(this);
+  if (IsDeadCheck(str->GetIsolate(), "v8::String::CompleteHash()")) {
+    return CompleteHashData();
+  }
+  CompleteHashData result;
+  result.length = str->length();
+  result.hash = str->Hash();
+  if (str->IsSeqOneByteString() && str->IsSymbol())
+      result.symbol_id = i::SeqString::cast(*str)->symbol_id();
+  return result;
+}
+
+
+uint32_t String::ComputeHash(uint16_t *string, int length) {
+  return i::StringHasher::HashSequentialString<i::uc16>(string, length, i::kZeroHashSeed) >>
+      i::String::kHashShift;
+}
+
+
+uint32_t String::ComputeHash(char *string, int length) {
+  return i::StringHasher::HashSequentialString<char>(string, length, i::kZeroHashSeed) >>
+      i::String::kHashShift;
+}
+
+
 int String::WriteUtf8(char* buffer,
                       int capacity,
                       int* nchars_ref,

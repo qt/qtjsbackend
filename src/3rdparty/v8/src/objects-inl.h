@@ -2484,6 +2484,7 @@ SMI_ACCESSORS(FixedArrayBase, length, kLengthOffset)
 SMI_ACCESSORS(FreeSpace, size, kSizeOffset)
 
 SMI_ACCESSORS(String, length, kLengthOffset)
+SMI_ACCESSORS(SeqString, symbol_id, kSymbolIdOffset)
 
 
 uint32_t Name::hash_field() {

@@ -7650,8 +7650,13 @@ class SeqString: public String {
   // Casting.
   static inline SeqString* cast(Object* obj);
 
+  // Get and set the symbol id of the string
+  inline int symbol_id();
+  inline void set_symbol_id(int value);
+
   // Layout description.
-  static const int kHeaderSize = String::kSize;
+  static const int kSymbolIdOffset = String::kSize;
+  static const int kHeaderSize = kSymbolIdOffset + kPointerSize;
 
   // Truncate the string in-place if possible and return the result.
   // In case of new_length == 0, the empty string is returned without
