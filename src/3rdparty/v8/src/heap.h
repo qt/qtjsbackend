@@ -253,8 +253,8 @@ class Isolate;
 class WeakObjectRetainer;
 
 
-typedef String* (*ExternalStringTableUpdaterCallback)(Heap* heap,
-                                                      Object** pointer);
+typedef HeapObject* (*ExternalStringTableUpdaterCallback)(Heap* heap,
+                                                          Object** pointer);
 
 class StoreBufferRebuilder {
  public:
@@ -390,10 +390,14 @@ typedef void (*ScavengingCallback)(Map* map,
 // External strings table is a place where all external strings are
 // registered.  We need to keep track of such strings to properly
 // finalize them.
+// The ExternalStringTable can contain both strings and objects with
+// external resources.  It was not renamed to make the patch simpler.
 class ExternalStringTable {
  public:
   // Registers an external string.
   inline void AddString(String* string);
+  // Registers an external object.
+  inline void AddObject(HeapObject* string);
 
   inline void Iterate(ObjectVisitor* v);
 
@@ -411,10 +415,10 @@ class ExternalStringTable {
 
   inline void Verify();
 
-  inline void AddOldString(String* string);
+  inline void AddOldObject(HeapObject* string);
 
   // Notifies the table that only a prefix of the new list is valid.
-  inline void ShrinkNewStrings(int position);
+  inline void ShrinkNewObjects(int position);
 
   // To speed up scavenge collections new space string are kept
   // separate from old space strings.
@@ -960,7 +964,7 @@ class Heap {
 
   // Finalizes an external string by deleting the associated external
   // data and clearing the resource pointer.
-  inline void FinalizeExternalString(String* string);
+  inline void FinalizeExternalString(HeapObject* string);
 
   // Allocates an uninitialized object.  The memory is non-executable if the
   // hardware and OS allow.
@@ -1847,7 +1851,7 @@ class Heap {
   // Performs a minor collection in new generation.
   void Scavenge();
 
-  static String* UpdateNewSpaceReferenceInExternalStringTableEntry(
+  static HeapObject* UpdateNewSpaceReferenceInExternalStringTableEntry(
       Heap* heap,
       Object** pointer);
 
