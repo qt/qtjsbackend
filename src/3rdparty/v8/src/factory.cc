@@ -1209,15 +1209,21 @@ Handle<JSFunction> Factory::CreateApiFunction(
   Handle<Code> construct_stub = isolate()->builtins()->JSConstructStubApi();
 
   int internal_field_count = 0;
+  bool has_external_resource = false;
+
   if (!obj->instance_template()->IsUndefined()) {
     Handle<ObjectTemplateInfo> instance_template =
         Handle<ObjectTemplateInfo>(
             ObjectTemplateInfo::cast(obj->instance_template()));
     internal_field_count =
         Smi::cast(instance_template->internal_field_count())->value();
+    has_external_resource =
+        !instance_template->has_external_resource()->IsUndefined();
   }
 
   int instance_size = kPointerSize * internal_field_count;
+  if (has_external_resource) instance_size += kPointerSize;
+
   InstanceType type = INVALID_TYPE;
   switch (instance_type) {
     case JavaScriptObject:
@@ -1251,6 +1257,11 @@ Handle<JSFunction> Factory::CreateApiFunction(
   }
 
   Handle<Map> map = Handle<Map>(result->initial_map());
+
+  // Mark as having external data object if needed
+  if (has_external_resource) {
+    map->set_has_external_resource(true);
+  }
 
   // Mark as undetectable if needed.
   if (obj->undetectable()) {

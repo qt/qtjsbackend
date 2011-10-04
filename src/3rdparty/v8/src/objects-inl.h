@@ -1525,7 +1525,7 @@ int JSObject::GetInternalFieldCount() {
   // Make sure to adjust for the number of in-object properties. These
   // properties do contribute to the size, but are not internal fields.
   return ((Size() - GetHeaderSize()) >> kPointerSizeLog2) -
-         map()->inobject_properties();
+         map()->inobject_properties() - (map()->has_external_resource()?1:0);
 }
 
 
@@ -1562,6 +1562,23 @@ void JSObject::SetInternalField(int index, Smi* value) {
   // to adjust the index here.
   int offset = GetHeaderSize() + (kPointerSize * index);
   WRITE_FIELD(this, offset, value);
+}
+
+
+void JSObject::SetExternalResourceObject(Object *value) {
+  ASSERT(map()->has_external_resource());
+  int offset = GetHeaderSize() + kPointerSize * GetInternalFieldCount();
+  WRITE_FIELD(this, offset, value);
+  WRITE_BARRIER(GetHeap(), this, offset, value);
+}
+
+
+Object *JSObject::GetExternalResourceObject() {
+  if (map()->has_external_resource()) {
+    return READ_FIELD(this, GetHeaderSize() + kPointerSize * GetInternalFieldCount());
+  } else {
+    return GetHeap()->undefined_value();
+  }
 }
 
 
@@ -3126,6 +3143,20 @@ bool Map::is_shared() {
   return IsShared::decode(bit_field3());
 }
 
+void Map::set_has_external_resource(bool value) {
+  if (value) {
+    set_bit_field(bit_field() | (1 << kHasExternalResource));
+  } else {
+    set_bit_field(bit_field() & ~(1 << kHasExternalResource));
+  }
+}
+
+bool Map::has_external_resource()
+{
+    return ((1 << kHasExternalResource) & bit_field()) != 0;
+}
+
+
 void Map::set_named_interceptor_is_fallback(bool value) {
   set_bit_field3(NamedInterceptorIsFallback::update(bit_field3(), value));
 }
@@ -3896,6 +3927,8 @@ ACCESSORS_TO_SMI(FunctionTemplateInfo, flag, kFlagOffset)
 ACCESSORS(ObjectTemplateInfo, constructor, Object, kConstructorOffset)
 ACCESSORS(ObjectTemplateInfo, internal_field_count, Object,
           kInternalFieldCountOffset)
+ACCESSORS(ObjectTemplateInfo, has_external_resource, Object,
+          kHasExternalResourceOffset)
 
 ACCESSORS(SignatureInfo, receiver, Object, kReceiverOffset)
 ACCESSORS(SignatureInfo, args, Object, kArgsOffset)
