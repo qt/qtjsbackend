@@ -4698,6 +4698,7 @@ MaybeObject* Heap::AllocateInternalSymbol(unibrow::CharacterStream* buffer,
   String* answer = String::cast(result);
   answer->set_length(chars);
   answer->set_hash_field(hash_field);
+  SeqString::cast(answer)->set_symbol_id(0);
 
   ASSERT_EQ(size, answer->Size());
 

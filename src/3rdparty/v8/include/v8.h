@@ -1062,6 +1062,51 @@ class String : public Primitive {
   V8EXPORT bool MayContainNonAscii() const;
 
   /**
+   * Returns the hash of this string.
+   */
+  V8EXPORT uint32_t Hash() const;
+
+  struct CompleteHashData {
+    CompleteHashData() : length(0), hash(0), symbol_id(0) {}
+    int length;
+    uint32_t hash;
+    uint32_t symbol_id;
+  };
+
+  /**
+   * Returns the "complete" hash of the string.  This is
+   * all the information about the string needed to implement
+   * a very efficient hash keyed on the string.
+   *
+   * The members of CompleteHashData are:
+   *    length: The length of the string.  Equivalent to Length()
+   *    hash: The hash of the string.  Equivalent to Hash()
+   *    symbol_id: If the string is a sequential symbol, the symbol
+   *        id, otherwise 0.  If the symbol ids of two strings are
+   *        the same (and non-zero) the two strings are identical.
+   *        If the symbol ids are different the strings may still be
+   *        identical, but an Equals() check must be performed.
+   */
+  V8EXPORT CompleteHashData CompleteHash() const;
+
+  /**
+   * Compute a hash value for the passed UTF16 string
+   * data.
+   */
+  V8EXPORT static uint32_t ComputeHash(uint16_t *string, int length);
+  V8EXPORT static uint32_t ComputeHash(char *string, int length);
+
+  /**
+   * Returns true if this string is equal to the external
+   * string data provided.
+   */
+  V8EXPORT bool Equals(uint16_t *string, int length);
+  V8EXPORT bool Equals(char *string, int length);
+  inline bool Equals(Handle<Value> that) const {
+    return v8::Value::Equals(that);
+  }
+
+  /**
    * Write the contents of the string to an external buffer.
    * If no arguments are given, expects the buffer to be large
    * enough to hold the entire string and NULL terminator. Copies
@@ -1092,6 +1137,8 @@ class String : public Primitive {
     NO_NULL_TERMINATION = 2,
     PRESERVE_ASCII_NULL = 4
   };
+
+  V8EXPORT uint16_t GetCharacter(int index);
 
   // 16-bit character codes.
   V8EXPORT int Write(uint16_t* buffer,

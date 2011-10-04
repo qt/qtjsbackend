@@ -7318,6 +7318,9 @@ class String: public HeapObject {
   bool IsAsciiEqualTo(Vector<const char> str);
   bool IsTwoByteEqualTo(Vector<const uc16> str);
 
+  bool SlowEqualsExternal(uc16 *string, int length);
+  bool SlowEqualsExternal(char *string, int length);
+
   // Return a UTF8 representation of the string.  The string is null
   // terminated but may optionally contain nulls.  Length is returned
   // in length_output if length_output is not a null pointer  The string
@@ -7587,8 +7590,13 @@ class SeqString: public String {
   // Casting.
   static inline SeqString* cast(Object* obj);
 
+  // Get and set the symbol id of the string
+  inline int symbol_id();
+  inline void set_symbol_id(int value);
+
   // Layout description.
-  static const int kHeaderSize = String::kSize;
+  static const int kSymbolIdOffset = String::kSize;
+  static const int kHeaderSize = kSymbolIdOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(SeqString);
