@@ -1764,8 +1764,10 @@ class StringTableCleaner : public ObjectVisitor {
 
         // Since no objects have yet been moved we can safely access the map of
         // the object.
-        if (o->IsExternalString()) {
-          heap_->FinalizeExternalString(String::cast(*p));
+        if (o->IsExternalString() ||
+            (o->IsHeapObject() &&
+             HeapObject::cast(o)->map()->has_external_resource())) {
+          heap_->FinalizeExternalString(HeapObject::cast(*p));
         }
         // Set the entry to the_hole_value (as deleted).
         *p = heap_->the_hole_value();
@@ -2660,15 +2662,15 @@ static void UpdatePointer(HeapObject** p, HeapObject* object) {
 }
 
 
-static String* UpdateReferenceInExternalStringTableEntry(Heap* heap,
-                                                         Object** p) {
+static HeapObject* UpdateReferenceInExternalStringTableEntry(Heap* heap,
+                                                             Object** p) {
   MapWord map_word = HeapObject::cast(*p)->map_word();
 
   if (map_word.IsForwardingAddress()) {
-    return String::cast(map_word.ToForwardingAddress());
+    return HeapObject::cast(map_word.ToForwardingAddress());
   }
 
-  return String::cast(*p);
+  return HeapObject::cast(*p);
 }
 
 

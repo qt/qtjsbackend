@@ -1535,6 +1535,31 @@ void ObjectTemplate::SetInternalFieldCount(int value) {
 }
 
 
+bool ObjectTemplate::HasExternalResource() {
+  if (IsDeadCheck(Utils::OpenHandle(this)->GetIsolate(),
+                  "v8::ObjectTemplate::HasExternalResource()")) {
+    return 0;
+  }
+  return !Utils::OpenHandle(this)->has_external_resource()->IsUndefined();
+}
+
+
+void ObjectTemplate::SetHasExternalResource(bool value) {
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  if (IsDeadCheck(isolate, "v8::ObjectTemplate::SetHasExternalResource()")) {
+    return;
+  }
+  ENTER_V8(isolate);
+  if (value) {
+    EnsureConstructor(this);
+    Utils::OpenHandle(this)->set_has_external_resource(i::Smi::FromInt(1));
+  } else {
+    Utils::OpenHandle(this)->set_has_external_resource(
+        Utils::OpenHandle(this)->GetHeap()->undefined_value());
+  }
+}
+
+
 // --- S c r i p t D a t a ---
 
 
@@ -4425,6 +4450,35 @@ static void* ExternalValue(i::Object* obj) {
   if (obj->IsUndefined()) return NULL;
   i::Object* foreign = i::JSObject::cast(obj)->GetInternalField(0);
   return i::Foreign::cast(foreign)->foreign_address();
+}
+
+
+void v8::Object::SetExternalResource(v8::Object::ExternalResource* resource) {
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  ENTER_V8(isolate);
+  i::Handle<i::JSObject> obj = Utils::OpenHandle(this);
+  if (resource != NULL) {
+    obj->SetExternalResourceObject(
+        *isolate->factory()->NewForeign(
+          reinterpret_cast<i::Address>(resource)));
+  } else {
+    obj->SetExternalResourceObject(0);
+  }
+  if (!obj->IsSymbol()) {
+    isolate->heap()->external_string_table()->AddObject(*obj);
+  }
+}
+
+
+v8::Object::ExternalResource* v8::Object::GetExternalResource() {
+  i::Handle<i::JSObject> obj = Utils::OpenHandle(this);
+  i::Object* value = obj->GetExternalResourceObject();
+  if (value->IsForeign()) {
+    return reinterpret_cast<v8::Object::ExternalResource*>(
+        i::Foreign::cast(value)->foreign_address());
+  } else {
+    return NULL;
+  }
 }
 
 
