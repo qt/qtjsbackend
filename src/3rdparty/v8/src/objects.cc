@@ -6704,6 +6704,71 @@ static inline bool CompareStringContentsPartial(Isolate* isolate,
 }
 
 
+bool String::SlowEqualsExternal(uc16 *string, int length) {
+  int len = this->length();
+  if (len != length) return false;
+  if (len == 0) return true;
+
+  // We know the strings are both non-empty. Compare the first chars
+  // before we try to flatten the strings.
+  if (this->Get(0) != string[0]) return false;
+
+  String* lhs = this->TryFlattenGetString();
+
+  if (lhs->IsFlat()) {
+    String::FlatContent lhs_content = lhs->GetFlatContent();
+    if (lhs->IsAsciiRepresentation()) {
+      Vector<const char> vec1 = lhs_content.ToAsciiVector();
+      VectorIterator<char> buf1(vec1);
+      VectorIterator<uc16> ib(string, length);
+      return CompareStringContents(&buf1, &ib);
+    } else {
+      Vector<const uc16> vec1 = lhs_content.ToUC16Vector();
+      Vector<const uc16> vec2(string, length);
+      return CompareRawStringContents(vec1, vec2);
+    }
+  } else {
+    Isolate* isolate = GetIsolate();
+    isolate->objects_string_compare_buffer_a()->Reset(0, lhs);
+    VectorIterator<uc16> ib(string, length);
+    return CompareStringContents(isolate->objects_string_compare_buffer_a(), &ib);
+  }
+}
+
+
+bool String::SlowEqualsExternal(char *string, int length)
+{
+  int len = this->length();
+  if (len != length) return false;
+  if (len == 0) return true;
+
+  // We know the strings are both non-empty. Compare the first chars
+  // before we try to flatten the strings.
+  if (this->Get(0) != string[0]) return false;
+
+  String* lhs = this->TryFlattenGetString();
+
+  if (StringShape(lhs).IsSequentialAscii()) {
+      const char* str1 = SeqAsciiString::cast(lhs)->GetChars();
+      return CompareRawStringContents(Vector<const char>(str1, len),
+                                      Vector<const char>(string, len));
+  }
+
+  if (lhs->IsFlat()) {
+    String::FlatContent lhs_content = lhs->GetFlatContent();
+    Vector<const uc16> vec1 = lhs_content.ToUC16Vector();
+    VectorIterator<const uc16> buf1(vec1);
+    VectorIterator<char> buf2(string, length);
+    return CompareStringContents(&buf1, &buf2);
+  } else {
+    Isolate* isolate = GetIsolate();
+    isolate->objects_string_compare_buffer_a()->Reset(0, lhs);
+    VectorIterator<char> ib(string, length);
+    return CompareStringContents(isolate->objects_string_compare_buffer_a(), &ib);
+  }
+}
+
+
 bool String::SlowEquals(String* other) {
   // Fast check: negative check with lengths.
   int len = length();
@@ -10708,9 +10773,24 @@ class AsciiSymbolKey : public SequentialSymbolKey<char> {
 
   MaybeObject* AsObject() {
     if (hash_field_ == 0) Hash();
-    return HEAP->AllocateAsciiSymbol(string_, hash_field_);
+    MaybeObject *result = HEAP->AllocateAsciiSymbol(string_, hash_field_);
+    if (!result->IsFailure() && result->ToObjectUnchecked()->IsSeqString()) {
+        while (true) {
+            Atomic32 my_symbol_id = next_symbol_id;
+            if (my_symbol_id > Smi::kMaxValue)
+                break;
+            if (my_symbol_id == NoBarrier_CompareAndSwap(&next_symbol_id, my_symbol_id, my_symbol_id + 1)) {
+                SeqString::cast(result->ToObjectUnchecked())->set_symbol_id(my_symbol_id);
+                break;
+            }
+        }
+    }
+    return result;
   }
+
+  static Atomic32 next_symbol_id;
 };
+Atomic32 AsciiSymbolKey::next_symbol_id = 1;
 
 
 class SubStringAsciiSymbolKey : public HashTableKey {

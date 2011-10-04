@@ -105,6 +105,7 @@ MaybeObject* Heap::AllocateAsciiSymbol(Vector<const char> str,
   String* answer = String::cast(result);
   answer->set_length(str.length());
   answer->set_hash_field(hash_field);
+  SeqString::cast(answer)->set_symbol_id(0);
 
   ASSERT_EQ(size, answer->Size());
 
@@ -138,6 +139,7 @@ MaybeObject* Heap::AllocateTwoByteSymbol(Vector<const uc16> str,
   String* answer = String::cast(result);
   answer->set_length(str.length());
   answer->set_hash_field(hash_field);
+  SeqString::cast(answer)->set_symbol_id(0);
 
   ASSERT_EQ(size, answer->Size());
 
