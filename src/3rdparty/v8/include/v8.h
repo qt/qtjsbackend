@@ -1607,6 +1607,25 @@ class Object : public Value {
   /** Sets a native pointer in an internal field. */
   V8EXPORT void SetPointerInInternalField(int index, void* value);
 
+  class V8EXPORT ExternalResource { // NOLINT
+   public:
+    ExternalResource() {}
+    virtual ~ExternalResource() {}
+
+   protected:
+    virtual void Dispose() { delete this; }
+
+   private:
+    // Disallow copying and assigning.
+    ExternalResource(const ExternalResource&);
+    void operator=(const ExternalResource&);
+
+    friend class v8::internal::Heap;
+  };
+
+  V8EXPORT void SetExternalResource(ExternalResource *);
+  V8EXPORT ExternalResource *GetExternalResource();
+
   // Testers for local properties.
   V8EXPORT bool HasOwnProperty(Handle<String> key);
   V8EXPORT bool HasRealNamedProperty(Handle<String> key);
@@ -2490,6 +2509,12 @@ class V8EXPORT ObjectTemplate : public Template {
    * this template.
    */
   void SetInternalFieldCount(int value);
+
+  /**
+   * Sets whether the object can store an "external resource" object.
+   */
+  bool HasExternalResource();
+  void SetHasExternalResource(bool value);
 
  private:
   ObjectTemplate();

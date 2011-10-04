@@ -1465,6 +1465,34 @@ void ObjectTemplate::SetInternalFieldCount(int value) {
 }
 
 
+bool ObjectTemplate::HasExternalResource()
+{
+  if (IsDeadCheck(Utils::OpenHandle(this)->GetIsolate(),
+                  "v8::ObjectTemplate::HasExternalResource()")) {
+    return 0;
+  }
+  return !Utils::OpenHandle(this)->has_external_resource()->IsUndefined();
+}
+
+
+void ObjectTemplate::SetHasExternalResource(bool value)
+{
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  if (IsDeadCheck(isolate, "v8::ObjectTemplate::SetHasExternalResource()")) {
+    return;
+  }
+  ENTER_V8(isolate);
+  if (value) {
+    EnsureConstructor(this);
+  }
+  if (value) {
+      Utils::OpenHandle(this)->set_has_external_resource(i::Smi::FromInt(1));
+  } else {
+      Utils::OpenHandle(this)->set_has_external_resource(Utils::OpenHandle(this)->GetHeap()->undefined_value());
+  }
+}
+
+
 // --- S c r i p t D a t a ---
 
 
@@ -4255,6 +4283,34 @@ void v8::Object::SetPointerInInternalField(int index, void* value) {
         Utils::OpenHandle(this)->SetInternalField(index, *foreign);
   }
   ASSERT_EQ(value, GetPointerFromInternalField(index));
+}
+
+
+void v8::Object::SetExternalResource(v8::Object::ExternalResource *resource) {
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  ENTER_V8(isolate);
+  i::Handle<i::JSObject> obj = Utils::OpenHandle(this);
+  if (CanBeEncodedAsSmi(resource)) {
+    obj->SetExternalResourceObject(EncodeAsSmi(resource));
+  } else {
+    obj->SetExternalResourceObject(*isolate->factory()->NewForeign(static_cast<i::Address>((void *)resource)));
+  }
+  if (!obj->IsSymbol()) {
+    isolate->heap()->external_string_table()->AddObject(*obj);
+  }
+}
+
+
+v8::Object::ExternalResource *v8::Object::GetExternalResource() {
+  i::Handle<i::JSObject> obj = Utils::OpenHandle(this);
+  i::Object* value = obj->GetExternalResourceObject();
+  if (value->IsSmi()) {
+    return reinterpret_cast<v8::Object::ExternalResource*>(i::Internals::GetExternalPointerFromSmi(value));
+  } else if (value->IsForeign()) {
+    return reinterpret_cast<v8::Object::ExternalResource*>(i::Foreign::cast(value)->foreign_address());
+  } else {
+    return NULL;
+  }
 }
 
 
