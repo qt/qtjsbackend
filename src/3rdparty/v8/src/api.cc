@@ -4370,6 +4370,18 @@ v8::Local<v8::Object> Context::GetCallingQmlGlobal() {
   }
 }
 
+v8::Local<v8::Value> Context::GetCallingScriptData()
+{
+  i::Isolate* isolate = i::Isolate::Current();
+  if (IsDeadCheck(isolate, "v8::Context::GetCallingScriptData()")) {
+    return Local<Object>();
+  }
+
+  i::JavaScriptFrameIterator it;
+  if (it.done()) return Local<Object>();
+  i::Handle<i::Script> script(i::Script::cast(i::JSFunction::cast(it.frame()->function())->shared()->script()));
+  return Utils::ToLocal(i::Handle<i::Object>(script->data()));
+}
 
 v8::Local<v8::Object> Context::Global() {
   if (IsDeadCheck(i::Isolate::Current(), "v8::Context::Global()")) {
