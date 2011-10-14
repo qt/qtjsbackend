@@ -3897,6 +3897,7 @@ class V8EXPORT Context {
    */
   static Local<Context> GetCalling();
   static Local<Object> GetCallingQmlGlobal();
+  static Local<Value> GetCallingScriptData();
 
   /**
    * Sets the security token for the context.  To access an object in
