@@ -158,6 +158,7 @@ namespace internal {
   /* Comparisons */ \
   F(NumberEquals, 2, 1) \
   F(StringEquals, 2, 1) \
+  F(UserObjectEquals, 2, 1) \
   \
   F(NumberCompare, 3, 1) \
   F(SmiLexicographicCompare, 2, 1) \
