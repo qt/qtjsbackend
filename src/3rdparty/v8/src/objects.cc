@@ -1980,9 +1980,10 @@ MaybeObject* JSObject::SetPropertyWithInterceptor(
 MaybeObject* JSReceiver::SetProperty(String* name,
                                      Object* value,
                                      PropertyAttributes attributes,
-                                     StrictModeFlag strict_mode) {
+                                     StrictModeFlag strict_mode,
+                                     bool skip_fallback_interceptor) {
   LookupResult result(GetIsolate());
-  LocalLookup(name, &result);
+  LocalLookup(name, &result, skip_fallback_interceptor);
   return SetProperty(&result, name, value, attributes, strict_mode);
 }
 
@@ -4201,7 +4202,8 @@ AccessorDescriptor* Map::FindAccessor(String* name) {
 }
 
 
-void JSReceiver::LocalLookup(String* name, LookupResult* result) {
+void JSReceiver::LocalLookup(String* name, LookupResult* result, 
+                             bool skip_fallback_interceptor) {
   ASSERT(name->IsString());
 
   Heap* heap = GetHeap();
@@ -4233,23 +4235,31 @@ void JSReceiver::LocalLookup(String* name, LookupResult* result) {
   }
 
   // Check for lookup interceptor except when bootstrapping.
-  if (js_object->HasNamedInterceptor() &&
-      !heap->isolate()->bootstrapper()->IsActive()) {
+  bool wouldIntercept = js_object->HasNamedInterceptor() && 
+                        !heap->isolate()->bootstrapper()->IsActive();
+  if (wouldIntercept && !map()->named_interceptor_is_fallback()) {
     result->InterceptorResult(js_object);
     return;
   }
 
   js_object->LocalLookupRealNamedProperty(name, result);
+
+  if (wouldIntercept && !skip_fallback_interceptor && !result->IsProperty() &&
+      map()->named_interceptor_is_fallback()) {
+    result->InterceptorResult(js_object);
+    return;
+  }
 }
 
 
-void JSReceiver::Lookup(String* name, LookupResult* result) {
+void JSReceiver::Lookup(String* name, LookupResult* result, 
+                        bool skip_fallback_interceptor) {
   // Ecma-262 3rd 8.6.2.4
   Heap* heap = GetHeap();
   for (Object* current = this;
        current != heap->null_value();
        current = JSObject::cast(current)->GetPrototype()) {
-    JSReceiver::cast(current)->LocalLookup(name, result);
+    JSReceiver::cast(current)->LocalLookup(name, result, skip_fallback_interceptor);
     if (result->IsProperty()) return;
   }
   result->NotFound();

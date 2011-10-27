@@ -190,7 +190,8 @@ Handle<Object> SetProperty(Handle<JSReceiver> object,
                            Handle<String> key,
                            Handle<Object> value,
                            PropertyAttributes attributes,
-                           StrictModeFlag strict_mode);
+                           StrictModeFlag strict_mode,
+                           bool skip_fallback_interceptor = false);
 
 Handle<Object> SetProperty(Handle<Object> object,
                            Handle<Object> key,
