@@ -1467,6 +1467,11 @@ inline Operand GlobalObjectOperand() {
 }
 
 
+static inline Operand QmlGlobalObjectOperand() {
+  return ContextOperand(rsi, Context::QML_GLOBAL_OBJECT_INDEX);
+}
+
+
 // Provides access to exit frame stack space (not GCed).
 inline Operand StackSpaceOperand(int index) {
 #ifdef _WIN64

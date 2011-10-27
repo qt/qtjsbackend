@@ -157,6 +157,9 @@ class Variable: public ZoneObject {
 
   static int CompareIndex(Variable* const* v, Variable* const* w);
 
+  bool is_qml_global() const { return is_qml_global_; }
+  void set_is_qml_global(bool is_qml_global) { is_qml_global_ = is_qml_global; }
+
  private:
   Scope* scope_;
   Handle<String> name_;
@@ -182,6 +185,9 @@ class Variable: public ZoneObject {
 
   // Module type info.
   Interface* interface_;
+
+  // QML info
+  bool is_qml_global_;
 };
 
 

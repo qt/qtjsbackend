@@ -237,6 +237,11 @@ class Scope: public ZoneObject {
     language_mode_ = language_mode;
   }
 
+  // Enable qml mode for this scope
+  void EnableQmlModeFlag() {
+    qml_mode_flag_ = kQmlMode;
+  }
+
   // Position in the source where this scope begins and ends.
   //
   // * For the scope of a with statement
@@ -292,6 +297,7 @@ class Scope: public ZoneObject {
   bool is_strict_or_extended_eval_scope() const {
     return is_eval_scope() && !is_classic_mode();
   }
+  bool is_qml_mode() const { return qml_mode_flag() == kQmlMode; }
 
   // Information about which scopes calls eval.
   bool calls_eval() const { return scope_calls_eval_; }
@@ -315,6 +321,9 @@ class Scope: public ZoneObject {
 
   // The language mode of this scope.
   LanguageMode language_mode() const { return language_mode_; }
+
+  // The strict mode of this scope.
+  QmlModeFlag qml_mode_flag() const { return qml_mode_flag_; }
 
   // The variable corresponding the 'this' value.
   Variable* receiver() { return receiver_; }
@@ -474,6 +483,8 @@ class Scope: public ZoneObject {
   bool scope_calls_eval_;
   // The language mode of this scope.
   LanguageMode language_mode_;
+  // This scope is a qml mode scope.
+  QmlModeFlag qml_mode_flag_;
   // Source positions.
   int start_position_;
   int end_position_;

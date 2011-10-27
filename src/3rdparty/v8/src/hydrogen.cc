@@ -4823,6 +4823,7 @@ void HGraphBuilder::VisitVariableProxy(VariableProxy* expr) {
       } else {
         HValue* context = environment()->LookupContext();
         HGlobalObject* global_object = new(zone()) HGlobalObject(context);
+        if (variable->is_qml_global()) global_object->set_qml_global(true);
         AddInstruction(global_object);
         HLoadGlobalGeneric* instr =
             new(zone()) HLoadGlobalGeneric(context,
@@ -5596,6 +5597,7 @@ void HGraphBuilder::HandleGlobalVariableAssignment(Variable* var,
   } else {
     HValue* context =  environment()->LookupContext();
     HGlobalObject* global_object = new(zone()) HGlobalObject(context);
+    if (var->is_qml_global()) global_object->set_qml_global(true);
     AddInstruction(global_object);
     HStoreGlobalGeneric* instr =
         new(zone()) HStoreGlobalGeneric(context,
@@ -7662,11 +7664,13 @@ void HGraphBuilder::VisitCall(Call* expr) {
       } else {
         HValue* context = environment()->LookupContext();
         HGlobalObject* receiver = new(zone()) HGlobalObject(context);
+        if (var->is_qml_global()) receiver->set_qml_global(true);
         AddInstruction(receiver);
         PushAndAdd(new(zone()) HPushArgument(receiver));
         CHECK_ALIVE(VisitArgumentList(expr->arguments()));
 
         call = new(zone()) HCallGlobal(context, var->name(), argument_count);
+        if (var->is_qml_global()) static_cast<HCallGlobal*>(call)->set_qml_global(true);
         Drop(argument_count);
       }
 
@@ -8824,6 +8828,7 @@ void HGraphBuilder::VisitVariableDeclaration(VariableDeclaration* declaration) {
       globals_.Add(variable->binding_needs_init()
                        ? isolate()->factory()->the_hole_value()
                        : isolate()->factory()->undefined_value(), zone());
+      globals_.Add(isolate()->factory()->ToBoolean(variable->is_qml_global()), zone());
       return;
     case Variable::PARAMETER:
     case Variable::LOCAL:
@@ -8859,6 +8864,7 @@ void HGraphBuilder::VisitFunctionDeclaration(FunctionDeclaration* declaration) {
       // Check for stack-overflow exception.
       if (function.is_null()) return SetStackOverflow();
       globals_.Add(function, zone());
+      globals_.Add(isolate()->factory()->ToBoolean(variable->is_qml_global()), zone());
       return;
     }
     case Variable::PARAMETER:

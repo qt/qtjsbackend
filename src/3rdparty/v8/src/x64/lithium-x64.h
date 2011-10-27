@@ -1546,7 +1546,13 @@ class LDeclareGlobals: public LTemplateInstruction<0, 0, 0> {
 
 class LGlobalObject: public LTemplateInstruction<1, 0, 0> {
  public:
+  explicit LGlobalObject(bool qml_global) : qml_global_(qml_global) {}
+
   DECLARE_CONCRETE_INSTRUCTION(GlobalObject, "global-object")
+
+  bool qml_global() { return qml_global_; }
+ private:
+  bool qml_global_;
 };
 
 
@@ -1640,10 +1646,16 @@ class LCallGlobal: public LTemplateInstruction<1, 0, 0> {
   DECLARE_CONCRETE_INSTRUCTION(CallGlobal, "call-global")
   DECLARE_HYDROGEN_ACCESSOR(CallGlobal)
 
+  explicit LCallGlobal(bool qml_global) : qml_global_(qml_global) {}
+
   virtual void PrintDataTo(StringStream* stream);
 
   Handle<String> name() const {return hydrogen()->name(); }
   int arity() const { return hydrogen()->argument_count() - 1; }
+
+  bool qml_global() { return qml_global_; }
+ private:
+  bool qml_global_;
 };
 
 

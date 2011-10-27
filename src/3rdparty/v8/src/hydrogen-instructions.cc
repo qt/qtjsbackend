@@ -700,6 +700,11 @@ void HCallNamed::PrintDataTo(StringStream* stream) {
 }
 
 
+void HGlobalObject::PrintDataTo(StringStream* stream) {
+  stream->Add("qml_global: %s ", qml_global()?"true":"false");
+  HUnaryOperation::PrintDataTo(stream);
+}
+
 void HCallGlobal::PrintDataTo(StringStream* stream) {
   stream->Add("%o ", *name());
   HUnaryCall::PrintDataTo(stream);
