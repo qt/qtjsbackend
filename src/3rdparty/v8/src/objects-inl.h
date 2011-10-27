@@ -2754,6 +2754,20 @@ void Map::set_is_shared(bool value) {
 bool Map::is_shared() {
   return ((1 << kIsShared) & bit_field3()) != 0;
 }
+ 
+void Map::set_named_interceptor_is_fallback(bool value)
+{
+  if (value) {
+    set_bit_field3(bit_field3() | (1 << kNamedInterceptorIsFallback));
+  } else {
+    set_bit_field3(bit_field3() & ~(1 << kNamedInterceptorIsFallback));
+  }
+}
+
+bool Map::named_interceptor_is_fallback()
+{
+  return ((1 << kNamedInterceptorIsFallback) & bit_field3()) != 0;
+}
 
 
 JSFunction* Map::unchecked_constructor() {
@@ -3255,6 +3269,7 @@ ACCESSORS(InterceptorInfo, query, Object, kQueryOffset)
 ACCESSORS(InterceptorInfo, deleter, Object, kDeleterOffset)
 ACCESSORS(InterceptorInfo, enumerator, Object, kEnumeratorOffset)
 ACCESSORS(InterceptorInfo, data, Object, kDataOffset)
+ACCESSORS(InterceptorInfo, is_fallback, Smi, kFallbackOffset)
 
 ACCESSORS(CallHandlerInfo, callback, Object, kCallbackOffset)
 ACCESSORS(CallHandlerInfo, data, Object, kDataOffset)
