@@ -1783,6 +1783,8 @@ HLoadNamedFieldPolymorphic::HLoadNamedFieldPolymorphic(HValue* context,
                // (which would just be a map check and return undefined).
                !map->is_dictionary_map() &&
                !map->has_named_interceptor() &&
+               // TODO Do we really need this? (since version 3.13.0)
+               //!map->named_interceptor_is_fallback() &&
                PrototypeChainCanNeverResolve(map, name)) {
       negative_lookups.Add(types->at(i), zone);
     }

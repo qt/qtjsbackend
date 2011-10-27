@@ -1438,14 +1438,16 @@ class JSReceiver: public HeapObject {
                                     Handle<String> key,
                                     Handle<Object> value,
                                     PropertyAttributes attributes,
-                                    StrictModeFlag strict_mode);
+                                    StrictModeFlag strict_mode,
+                                    bool skip_fallback_interceptor = false);
   // Can cause GC.
   MUST_USE_RESULT MaybeObject* SetProperty(
       String* key,
       Object* value,
       PropertyAttributes attributes,
       StrictModeFlag strict_mode,
-      StoreFromKeyed store_from_keyed = MAY_BE_STORE_FROM_KEYED);
+      StoreFromKeyed store_from_keyed = MAY_BE_STORE_FROM_KEYED,
+      bool skip_fallback_interceptor = false);
   MUST_USE_RESULT MaybeObject* SetProperty(
       LookupResult* result,
       String* key,
@@ -1507,8 +1509,12 @@ class JSReceiver: public HeapObject {
 
   // Lookup a property.  If found, the result is valid and has
   // detailed information.
-  void LocalLookup(String* name, LookupResult* result);
-  void Lookup(String* name, LookupResult* result);
+  void LocalLookup(String* name,
+                   LookupResult* result,
+                   bool skip_fallback_interceptor = false);
+  void Lookup(String* name,
+              LookupResult* result,
+              bool skip_fallback_interceptor = false);
 
  protected:
   Smi* GenerateIdentityHash();
@@ -4775,6 +4781,7 @@ class Map: public HeapObject {
   class DictionaryMap:              public BitField<bool, 24,  1> {};
   class OwnsDescriptors:            public BitField<bool, 25,  1> {};
   class IsObserved:                 public BitField<bool, 26,  1> {};
+  class NamedInterceptorIsFallback: public BitField<bool, 27,  1> {};
 
   // Tells whether the object in the prototype property will be used
   // for instances created from this function.  If the prototype
@@ -4932,6 +4939,10 @@ class Map: public HeapObject {
   // properties.
   inline void set_is_access_check_needed(bool access_check_needed);
   inline bool is_access_check_needed();
+
+  // Whether the named interceptor is a fallback interceptor or not
+  inline void set_named_interceptor_is_fallback(bool value);
+  inline bool named_interceptor_is_fallback();
 
   // [prototype]: implicit prototype object.
   DECL_ACCESSORS(prototype, Object)
@@ -8602,6 +8613,7 @@ class InterceptorInfo: public Struct {
   DECL_ACCESSORS(deleter, Object)
   DECL_ACCESSORS(enumerator, Object)
   DECL_ACCESSORS(data, Object)
+  DECL_ACCESSORS(is_fallback, Smi)
 
   static inline InterceptorInfo* cast(Object* obj);
 
@@ -8619,7 +8631,8 @@ class InterceptorInfo: public Struct {
   static const int kDeleterOffset = kQueryOffset + kPointerSize;
   static const int kEnumeratorOffset = kDeleterOffset + kPointerSize;
   static const int kDataOffset = kEnumeratorOffset + kPointerSize;
-  static const int kSize = kDataOffset + kPointerSize;
+  static const int kFallbackOffset = kDataOffset + kPointerSize;
+  static const int kSize = kFallbackOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(InterceptorInfo);

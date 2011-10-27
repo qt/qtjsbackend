@@ -1388,13 +1388,13 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
       if (FLAG_es52_globals) {
         Object* obj = *global;
         do {
-          JSObject::cast(obj)->LocalLookup(*name, &lookup);
+          JSObject::cast(obj)->LocalLookup(*name, &lookup, true);
           if (lookup.IsFound()) break;
           obj = obj->GetPrototype();
         } while (obj->IsJSObject() &&
                  JSObject::cast(obj)->map()->is_hidden_prototype());
       } else {
-        global->Lookup(*name, &lookup);
+        global->Lookup(*name, &lookup, true);
       }
       if (lookup.IsFound()) {
         // We found an existing property. Unless it was an interceptor
@@ -1416,7 +1416,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
     }
 
     LookupResult lookup(isolate);
-    global->LocalLookup(*name, &lookup);
+    global->LocalLookup(*name, &lookup, true);
 
     // Compute the property attributes. According to ECMA-262,
     // the property must be non-configurable except in eval.
@@ -1453,7 +1453,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
       RETURN_IF_EMPTY_HANDLE(isolate,
           JSObject::SetProperty(
               global, name, value, static_cast<PropertyAttributes>(attr),
-              language_mode == CLASSIC_MODE ? kNonStrictMode : kStrictMode));
+              language_mode == CLASSIC_MODE ? kNonStrictMode : kStrictMode,
+              true));
     }
   }
 
@@ -1598,7 +1599,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   while (object->IsJSObject() &&
          JSObject::cast(object)->map()->is_hidden_prototype()) {
     JSObject* raw_holder = JSObject::cast(object);
-    raw_holder->LocalLookup(*name, &lookup);
+    raw_holder->LocalLookup(*name, &lookup, true);
     if (lookup.IsInterceptor()) {
       HandleScope handle_scope(isolate);
       Handle<JSObject> holder(raw_holder);
@@ -1621,7 +1622,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   // Reload global in case the loop above performed a GC.
   global = isolate->context()->global_object();
   if (assign) {
-    return global->SetProperty(*name, args[2], attributes, strict_mode_flag);
+    return global->SetProperty(
+        *name, args[2], attributes, strict_mode_flag, JSReceiver::MAY_BE_STORE_FROM_KEYED, true);
   }
   return isolate->heap()->undefined_value();
 }
