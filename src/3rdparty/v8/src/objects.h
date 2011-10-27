@@ -1399,12 +1399,14 @@ class JSReceiver: public HeapObject {
                                     Handle<String> key,
                                     Handle<Object> value,
                                     PropertyAttributes attributes,
-                                    StrictModeFlag strict_mode);
+                                    StrictModeFlag strict_mode,
+                                    bool skip_fallback_interceptor = false);
   // Can cause GC.
   MUST_USE_RESULT MaybeObject* SetProperty(String* key,
                                            Object* value,
                                            PropertyAttributes attributes,
-                                           StrictModeFlag strict_mode);
+                                           StrictModeFlag strict_mode,
+                                           bool skip_fallback_interceptor = false);
   MUST_USE_RESULT MaybeObject* SetProperty(LookupResult* result,
                                            String* key,
                                            Object* value,
@@ -1457,8 +1459,12 @@ class JSReceiver: public HeapObject {
 
   // Lookup a property.  If found, the result is valid and has
   // detailed information.
-  void LocalLookup(String* name, LookupResult* result);
-  void Lookup(String* name, LookupResult* result);
+  void LocalLookup(String* name,
+                   LookupResult* result,
+                   bool skip_fallback_interceptor = false);
+  void Lookup(String* name,
+              LookupResult* result,
+              bool skip_fallback_interceptor = false);
 
  protected:
   Smi* GenerateIdentityHash();
@@ -4691,6 +4697,10 @@ class Map: public HeapObject {
   inline void set_is_access_check_needed(bool access_check_needed);
   inline bool is_access_check_needed();
 
+  // Whether the named interceptor is a fallback interceptor or not
+  inline void set_named_interceptor_is_fallback(bool value);
+  inline bool named_interceptor_is_fallback();
+
   // [prototype]: implicit prototype object.
   DECL_ACCESSORS(prototype, Object)
 
@@ -4963,6 +4973,7 @@ class Map: public HeapObject {
 
   // Bit positions for bit field 3
   static const int kIsShared = 0;
+  static const int kNamedInterceptorIsFallback = 1;
 
   // Layout of the default cache. It holds alternating name and code objects.
   static const int kCodeCacheEntrySize = 2;
@@ -8201,6 +8212,7 @@ class InterceptorInfo: public Struct {
   DECL_ACCESSORS(deleter, Object)
   DECL_ACCESSORS(enumerator, Object)
   DECL_ACCESSORS(data, Object)
+  DECL_ACCESSORS(is_fallback, Smi)
 
   static inline InterceptorInfo* cast(Object* obj);
 
@@ -8220,7 +8232,8 @@ class InterceptorInfo: public Struct {
   static const int kDeleterOffset = kQueryOffset + kPointerSize;
   static const int kEnumeratorOffset = kDeleterOffset + kPointerSize;
   static const int kDataOffset = kEnumeratorOffset + kPointerSize;
-  static const int kSize = kDataOffset + kPointerSize;
+  static const int kFallbackOffset = kDataOffset + kPointerSize;
+  static const int kSize = kFallbackOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(InterceptorInfo);
