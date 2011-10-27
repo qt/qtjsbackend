@@ -399,6 +399,12 @@ enum StrictModeFlag {
   kStrictMode
 };
 
+// The QML Compilation Mode
+enum QmlModeFlag {
+  kNonQmlMode,
+  kQmlMode
+};
+
 
 } }  // namespace v8::internal
 

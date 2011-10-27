@@ -617,6 +617,9 @@ FunctionLiteral* Parser::DoParseProgram(CompilationInfo* info,
     scope->set_end_position(source->length());
     FunctionState function_state(this, scope, isolate());
     top_scope_->SetLanguageMode(info->language_mode());
+    if (info->is_qml_mode()) {
+      scope->EnableQmlModeFlag();
+    }
     ZoneList<Statement*>* body = new(zone()) ZoneList<Statement*>(16);
     bool ok = true;
     int beg_loc = scanner().location().beg_pos;
@@ -715,6 +718,9 @@ FunctionLiteral* Parser::ParseLazy(CompilationInfo* info,
            info->is_extended_mode());
     ASSERT(info->language_mode() == shared_info->language_mode());
     scope->SetLanguageMode(shared_info->language_mode());
+    if (shared_info->qml_mode()) {
+      top_scope_->EnableQmlModeFlag();
+    }
     FunctionLiteral::Type type = shared_info->is_expression()
         ? (shared_info->is_anonymous()
               ? FunctionLiteral::ANONYMOUS_EXPRESSION
@@ -2296,6 +2302,11 @@ Block* Parser::ParseVariableDeclarations(
         arguments->Add(value);
         value = NULL;  // zap the value to avoid the unnecessary assignment
 
+        int qml_mode = 0;
+        if (top_scope_->is_qml_mode() && !Isolate::Current()->global()->HasProperty(*name))
+          qml_mode = 1;
+        arguments->Add(factory()->NewNumberLiteral(qml_mode));
+
         // Construct the call to Runtime_InitializeConstGlobal
         // and add it to the initialization statement block.
         // Note that the function does different things depending on
@@ -2309,6 +2320,11 @@ Block* Parser::ParseVariableDeclarations(
         // We may want to pass singleton to avoid Literal allocations.
         LanguageMode language_mode = initialization_scope->language_mode();
         arguments->Add(factory()->NewNumberLiteral(language_mode));
+
+        int qml_mode = 0;
+        if (top_scope_->is_qml_mode() && !Isolate::Current()->global()->HasProperty(*name))
+          qml_mode = 1;
+        arguments->Add(factory()->NewNumberLiteral(qml_mode));
 
         // Be careful not to assign a value to the global variable if
         // we're in a with. The initialization value should not

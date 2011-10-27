@@ -260,7 +260,7 @@ namespace internal {
   \
   /* Eval */ \
   F(GlobalReceiver, 1, 1) \
-  F(ResolvePossiblyDirectEval, 5, 2) \
+  F(ResolvePossiblyDirectEval, 6, 2) \
   \
   F(SetProperty, -1 /* 4 or 5 */, 1) \
   F(DefineOrRedefineDataProperty, 4, 1) \
@@ -335,8 +335,8 @@ namespace internal {
   /* Declarations and initialization */ \
   F(DeclareGlobals, 3, 1) \
   F(DeclareContextSlot, 4, 1) \
-  F(InitializeVarGlobal, -1 /* 2 or 3 */, 1) \
-  F(InitializeConstGlobal, 2, 1) \
+  F(InitializeVarGlobal, -1 /* 3 or 4 */, 1) \
+  F(InitializeConstGlobal, 3, 1) \
   F(InitializeConstContextSlot, 3, 1) \
   F(OptimizeObjectForAddingMultipleProperties, 2, 1) \
   \

@@ -763,7 +763,8 @@ Handle<Code> StubCache::ComputeCallPreMonomorphic(
 
 Handle<Code> StubCache::ComputeCallNormal(int argc,
                                           Code::Kind kind,
-                                          Code::ExtraICState extra_state) {
+                                          Code::ExtraICState extra_state,
+                                          bool has_qml_global_receiver) {
   Code::Flags flags =
       Code::ComputeFlags(kind, MONOMORPHIC, extra_state, NORMAL, argc);
   Handle<UnseededNumberDictionary> cache =
@@ -772,7 +773,7 @@ Handle<Code> StubCache::ComputeCallNormal(int argc,
   if (entry != -1) return Handle<Code>(Code::cast(cache->ValueAt(entry)));
 
   StubCompiler compiler(isolate_);
-  Handle<Code> code = compiler.CompileCallNormal(flags);
+  Handle<Code> code = compiler.CompileCallNormal(flags, has_qml_global_receiver);
   FillCache(isolate_, code);
   return code;
 }
@@ -1179,13 +1180,15 @@ Handle<Code> StubCompiler::CompileCallPreMonomorphic(Code::Flags flags) {
 }
 
 
-Handle<Code> StubCompiler::CompileCallNormal(Code::Flags flags) {
+Handle<Code> StubCompiler::CompileCallNormal(Code::Flags flags, bool has_qml_global_receiver) {
   int argc = Code::ExtractArgumentsCountFromFlags(flags);
   Code::Kind kind = Code::ExtractKindFromFlags(flags);
   if (kind == Code::CALL_IC) {
-    // Call normal is always with a explict receiver.
+    // Call normal is always with a explict receiver,
+    // or with an implicit qml global receiver.
     ASSERT(!CallIC::Contextual::decode(
-        Code::ExtractExtraICStateFromFlags(flags)));
+        Code::ExtractExtraICStateFromFlags(flags)) ||
+        has_qml_global_receiver);
     CallIC::GenerateNormal(masm(), argc);
   } else {
     KeyedCallIC::GenerateNormal(masm(), argc);

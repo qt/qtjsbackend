@@ -175,12 +175,13 @@ void FullCodeGenerator::Generate() {
 
   // Possibly allocate a local context.
   int heap_slots = info->scope()->num_heap_slots() - Context::MIN_CONTEXT_SLOTS;
-  if (heap_slots > 0) {
+  if (heap_slots > 0 ||
+      (scope()->is_qml_mode() && scope()->is_global_scope())) {
     Comment cmnt(masm_, "[ Allocate local context");
     // Argument to NewContext is the function, which is still in edi.
     __ push(edi);
     if (heap_slots <= FastNewContextStub::kMaximumSlots) {
-      FastNewContextStub stub(heap_slots);
+      FastNewContextStub stub((heap_slots < 0)?0:heap_slots);
       __ CallStub(&stub);
     } else {
       __ CallRuntime(Runtime::kNewFunctionContext, 1);
@@ -786,6 +787,7 @@ void FullCodeGenerator::VisitVariableDeclaration(
       globals_->Add(variable->binding_needs_init()
                         ? isolate()->factory()->the_hole_value()
                         : isolate()->factory()->undefined_value());
+      globals_->Add(isolate()->factory()->ToBoolean(variable->is_qml_global()));
       break;
 
     case Variable::PARAMETER:
@@ -846,6 +848,7 @@ void FullCodeGenerator::VisitFunctionDeclaration(
       // Check for stack-overflow exception.
       if (function.is_null()) return SetStackOverflow();
       globals_->Add(function);
+      globals_->Add(isolate()->factory()->ToBoolean(variable->is_qml_global()));
       break;
     }
 
@@ -898,6 +901,7 @@ void FullCodeGenerator::VisitModuleDeclaration(ModuleDeclaration* declaration) {
       Comment cmnt(masm_, "[ ModuleDeclaration");
       globals_->Add(variable->name());
       globals_->Add(instance);
+      globals_->Add(isolate()->factory()->ToBoolean(variable->is_qml_global()));
       Visit(declaration->module());
       break;
     }
@@ -1286,7 +1290,7 @@ void FullCodeGenerator::EmitLoadGlobalCheckExtensions(Variable* var,
 
   // All extension objects were empty and it is safe to use a global
   // load IC call.
-  __ mov(edx, GlobalObjectOperand());
+  __ mov(edx, var->is_qml_global()?QmlGlobalObjectOperand():GlobalObjectOperand());
   __ mov(ecx, var->name());
   Handle<Code> ic = isolate()->builtins()->LoadIC_Initialize();
   RelocInfo::Mode mode = (typeof_state == INSIDE_TYPEOF)
@@ -1370,7 +1374,7 @@ void FullCodeGenerator::EmitVariableLoad(VariableProxy* proxy) {
       Comment cmnt(masm_, "Global variable");
       // Use inline caching. Variable name is passed in ecx and the global
       // object in eax.
-      __ mov(edx, GlobalObjectOperand());
+      __ mov(edx, var->is_qml_global()?QmlGlobalObjectOperand():GlobalObjectOperand());
       __ mov(ecx, var->name());
       Handle<Code> ic = isolate()->builtins()->LoadIC_Initialize();
       CallIC(ic, RelocInfo::CODE_TARGET_CONTEXT);
@@ -2037,7 +2041,7 @@ void FullCodeGenerator::EmitVariableAssignment(Variable* var,
   if (var->IsUnallocated()) {
     // Global var, const, or let.
     __ mov(ecx, var->name());
-    __ mov(edx, GlobalObjectOperand());
+    __ mov(edx, var->is_qml_global()?QmlGlobalObjectOperand():GlobalObjectOperand());
     Handle<Code> ic = is_classic_mode()
         ? isolate()->builtins()->StoreIC_Initialize()
         : isolate()->builtins()->StoreIC_Initialize_Strict();
@@ -2348,8 +2352,11 @@ void FullCodeGenerator::EmitResolvePossiblyDirectEval(int arg_count) {
   // Push the start position of the scope the calls resides in.
   __ push(Immediate(Smi::FromInt(scope()->start_position())));
 
+  // Push the qml mode flag
+  __ push(Immediate(Smi::FromInt(is_qml_mode())));
+
   // Do the runtime call.
-  __ CallRuntime(Runtime::kResolvePossiblyDirectEval, 5);
+  __ CallRuntime(Runtime::kResolvePossiblyDirectEval, 6);
 }
 
 
@@ -2402,7 +2409,7 @@ void FullCodeGenerator::VisitCall(Call* expr) {
 
   } else if (proxy != NULL && proxy->var()->IsUnallocated()) {
     // Push global object as receiver for the call IC.
-    __ push(GlobalObjectOperand());
+    __ push(proxy->var()->is_qml_global()?QmlGlobalObjectOperand():GlobalObjectOperand());
     EmitCallWithIC(expr, proxy->name(), RelocInfo::CODE_TARGET_CONTEXT);
 
   } else if (proxy != NULL && proxy->var()->IsLookupSlot()) {
@@ -3859,7 +3866,7 @@ void FullCodeGenerator::VisitUnaryOperation(UnaryOperation* expr) {
         // but "delete this" is allowed.
         ASSERT(language_mode() == CLASSIC_MODE || var->is_this());
         if (var->IsUnallocated()) {
-          __ push(GlobalObjectOperand());
+          __ push(var->is_qml_global() ? QmlGlobalObjectOperand() : GlobalObjectOperand());
           __ push(Immediate(var->name()));
           __ push(Immediate(Smi::FromInt(kNonStrictMode)));
           __ InvokeBuiltin(Builtins::DELETE, CALL_FUNCTION);
@@ -4180,7 +4187,7 @@ void FullCodeGenerator::VisitForTypeofValue(Expression* expr) {
 
   if (proxy != NULL && proxy->var()->IsUnallocated()) {
     Comment cmnt(masm_, "Global variable");
-    __ mov(edx, GlobalObjectOperand());
+    __ mov(edx, proxy->var()->is_qml_global() ? QmlGlobalObjectOperand() : GlobalObjectOperand());
     __ mov(ecx, Immediate(proxy->name()));
     Handle<Code> ic = isolate()->builtins()->LoadIC_Initialize();
     // Use a regular load, not a contextual load, to avoid a reference

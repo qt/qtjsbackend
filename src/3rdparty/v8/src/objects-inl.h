@@ -3823,6 +3823,8 @@ bool SharedFunctionInfo::is_classic_mode() {
 
 BOOL_GETTER(SharedFunctionInfo, compiler_hints, is_extended_mode,
             kExtendedModeFunction)
+BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, qml_mode,
+               kQmlModeFunction)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, native, kNative)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints,
                name_should_print_as_anonymous,

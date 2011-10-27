@@ -57,9 +57,11 @@ class NamedEntriesDetector {
 
 static const v8::HeapGraphNode* GetGlobalObject(
     const v8::HeapSnapshot* snapshot) {
-  CHECK_EQ(2, snapshot->GetRoot()->GetChildrenCount());
+  bool snapshot_enabled = i::Snapshot::IsEnabled();
+
+  CHECK_EQ((snapshot_enabled ? 3 : 2), snapshot->GetRoot()->GetChildrenCount());
   const v8::HeapGraphNode* global_obj =
-      snapshot->GetRoot()->GetChild(0)->GetToNode();
+      snapshot->GetRoot()->GetChild(snapshot_enabled ? 1 : 0)->GetToNode();
   CHECK_EQ(0, strncmp("Object", const_cast<i::HeapEntry*>(
       reinterpret_cast<const i::HeapEntry*>(global_obj))->name(), 6));
   return global_obj;
@@ -650,15 +652,29 @@ TEST(HeapSnapshotJSONSerialization) {
       "  return null;\n"
       "}\n");
   // Get the string index using the path: <root> -> <global>.b.x.s
-  v8::Local<v8::Value> string_obj_pos_val = CompileRun(
-      "GetChildPosByProperty(\n"
-      "  GetChildPosByProperty(\n"
-      "    GetChildPosByProperty("
-      "      parsed.edges[parsed.nodes[edges_index_offset]"
-      "                   + edge_to_node_offset],"
-      "      \"b\", property_type),\n"
-      "    \"x\", property_type),"
-      "  \"s\", property_type)");
+  v8::Local<v8::Value> string_obj_pos_val;
+  if (i::Snapshot::IsEnabled()) {
+      // TODO(pvarga): Check shortcut_type issue at b when QML global object is used.
+      string_obj_pos_val = CompileRun(
+          "GetChildPosByProperty(\n"
+          "  GetChildPosByProperty(\n"
+          "    GetChildPosByProperty("
+          "      parsed.edges[parsed.nodes[edges_index_offset]"
+          "                   + edge_to_node_offset + edge_fields_count],"
+          "      \"b\", property_type),\n"
+          "    \"x\", property_type),"
+          "  \"s\", property_type)");
+  } else {
+      string_obj_pos_val = CompileRun(
+          "GetChildPosByProperty(\n"
+          "  GetChildPosByProperty(\n"
+          "    GetChildPosByProperty("
+          "      parsed.edges[parsed.nodes[edges_index_offset]"
+          "                   + edge_to_node_offset],"
+          "      \"b\", property_type),\n"
+          "    \"x\", property_type),"
+          "  \"s\", property_type)");
+  }
   CHECK(!string_obj_pos_val.IsEmpty());
   int string_obj_pos =
       static_cast<int>(string_obj_pos_val->ToNumber()->Value());
@@ -1578,6 +1594,8 @@ TEST(NoDebugObjectInSnapshot) {
   const v8::HeapGraphNode* root = snapshot->GetRoot();
   int globals_count = 0;
   for (int i = 0; i < root->GetChildrenCount(); ++i) {
+    // QML global object should be skipped here when snapshot is enabled.
+    if (i::Snapshot::IsEnabled() && i % 2 == 0) continue;
     const v8::HeapGraphEdge* edge = root->GetChild(i);
     if (edge->GetType() == v8::HeapGraphEdge::kShortcut) {
       ++globals_count;

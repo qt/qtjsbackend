@@ -4867,6 +4867,7 @@ MaybeObject* Heap::AllocateFunctionContext(int length, JSFunction* function) {
   context->set_previous(function->context());
   context->set_extension(NULL);
   context->set_global(function->context()->global());
+  context->set_qml_global(function->context()->qml_global());
   return context;
 }
 
@@ -4887,6 +4888,7 @@ MaybeObject* Heap::AllocateCatchContext(JSFunction* function,
   context->set_previous(previous);
   context->set_extension(name);
   context->set_global(previous->global());
+  context->set_qml_global(previous->qml_global());
   context->set(Context::THROWN_OBJECT_INDEX, thrown_object);
   return context;
 }
@@ -4905,6 +4907,7 @@ MaybeObject* Heap::AllocateWithContext(JSFunction* function,
   context->set_previous(previous);
   context->set_extension(extension);
   context->set_global(previous->global());
+  context->set_qml_global(previous->qml_global());
   return context;
 }
 
@@ -4923,6 +4926,7 @@ MaybeObject* Heap::AllocateBlockContext(JSFunction* function,
   context->set_previous(previous);
   context->set_extension(scope_info);
   context->set_global(previous->global());
+  context->set_qml_global(previous->qml_global());
   return context;
 }
 

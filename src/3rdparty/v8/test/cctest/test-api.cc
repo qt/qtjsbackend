@@ -14396,6 +14396,7 @@ TEST(Regress528) {
   v8::Persistent<Context> context;
   v8::Persistent<Context> other_context;
   int gc_count;
+  bool snapshot_enabled = i::Snapshot::IsEnabled();
 
   // Create a context used to keep the code from aging in the compilation
   // cache.
@@ -14420,10 +14421,10 @@ TEST(Regress528) {
     CompileRun(source_simple);
     other_context->Exit();
     HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
-    if (GetGlobalObjectsCount() == 1) break;
+    if (GetGlobalObjectsCount() == (snapshot_enabled ? 2 : 1)) break;
   }
   CHECK_GE(2, gc_count);
-  CHECK_EQ(1, GetGlobalObjectsCount());
+  CHECK_EQ((snapshot_enabled ? 2 : 1), GetGlobalObjectsCount());
 
   // Eval in a function creates reference from the compilation cache to the
   // global object.
@@ -14442,10 +14443,10 @@ TEST(Regress528) {
     CompileRun(source_eval);
     other_context->Exit();
     HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
-    if (GetGlobalObjectsCount() == 1) break;
+    if (GetGlobalObjectsCount() == (snapshot_enabled ? 2 : 1)) break;
   }
   CHECK_GE(2, gc_count);
-  CHECK_EQ(1, GetGlobalObjectsCount());
+  CHECK_EQ((snapshot_enabled ? 2 : 1), GetGlobalObjectsCount());
 
   // Looking up the line number for an exception creates reference from the
   // compilation cache to the global object.
@@ -14469,10 +14470,10 @@ TEST(Regress528) {
     CompileRun(source_exception);
     other_context->Exit();
     HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
-    if (GetGlobalObjectsCount() == 1) break;
+    if (GetGlobalObjectsCount() == (snapshot_enabled ? 2 : 1)) break;
   }
   CHECK_GE(2, gc_count);
-  CHECK_EQ(1, GetGlobalObjectsCount());
+  CHECK_EQ((snapshot_enabled ? 2 : 1), GetGlobalObjectsCount());
 
   other_context.Dispose();
 }

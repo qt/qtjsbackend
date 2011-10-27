@@ -145,6 +145,11 @@ void FastNewContextStub::Generate(MacroAssembler* masm) {
   __ mov(ebx, Operand(esi, Context::SlotOffset(Context::GLOBAL_INDEX)));
   __ mov(Operand(eax, Context::SlotOffset(Context::GLOBAL_INDEX)), ebx);
 
+  // Copy the qml global object from the previous context.
+  __ mov(ebx, Operand(esi, Context::SlotOffset(Context::QML_GLOBAL_INDEX)));
+  __ mov(Operand(eax, Context::SlotOffset(Context::QML_GLOBAL_INDEX)), ebx);
+
+
   // Initialize the rest of the slots to undefined.
   __ mov(ebx, factory->undefined_value());
   for (int i = Context::MIN_CONTEXT_SLOTS; i < length; i++) {
@@ -210,6 +215,10 @@ void FastNewBlockContextStub::Generate(MacroAssembler* masm) {
   // Copy the global object from the previous context.
   __ mov(ebx, ContextOperand(esi, Context::GLOBAL_INDEX));
   __ mov(ContextOperand(eax, Context::GLOBAL_INDEX), ebx);
+
+  // Copy the qml global object from the previous context.
+  __ mov(ebx, ContextOperand(esi, Context::QML_GLOBAL_INDEX));
+  __ mov(ContextOperand(eax, Context::QML_GLOBAL_INDEX), ebx);
 
   // Initialize the rest of the slots to the hole value.
   if (slots_ == 1) {
