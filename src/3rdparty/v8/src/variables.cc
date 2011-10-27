@@ -68,7 +68,8 @@ Variable::Variable(Scope* scope,
     local_if_not_shadowed_(NULL),
     is_valid_LHS_(is_valid_LHS),
     is_accessed_from_inner_scope_(false),
-    is_used_(false) {
+    is_used_(false),
+    is_qml_global_(false) {
   // names must be canonicalized for fast equality checks
   ASSERT(name->IsSymbol());
 }

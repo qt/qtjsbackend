@@ -607,7 +607,8 @@ Parser::Parser(Handle<Script> script,
 
 FunctionLiteral* Parser::ParseProgram(Handle<String> source,
                                       bool in_global_context,
-                                      StrictModeFlag strict_mode) {
+                                      StrictModeFlag strict_mode,
+                                      bool qml_mode) {
   ZoneScope zone_scope(isolate(), DONT_DELETE_ON_EXIT);
 
   HistogramTimerScope timer(isolate()->counters()->parse());
@@ -623,11 +624,11 @@ FunctionLiteral* Parser::ParseProgram(Handle<String> source,
     ExternalTwoByteStringUC16CharacterStream stream(
         Handle<ExternalTwoByteString>::cast(source), 0, source->length());
     scanner_.Initialize(&stream);
-    return DoParseProgram(source, in_global_context, strict_mode, &zone_scope);
+    return DoParseProgram(source, in_global_context, strict_mode, qml_mode, &zone_scope);
   } else {
     GenericStringUC16CharacterStream stream(source, 0, source->length());
     scanner_.Initialize(&stream);
-    return DoParseProgram(source, in_global_context, strict_mode, &zone_scope);
+    return DoParseProgram(source, in_global_context, strict_mode, qml_mode, &zone_scope);
   }
 }
 
@@ -635,6 +636,7 @@ FunctionLiteral* Parser::ParseProgram(Handle<String> source,
 FunctionLiteral* Parser::DoParseProgram(Handle<String> source,
                                         bool in_global_context,
                                         StrictModeFlag strict_mode,
+                                        bool qml_mode,
                                         ZoneScope* zone_scope) {
   ASSERT(top_scope_ == NULL);
   ASSERT(target_stack_ == NULL);
@@ -654,6 +656,9 @@ FunctionLiteral* Parser::DoParseProgram(Handle<String> source,
     LexicalScope lexical_scope(this, scope, isolate());
     ASSERT(top_scope_->strict_mode_flag() == kNonStrictMode);
     top_scope_->SetStrictModeFlag(strict_mode);
+    if (qml_mode) {
+      scope->EnableQmlMode();
+    }
     ZoneList<Statement*>* body = new(zone()) ZoneList<Statement*>(16);
     bool ok = true;
     int beg_loc = scanner().location().beg_pos;
@@ -747,6 +752,10 @@ FunctionLiteral* Parser::ParseLazy(CompilationInfo* info,
            scope->strict_mode_flag() == info->strict_mode_flag());
     ASSERT(info->strict_mode_flag() == shared_info->strict_mode_flag());
     scope->SetStrictModeFlag(shared_info->strict_mode_flag());
+    if (shared_info->qml_mode()) {
+      top_scope_->EnableQmlMode();
+    }
+
     FunctionLiteral::Type type = shared_info->is_expression()
         ? (shared_info->is_anonymous()
               ? FunctionLiteral::ANONYMOUS_EXPRESSION
@@ -1856,6 +1865,11 @@ Block* Parser::ParseVariableDeclarations(
         arguments->Add(value);
         value = NULL;  // zap the value to avoid the unnecessary assignment
 
+        int qml_mode = 0;
+        if (top_scope_->is_qml_mode() && !Isolate::Current()->global()->HasProperty(*name)) 
+          qml_mode = 1;
+        arguments->Add(NewNumberLiteral(qml_mode));
+
         // Construct the call to Runtime_InitializeConstGlobal
         // and add it to the initialization statement block.
         // Note that the function does different things depending on
@@ -1871,6 +1885,11 @@ Block* Parser::ParseVariableDeclarations(
         // We may want to pass singleton to avoid Literal allocations.
         StrictModeFlag flag = initialization_scope->strict_mode_flag();
         arguments->Add(NewNumberLiteral(flag));
+
+        int qml_mode = 0;
+        if (top_scope_->is_qml_mode() && !Isolate::Current()->global()->HasProperty(*name)) 
+          qml_mode = 1;
+        arguments->Add(NewNumberLiteral(qml_mode));
 
         // Be careful not to assign a value to the global variable if
         // we're in a with. The initialization value should not
@@ -5418,7 +5437,8 @@ bool ParserApi::Parse(CompilationInfo* info) {
       Handle<String> source = Handle<String>(String::cast(script->source()));
       result = parser.ParseProgram(source,
                                    info->is_global(),
-                                   info->strict_mode_flag());
+                                   info->strict_mode_flag(),
+                                   info->is_qml_mode());
     }
   }
   info->SetFunction(result);

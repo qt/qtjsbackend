@@ -935,6 +935,9 @@ static inline Operand GlobalObjectOperand() {
   return ContextOperand(esi, Context::GLOBAL_INDEX);
 }
 
+static inline Operand QmlGlobalObjectOperand() {
+  return ContextOperand(esi, Context::QML_GLOBAL_INDEX);
+}
 
 // Generates an Operand for saving parameters after PrepareCallApiFunction.
 Operand ApiParameterOperand(int index);

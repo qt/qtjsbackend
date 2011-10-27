@@ -513,7 +513,7 @@ void FullCodeGenerator::VisitDeclarations(
   // Batch declare global functions and variables.
   if (global_count > 0) {
     Handle<FixedArray> array =
-        isolate()->factory()->NewFixedArray(2 * global_count, TENURED);
+        isolate()->factory()->NewFixedArray(3 * global_count, TENURED);
     for (int j = 0, i = 0; i < length; i++) {
       Declaration* decl = declarations->at(i);
       Variable* var = decl->proxy()->var();
@@ -537,6 +537,7 @@ void FullCodeGenerator::VisitDeclarations(
           }
           array->set(j++, *function);
         }
+        array->set(j++, Smi::FromInt(var->is_qml_global()));
       }
     }
     // Invoke the platform-dependent code generator to do the actual

@@ -583,6 +583,7 @@ class FullCodeGenerator: public AstVisitor {
   StrictModeFlag strict_mode_flag() {
     return function()->strict_mode_flag();
   }
+  bool is_qml_mode() { return function()->qml_mode(); }
   FunctionLiteral* function() { return info_->function(); }
   Scope* scope() { return scope_; }
 

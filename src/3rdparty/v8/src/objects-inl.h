@@ -3535,6 +3535,8 @@ void SharedFunctionInfo::set_strict_mode_flag(StrictModeFlag strict_mode_flag) {
 
 BOOL_GETTER(SharedFunctionInfo, compiler_hints, strict_mode,
             kStrictModeFunction)
+BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, qml_mode,
+               kQmlModeFunction)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, native, kNative)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints,
                name_should_print_as_anonymous,

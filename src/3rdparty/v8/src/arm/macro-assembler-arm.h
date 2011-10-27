@@ -1326,6 +1326,11 @@ static inline MemOperand GlobalObjectOperand()  {
 }
 
 
+static inline MemOperand QmlGlobalObjectOperand()  {
+  return ContextOperand(cp, Context::QML_GLOBAL_INDEX);
+}
+
+
 #ifdef GENERATED_CODE_COVERAGE
 #define CODE_COVERAGE_STRINGIFY(x) #x
 #define CODE_COVERAGE_TOSTRING(x) CODE_COVERAGE_STRINGIFY(x)

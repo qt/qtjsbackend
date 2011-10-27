@@ -587,6 +587,11 @@ class ScriptOrigin {
  */
 class V8EXPORT Script {
  public:
+  enum CompileFlags {
+      Default = 0x00,
+      QmlMode = 0x01
+  };
+
   /**
    * Compiles the specified script (context-independent).
    *
@@ -605,7 +610,8 @@ class V8EXPORT Script {
   static Local<Script> New(Handle<String> source,
                            ScriptOrigin* origin = NULL,
                            ScriptData* pre_data = NULL,
-                           Handle<String> script_data = Handle<String>());
+                           Handle<String> script_data = Handle<String>(),
+                           CompileFlags = Default);
 
   /**
    * Compiles the specified script using the specified file name
@@ -618,7 +624,8 @@ class V8EXPORT Script {
    *   will use the currently entered context).
    */
   static Local<Script> New(Handle<String> source,
-                           Handle<Value> file_name);
+                           Handle<Value> file_name,
+                           CompileFlags = Default);
 
   /**
    * Compiles the specified script (bound to current context).
@@ -639,7 +646,8 @@ class V8EXPORT Script {
   static Local<Script> Compile(Handle<String> source,
                                ScriptOrigin* origin = NULL,
                                ScriptData* pre_data = NULL,
-                               Handle<String> script_data = Handle<String>());
+                               Handle<String> script_data = Handle<String>(),
+                               CompileFlags = Default);
 
   /**
    * Compiles the specified script using the specified file name
@@ -656,7 +664,8 @@ class V8EXPORT Script {
    */
   static Local<Script> Compile(Handle<String> source,
                                Handle<Value> file_name,
-                               Handle<String> script_data = Handle<String>());
+                               Handle<String> script_data = Handle<String>(),
+                               CompileFlags = Default);
 
   /**
    * Runs the script returning the resulting value.  If the script is
@@ -666,6 +675,7 @@ class V8EXPORT Script {
    * compiled.
    */
   Local<Value> Run();
+  Local<Value> Run(Handle<Object> qml);
 
   /**
    * Returns the script id value.
@@ -3506,6 +3516,7 @@ class V8EXPORT Context {
    * JavaScript frames an empty handle is returned.
    */
   static Local<Context> GetCalling();
+  static Local<Object> GetCallingQmlGlobal();
 
   /**
    * Sets the security token for the context.  To access an object in

@@ -112,6 +112,11 @@ static inline MemOperand GlobalObjectOperand()  {
 }
 
 
+static inline MemOperand QmlGlobalObjectOperand()  {
+  return ContextOperand(cp, Context::QML_GLOBAL_INDEX);
+}
+
+
 // Generate a MemOperand for loading a field from an object.
 static inline MemOperand FieldMemOperand(Register object, int offset) {
   return MemOperand(object, offset - kHeapObjectTag);

@@ -139,6 +139,10 @@ void FastNewContextStub::Generate(MacroAssembler* masm) {
   __ movq(rbx, Operand(rsi, Context::SlotOffset(Context::GLOBAL_INDEX)));
   __ movq(Operand(rax, Context::SlotOffset(Context::GLOBAL_INDEX)), rbx);
 
+  // Copy the qmlglobal object from the previous context.
+  __ movq(rbx, Operand(rsi, Context::SlotOffset(Context::QML_GLOBAL_INDEX)));
+  __ movq(Operand(rax, Context::SlotOffset(Context::QML_GLOBAL_INDEX)), rbx);
+
   // Initialize the rest of the slots to undefined.
   __ LoadRoot(rbx, Heap::kUndefinedValueRootIndex);
   for (int i = Context::MIN_CONTEXT_SLOTS; i < length; i++) {

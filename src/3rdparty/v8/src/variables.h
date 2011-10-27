@@ -155,6 +155,8 @@ class Variable: public ZoneObject {
     index_ = index;
   }
 
+  bool is_qml_global() const { return is_qml_global_; }
+  void set_is_qml_global(bool is_qml_global) { is_qml_global_ = is_qml_global; }
  private:
   Scope* scope_;
   Handle<String> name_;
@@ -175,6 +177,9 @@ class Variable: public ZoneObject {
   // Usage info.
   bool is_accessed_from_inner_scope_;  // set by variable resolver
   bool is_used_;
+
+  // QML info
+  bool is_qml_global_;
 };
 
 

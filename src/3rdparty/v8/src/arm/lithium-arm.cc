@@ -1128,7 +1128,7 @@ LInstruction* LChunkBuilder::DoOuterContext(HOuterContext* instr) {
 
 LInstruction* LChunkBuilder::DoGlobalObject(HGlobalObject* instr) {
   LOperand* context = UseRegisterAtStart(instr->value());
-  return DefineAsRegister(new LGlobalObject(context));
+  return DefineAsRegister(new LGlobalObject(context, instr->qml_global()));
 }
 
 
@@ -1198,7 +1198,7 @@ LInstruction* LChunkBuilder::DoCallNamed(HCallNamed* instr) {
 
 LInstruction* LChunkBuilder::DoCallGlobal(HCallGlobal* instr) {
   argument_count_ -= instr->argument_count();
-  return MarkAsCall(DefineFixed(new LCallGlobal, r0), instr);
+  return MarkAsCall(DefineFixed(new LCallGlobal(instr->qml_global()), r0), instr);
 }
 
 

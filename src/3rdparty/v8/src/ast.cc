@@ -764,6 +764,11 @@ void Call::RecordTypeFeedback(TypeFeedbackOracle* oracle,
   is_monomorphic_ = oracle->CallIsMonomorphic(this);
   Property* property = expression()->AsProperty();
   if (property == NULL) {
+    if (VariableProxy *proxy = expression()->AsVariableProxy()) {
+        if (proxy->var()->is_qml_global())
+            return;
+    }
+
     // Function call.  Specialize for monomorphic calls.
     if (is_monomorphic_) target_ = oracle->GetCallTarget(this);
   } else {

@@ -430,7 +430,8 @@ class Parser {
   // Returns NULL if parsing failed.
   FunctionLiteral* ParseProgram(Handle<String> source,
                                 bool in_global_context,
-                                StrictModeFlag strict_mode);
+                                StrictModeFlag strict_mode,
+                                bool qml_mode = false);
 
   FunctionLiteral* ParseLazy(CompilationInfo* info);
 
@@ -476,6 +477,7 @@ class Parser {
   FunctionLiteral* DoParseProgram(Handle<String> source,
                                   bool in_global_context,
                                   StrictModeFlag strict_mode,
+                                  bool qml_mode,
                                   ZoneScope* zone_scope);
 
   // Report syntax error
