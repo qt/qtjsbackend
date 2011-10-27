@@ -71,7 +71,8 @@ static Handle<Object> Invoke(bool is_construct,
                              Handle<Object> receiver,
                              int argc,
                              Handle<Object> args[],
-                             bool* has_pending_exception) {
+                             bool* has_pending_exception,
+                             Handle<Object> qml) {
   Isolate* isolate = function->GetIsolate();
 
   // Entering JavaScript.
@@ -102,6 +103,12 @@ static Handle<Object> Invoke(bool is_construct,
   // make the current one is indeed a global object.
   ASSERT(function->context()->global()->IsGlobalObject());
 
+  Handle<JSObject> oldqml;
+  if (!qml.is_null()) {
+    oldqml = Handle<JSObject>(function->context()->qml_global());
+    function->context()->set_qml_global(JSObject::cast(*qml));
+  }
+
   {
     // Save and restore context around invocation and block the
     // allocation of handles without explicit handle scopes.
@@ -117,6 +124,9 @@ static Handle<Object> Invoke(bool is_construct,
     value =
         CALL_GENERATED_CODE(stub_entry, function_entry, func, recv, argc, argv);
   }
+
+  if (!qml.is_null())
+    function->context()->set_qml_global(*oldqml);
 
 #ifdef DEBUG
   value->Verify();
@@ -146,7 +156,18 @@ Handle<Object> Execution::Call(Handle<Object> callable,
                                int argc,
                                Handle<Object> argv[],
                                bool* pending_exception,
-                               bool convert_receiver) {
+                               bool convert_receiver)
+{
+    return Call(callable, receiver, argc, argv, pending_exception, convert_receiver, Handle<Object>());
+}
+
+Handle<Object> Execution::Call(Handle<Object> callable,
+                               Handle<Object> receiver,
+                               int argc,
+                               Handle<Object> argv[],
+                               bool* pending_exception,
+                               bool convert_receiver,
+                               Handle<Object> qml) {
   *pending_exception = false;
 
   if (!callable->IsJSFunction()) {
@@ -170,7 +191,7 @@ Handle<Object> Execution::Call(Handle<Object> callable,
     if (*pending_exception) return callable;
   }
 
-  return Invoke(false, func, receiver, argc, argv, pending_exception);
+  return Invoke(false, func, receiver, argc, argv, pending_exception, qml);
 }
 
 
@@ -179,7 +200,7 @@ Handle<Object> Execution::New(Handle<JSFunction> func,
                               Handle<Object> argv[],
                               bool* pending_exception) {
   return Invoke(true, func, Isolate::Current()->global(), argc, argv,
-                pending_exception);
+                pending_exception, Handle<Object>());
 }
 
 
@@ -198,7 +219,7 @@ Handle<Object> Execution::TryCall(Handle<JSFunction> func,
   *caught_exception = false;
 
   Handle<Object> result = Invoke(false, func, receiver, argc, args,
-                                 caught_exception);
+                                 caught_exception, Handle<Object>());
 
   if (*caught_exception) {
     ASSERT(catcher.HasCaught());

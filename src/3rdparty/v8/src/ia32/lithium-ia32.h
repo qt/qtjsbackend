@@ -1332,13 +1332,17 @@ class LOuterContext: public LTemplateInstruction<1, 1, 0> {
 
 class LGlobalObject: public LTemplateInstruction<1, 1, 0> {
  public:
-  explicit LGlobalObject(LOperand* context) {
+  explicit LGlobalObject(LOperand* context, bool qml_global) {
     inputs_[0] = context;
+    qml_global_ = qml_global;
   }
 
   DECLARE_CONCRETE_INSTRUCTION(GlobalObject, "global-object")
 
   LOperand* context() { return InputAt(0); }
+  bool qml_global() { return qml_global_; }
+ private:
+  bool qml_global_;
 };
 
 
@@ -1437,7 +1441,7 @@ class LCallFunction: public LTemplateInstruction<1, 1, 0> {
 
 class LCallGlobal: public LTemplateInstruction<1, 1, 0> {
  public:
-  explicit LCallGlobal(LOperand* context) {
+  explicit LCallGlobal(LOperand* context, bool qml_global) : qml_global_(qml_global) {
     inputs_[0] = context;
   }
 
@@ -1449,6 +1453,10 @@ class LCallGlobal: public LTemplateInstruction<1, 1, 0> {
   LOperand* context() { return inputs_[0]; }
   Handle<String> name() const {return hydrogen()->name(); }
   int arity() const { return hydrogen()->argument_count() - 1; }
+
+  bool qml_global() { return qml_global_; }
+ private:
+  bool qml_global_;
 };
 
 

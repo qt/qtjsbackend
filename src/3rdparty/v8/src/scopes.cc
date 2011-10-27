@@ -35,6 +35,8 @@
 
 #include "allocation-inl.h"
 
+#include "debug.h"
+
 namespace v8 {
 namespace internal {
 
@@ -184,6 +186,7 @@ void Scope::SetDefaults(ScopeType type,
   // Inherit the strict mode from the parent scope.
   strict_mode_flag_ = (outer_scope != NULL)
       ? outer_scope->strict_mode_flag_ : kNonStrictMode;
+  qml_mode_ = (outer_scope != NULL) && outer_scope->qml_mode_;
   outer_scope_calls_non_strict_eval_ = false;
   inner_scope_calls_eval_ = false;
   force_eager_compilation_ = false;
@@ -889,6 +892,26 @@ void Scope::ResolveVariable(Scope* global_scope,
       // by 'eval' introduced variable bindings.
       if (var->is_global()) {
         var = NonLocal(proxy->name(), DYNAMIC_GLOBAL);
+
+        if (qml_mode_) {
+          Handle<GlobalObject> global = isolate_->global();
+
+#ifdef ENABLE_DEBUGGER_SUPPORT
+          if (isolate_->debug()->IsLoaded() && isolate_->debug()->InDebugger()) {
+            //Get the context before the debugger was entered.
+            SaveContext *save = isolate_->save_context();
+            while (save != NULL && *save->context() == *isolate_->debug()->debug_context())
+              save = save->prev();
+
+            global = Handle<GlobalObject>(save->context()->global());
+          }
+#endif
+
+          if (qml_mode_ && !global->HasProperty(*(proxy->name()))) {
+            var->set_is_qml_global(true);
+          }
+        }
+
       } else {
         Variable* invalidated = var;
         var = NonLocal(proxy->name(), DYNAMIC_LOCAL);
@@ -900,12 +923,52 @@ void Scope::ResolveVariable(Scope* global_scope,
       // No binding has been found. Declare a variable in global scope.
       ASSERT(global_scope != NULL);
       var = global_scope->DeclareGlobal(proxy->name());
+
+      if (qml_mode_) {
+        Handle<GlobalObject> global = isolate_->global();
+
+#ifdef ENABLE_DEBUGGER_SUPPORT
+        if (isolate_->debug()->IsLoaded() && isolate_->debug()->InDebugger()) {
+          //Get the context before the debugger was entered.
+          SaveContext *save = isolate_->save_context();
+          while (save != NULL && *save->context() == *isolate_->debug()->debug_context())
+            save = save->prev();
+
+          global = Handle<GlobalObject>(save->context()->global());
+        }
+#endif
+
+        if (!global->HasProperty(*(proxy->name()))) {
+          var->set_is_qml_global(true);
+        }
+      }
+
       break;
 
     case UNBOUND_EVAL_SHADOWED:
       // No binding has been found. But some scope makes a
       // non-strict 'eval' call.
       var = NonLocal(proxy->name(), DYNAMIC_GLOBAL);
+
+      if (qml_mode_) {
+        Handle<GlobalObject> global = isolate_->global();
+
+#ifdef ENABLE_DEBUGGER_SUPPORT
+        if (isolate_->debug()->IsLoaded() && isolate_->debug()->InDebugger()) {
+          //Get the context before the debugger was entered.
+          SaveContext *save = isolate_->save_context();
+          while (save != NULL && *save->context() == *isolate_->debug()->debug_context())
+            save = save->prev();
+
+          global = Handle<GlobalObject>(save->context()->global());
+        }
+#endif
+
+        if (qml_mode_ && !global->HasProperty(*(proxy->name()))) {
+          var->set_is_qml_global(true);
+        }
+      }
+
       break;
 
     case DYNAMIC_LOOKUP:

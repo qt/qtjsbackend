@@ -1317,19 +1317,23 @@ static Failure* ThrowRedeclarationError(Isolate* isolate,
 RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
   ASSERT(args.length() == 3);
   HandleScope scope(isolate);
-  Handle<GlobalObject> global = Handle<GlobalObject>(
-      isolate->context()->global());
 
   Handle<Context> context = args.at<Context>(0);
   CONVERT_ARG_CHECKED(FixedArray, pairs, 1);
   CONVERT_SMI_ARG_CHECKED(flags, 2);
 
+  Handle<JSObject> js_global = Handle<JSObject>(isolate->context()->global());
+  Handle<JSObject> qml_global = Handle<JSObject>(isolate->context()->qml_global());
+
   // Traverse the name/value pairs and set the properties.
   int length = pairs->length();
-  for (int i = 0; i < length; i += 2) {
+  for (int i = 0; i < length; i += 3) {
     HandleScope scope(isolate);
     Handle<String> name(String::cast(pairs->get(i)));
     Handle<Object> value(pairs->get(i + 1), isolate);
+    Handle<Smi> is_qml_global(Smi::cast(pairs->get(i + 2)));
+
+    Handle<JSObject> global = is_qml_global->value()?qml_global:js_global;
 
     // We have to declare a global const property. To capture we only
     // assign to it when evaluating the assignment for "const x =
@@ -1516,17 +1520,22 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   NoHandleAllocation nha;
   // args[0] == name
   // args[1] == strict_mode
-  // args[2] == value (optional)
+  // args[2] == qml_mode
+  // args[3] == value (optional)
 
   // Determine if we need to assign to the variable if it already
   // exists (based on the number of arguments).
-  RUNTIME_ASSERT(args.length() == 2 || args.length() == 3);
-  bool assign = args.length() == 3;
+  RUNTIME_ASSERT(args.length() == 3 || args.length() == 4);
+  bool assign = args.length() == 4;
 
   CONVERT_ARG_CHECKED(String, name, 0);
-  GlobalObject* global = isolate->context()->global();
   RUNTIME_ASSERT(args[1]->IsSmi());
   CONVERT_STRICT_MODE_ARG(strict_mode, 1);
+
+  RUNTIME_ASSERT(args[2]->IsSmi());
+  int qml_mode = Smi::cast(args[2])->value();
+
+  JSObject* global = qml_mode?isolate->context()->qml_global():isolate->context()->global();
 
   // According to ECMA-262, section 12.2, page 62, the property must
   // not be deletable.
@@ -1555,7 +1564,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
         // Found an interceptor that's not read only.
         if (assign) {
           return raw_holder->SetProperty(
-              &lookup, *name, args[2], attributes, strict_mode);
+              &lookup, *name, args[3], attributes, strict_mode);
         } else {
           return isolate->heap()->undefined_value();
         }
@@ -1565,9 +1574,9 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   }
 
   // Reload global in case the loop above performed a GC.
-  global = isolate->context()->global();
+  global = qml_mode?isolate->context()->qml_global():isolate->context()->global();
   if (assign) {
-    return global->SetProperty(*name, args[2], attributes, strict_mode, true);
+    return global->SetProperty(*name, args[3], attributes, strict_mode, true);
   }
   return isolate->heap()->undefined_value();
 }
@@ -1577,12 +1586,15 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeConstGlobal) {
   // All constants are declared with an initial value. The name
   // of the constant is the first argument and the initial value
   // is the second.
-  RUNTIME_ASSERT(args.length() == 2);
+  RUNTIME_ASSERT(args.length() == 3);
   CONVERT_ARG_CHECKED(String, name, 0);
   Handle<Object> value = args.at<Object>(1);
 
+  RUNTIME_ASSERT(args[2]->IsSmi());
+  int qml_mode = Smi::cast(args[2])->value();
+
   // Get the current global object from top.
-  GlobalObject* global = isolate->context()->global();
+  JSObject* global = qml_mode?isolate->context()->qml_global():isolate->context()->global();
 
   // According to ECMA-262, section 12.2, page 62, the property must
   // not be deletable. Since it's a const, it must be READ_ONLY too.
@@ -1606,7 +1618,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeConstGlobal) {
     // Restore global object from context (in case of GC) and continue
     // with setting the value.
     HandleScope handle_scope(isolate);
-    Handle<GlobalObject> global(isolate->context()->global());
+    Handle<JSObject> global(qml_mode?isolate->context()->qml_global():isolate->context()->global());
 
     // BUG 1213575: Handle the case where we have to set a read-only
     // property through an interceptor and only do it if it's
@@ -9441,7 +9453,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CompileString) {
   Handle<SharedFunctionInfo> shared = Compiler::CompileEval(source,
                                                             context,
                                                             true,
-                                                            kNonStrictMode);
+                                                            kNonStrictMode,
+                                                            false);
   if (shared.is_null()) return Failure::Exception();
   Handle<JSFunction> fun =
       isolate->factory()->NewFunctionFromSharedFunctionInfo(shared,
@@ -9454,7 +9467,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CompileString) {
 static ObjectPair CompileGlobalEval(Isolate* isolate,
                                     Handle<String> source,
                                     Handle<Object> receiver,
-                                    StrictModeFlag strict_mode) {
+                                    StrictModeFlag strict_mode,
+                                    bool qml_mode) {
   Handle<Context> context = Handle<Context>(isolate->context());
   Handle<Context> global_context = Handle<Context>(context->global_context());
 
@@ -9472,7 +9486,8 @@ static ObjectPair CompileGlobalEval(Isolate* isolate,
       source,
       Handle<Context>(isolate->context()),
       context->IsGlobalContext(),
-      strict_mode);
+      strict_mode,
+      qml_mode);
   if (shared.is_null()) return MakePair(Failure::Exception(), NULL);
   Handle<JSFunction> compiled =
       isolate->factory()->NewFunctionFromSharedFunctionInfo(
@@ -9482,7 +9497,7 @@ static ObjectPair CompileGlobalEval(Isolate* isolate,
 
 
 RUNTIME_FUNCTION(ObjectPair, Runtime_ResolvePossiblyDirectEval) {
-  ASSERT(args.length() == 4);
+  ASSERT(args.length() == 5);
 
   HandleScope scope(isolate);
   Handle<Object> callee = args.at<Object>(0);
@@ -9498,10 +9513,12 @@ RUNTIME_FUNCTION(ObjectPair, Runtime_ResolvePossiblyDirectEval) {
   }
 
   CONVERT_STRICT_MODE_ARG(strict_mode, 3);
+  ASSERT(args[4]->IsSmi());
   return CompileGlobalEval(isolate,
                            args.at<String>(1),
                            args.at<Object>(2),
-                           strict_mode);
+                           strict_mode,
+                           Smi::cast(args[4])->value());
 }
 
 
@@ -11215,10 +11232,12 @@ class ScopeIterator {
     ZoneScope zone_scope(isolate, DELETE_ON_EXIT);
     Handle<Script> script(Script::cast(shared_info->script()));
     Scope* scope;
-    if (index >= 0) {
+    if (index >= 0 || shared_info->qml_mode()) {
       // Global code
       CompilationInfo info(script);
       info.MarkAsGlobal();
+      if (shared_info->qml_mode())
+          info.MarkAsQmlMode();
       CHECK(ParserApi::Parse(&info));
       CHECK(Scope::Analyze(&info));
       scope = info.function()->scope();
@@ -11244,7 +11263,6 @@ class ScopeIterator {
     ScopeType scope_type = Type();
     if (scope_type == ScopeTypeGlobal) {
       // The global scope is always the last in the chain.
-      ASSERT(context_->IsGlobalContext());
       context_ = Handle<Context>();
       return;
     }
@@ -11268,7 +11286,7 @@ class ScopeIterator {
                  !scope_info->HasContext());
           return ScopeTypeLocal;
         case GLOBAL_SCOPE:
-          ASSERT(context_->IsGlobalContext());
+          ASSERT(context_->IsGlobalContext() || scope_info->IsQmlMode());
           return ScopeTypeGlobal;
         case WITH_SCOPE:
           ASSERT(context_->IsWithContext());
@@ -11306,10 +11324,15 @@ class ScopeIterator {
     switch (Type()) {
       case ScopeIterator::ScopeTypeGlobal:
         return Handle<JSObject>(CurrentContext()->global());
-      case ScopeIterator::ScopeTypeLocal:
+      case ScopeIterator::ScopeTypeLocal: {
+        Handle<SerializedScopeInfo> scope_info = nested_scope_chain_.last();
+        if (scope_info->IsQmlMode())
+            ASSERT(nested_scope_chain_.length() == 2);
+        else
+            ASSERT(nested_scope_chain_.length() == 1);
         // Materialize the content of the local scope into a JSObject.
-        ASSERT(nested_scope_chain_.length() == 1);
         return MaterializeLocalScope(isolate_, frame_, inlined_frame_index_);
+      }
       case ScopeIterator::ScopeTypeWith:
         // Return the with object.
         return Handle<JSObject>(JSObject::cast(CurrentContext()->extension()));
@@ -12025,6 +12048,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluate) {
   Handle<JSFunction> function(JSFunction::cast(frame->function()));
   Handle<SerializedScopeInfo> scope_info(function->shared()->scope_info());
   ScopeInfo<> sinfo(*scope_info);
+  bool qml_mode = function->shared()->qml_mode();
 
   // Traverse the saved contexts chain to find the active context for the
   // selected frame.
@@ -12095,7 +12119,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluate) {
       Compiler::CompileEval(function_source,
                             context,
                             context->IsGlobalContext(),
-                            kNonStrictMode);
+                            kNonStrictMode,
+                            qml_mode);
   if (shared.is_null()) return Failure::Exception();
   Handle<JSFunction> compiled_function =
       isolate->factory()->NewFunctionFromSharedFunctionInfo(shared, context);
@@ -12105,7 +12130,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluate) {
   Handle<Object> receiver(frame->receiver(), isolate);
   Handle<Object> evaluation_function =
       Execution::Call(compiled_function, receiver, 0, NULL,
-                      &has_pending_exception);
+                      &has_pending_exception, false,
+                      Handle<Object>(function->context()->qml_global()));
   if (has_pending_exception) return Failure::Exception();
 
   Handle<Object> arguments = GetArgumentsObject(isolate,
@@ -12186,7 +12212,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluateGlobal) {
   // Currently, the eval code will be executed in non-strict mode,
   // even in the strict code context.
   Handle<SharedFunctionInfo> shared =
-      Compiler::CompileEval(source, context, is_global, kNonStrictMode);
+      Compiler::CompileEval(source, context, is_global, kNonStrictMode, false);
   if (shared.is_null()) return Failure::Exception();
   Handle<JSFunction> compiled_function =
       Handle<JSFunction>(

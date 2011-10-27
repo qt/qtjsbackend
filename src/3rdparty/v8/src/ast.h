@@ -1633,6 +1633,7 @@ class FunctionLiteral: public Expression {
   bool is_anonymous() const { return is_anonymous_; }
   bool strict_mode() const { return strict_mode_flag() == kStrictMode; }
   StrictModeFlag strict_mode_flag() const;
+  bool qml_mode() const;
 
   int materialized_literal_count() { return materialized_literal_count_; }
   int expected_property_count() { return expected_property_count_; }

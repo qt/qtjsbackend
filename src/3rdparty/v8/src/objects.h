@@ -3120,6 +3120,9 @@ class SerializedScopeInfo : public FixedArray {
   // Is this scope a strict mode scope?
   bool IsStrictMode();
 
+  // Is this scope a qml mode scope?
+  bool IsQmlMode();
+
   // Return the number of stack slots for code.
   int NumberOfStackSlots();
 
@@ -4929,6 +4932,9 @@ class SharedFunctionInfo: public HeapObject {
   inline StrictModeFlag strict_mode_flag();
   inline void set_strict_mode_flag(StrictModeFlag strict_mode_flag);
 
+  // Indicates whether the function is a qml mode function.
+  DECL_BOOLEAN_ACCESSORS(qml_mode)
+
   // False if the function definitely does not allocate an arguments object.
   DECL_BOOLEAN_ACCESSORS(uses_arguments)
 
@@ -5150,6 +5156,7 @@ class SharedFunctionInfo: public HeapObject {
     kCodeAgeShift,
     kOptimizationDisabled = kCodeAgeShift + kCodeAgeSize,
     kStrictModeFunction,
+    kQmlModeFunction,
     kUsesArguments,
     kHasDuplicateParameters,
     kNative,

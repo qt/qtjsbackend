@@ -57,6 +57,7 @@ class CompilationInfo BASE_EMBEDDED {
     return StrictModeFlagField::decode(flags_);
   }
   bool is_in_loop() const { return IsInLoop::decode(flags_); }
+  bool is_qml_mode() const { return IsQmlMode::decode(flags_); }
   FunctionLiteral* function() const { return function_; }
   Scope* scope() const { return scope_; }
   Handle<Code> code() const { return code_; }
@@ -84,6 +85,9 @@ class CompilationInfo BASE_EMBEDDED {
   void MarkAsInLoop() {
     ASSERT(is_lazy());
     flags_ |= IsInLoop::encode(true);
+  }
+  void MarkAsQmlMode() {
+    flags_ |= IsQmlMode::encode(true);
   }
   void MarkAsNative() {
     flags_ |= IsNative::encode(true);
@@ -192,6 +196,9 @@ class CompilationInfo BASE_EMBEDDED {
       ASSERT(strict_mode_flag() == kNonStrictMode);
       SetStrictModeFlag(shared_info_->strict_mode_flag());
     }
+    if (!shared_info_.is_null() && shared_info_->qml_mode()) {
+      MarkAsQmlMode();
+    }
   }
 
   void SetMode(Mode mode) {
@@ -218,7 +225,8 @@ class CompilationInfo BASE_EMBEDDED {
   // If compiling for debugging produce just full code matching the
   // initial mode setting.
   class IsCompilingForDebugging: public BitField<bool, 8, 1> {};
-
+  // Qml mode
+  class IsQmlMode: public BitField<bool, 9, 1> {};
 
   unsigned flags_;
 
@@ -283,13 +291,15 @@ class Compiler : public AllStatic {
                                             v8::Extension* extension,
                                             ScriptDataImpl* pre_data,
                                             Handle<Object> script_data,
-                                            NativesFlag is_natives_code);
+                                            NativesFlag is_natives_code,
+                                            v8::Script::CompileFlags = v8::Script::Default);
 
   // Compile a String source within a context for Eval.
   static Handle<SharedFunctionInfo> CompileEval(Handle<String> source,
                                                 Handle<Context> context,
                                                 bool is_global,
-                                                StrictModeFlag strict_mode);
+                                                StrictModeFlag strict_mode,
+                                                bool qml_mode);
 
   // Compile from function info (used for lazy compilation). Returns true on
   // success and false if the compilation resulted in a stack overflow.
