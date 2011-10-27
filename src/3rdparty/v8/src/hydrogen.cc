@@ -3603,6 +3603,7 @@ void HGraphBuilder::VisitVariableProxy(VariableProxy* expr) {
       } else {
         HValue* context = environment()->LookupContext();
         HGlobalObject* global_object = new(zone()) HGlobalObject(context);
+        if (variable->is_qml_global()) global_object->set_qml_global(true);
         AddInstruction(global_object);
         HLoadGlobalGeneric* instr =
             new(zone()) HLoadGlobalGeneric(context,
@@ -4230,6 +4231,7 @@ void HGraphBuilder::HandleGlobalVariableAssignment(Variable* var,
   } else {
     HValue* context =  environment()->LookupContext();
     HGlobalObject* global_object = new(zone()) HGlobalObject(context);
+    if (var->is_qml_global()) global_object->set_qml_global(true);
     AddInstruction(global_object);
     HStoreGlobalGeneric* instr =
         new(zone()) HStoreGlobalGeneric(context,
@@ -5985,11 +5987,13 @@ void HGraphBuilder::VisitCall(Call* expr) {
       } else {
         HValue* context = environment()->LookupContext();
         HGlobalObject* receiver = new(zone()) HGlobalObject(context);
+        if (var->is_qml_global()) receiver->set_qml_global(true);
         AddInstruction(receiver);
         PushAndAdd(new(zone()) HPushArgument(receiver));
         CHECK_ALIVE(VisitArgumentList(expr->arguments()));
 
         call = new(zone()) HCallGlobal(context, var->name(), argument_count);
+        if (var->is_qml_global()) static_cast<HCallGlobal*>(call)->set_qml_global(true);
         Drop(argument_count);
       }
 
@@ -7029,7 +7033,7 @@ void HGraphBuilder::VisitDeclarations(ZoneList<Declaration*>* declarations) {
   // Batch declare global functions and variables.
   if (global_count > 0) {
     Handle<FixedArray> array =
-        isolate()->factory()->NewFixedArray(2 * global_count, TENURED);
+        isolate()->factory()->NewFixedArray(3 * global_count, TENURED);
     for (int j = 0, i = 0; i < length; i++) {
       Declaration* decl = declarations->at(i);
       Variable* var = decl->proxy()->var();
@@ -7055,6 +7059,7 @@ void HGraphBuilder::VisitDeclarations(ZoneList<Declaration*>* declarations) {
           array->set(j++, *function);
         }
       }
+      array->set(j++, Smi::FromInt(var->is_qml_global()));
     }
     int flags = DeclareGlobalsEvalFlag::encode(info()->is_eval()) |
                 DeclareGlobalsNativeFlag::encode(info()->is_native()) |

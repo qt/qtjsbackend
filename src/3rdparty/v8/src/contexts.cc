@@ -103,11 +103,19 @@ Handle<Object> Context::Lookup(Handle<String> name,
     PrintF(")\n");
   }
 
+  Handle<JSObject> qml_global;
+  Handle<JSObject> qml_global_global;
+
   do {
     if (FLAG_trace_contexts) {
       PrintF(" - looking in context %p", reinterpret_cast<void*>(*context));
       if (context->IsGlobalContext()) PrintF(" (global context)");
       PrintF("\n");
+    }
+
+    if (qml_global.is_null() && !context->qml_global()->IsUndefined()) {
+      qml_global = Handle<JSObject>(context->qml_global(), isolate);
+      qml_global_global = Handle<JSObject>(context->global(), isolate);
     }
 
     // 1. Check global objects, subjects of with, and extension objects.
@@ -232,6 +240,33 @@ Handle<Object> Context::Lookup(Handle<String> name,
       context = Handle<Context>(context->previous(), isolate);
     }
   } while (follow_context_chain);
+
+  if (!qml_global.is_null()) {
+    if ((flags & FOLLOW_PROTOTYPE_CHAIN) == 0) {
+      *attributes = qml_global_global->GetLocalPropertyAttribute(*name);
+    } else {
+      *attributes = qml_global_global->GetPropertyAttribute(*name);
+    }
+
+    if (*attributes != ABSENT) {
+      *attributes = ABSENT;
+    } else {
+      if ((flags & FOLLOW_PROTOTYPE_CHAIN) == 0) {
+        *attributes = qml_global->GetLocalPropertyAttribute(*name);
+      } else {
+        *attributes = qml_global->GetPropertyAttribute(*name);
+      }
+
+      if (*attributes != ABSENT) {
+        // property found
+        if (FLAG_trace_contexts) {
+          PrintF("=> found property in qml global object %p\n",
+                 reinterpret_cast<void*>(*qml_global));
+        }
+        return qml_global;
+      }
+    }
+  }
 
   if (FLAG_trace_contexts) {
     PrintF("=> no property/slot found\n");

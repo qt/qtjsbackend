@@ -3348,6 +3348,9 @@ class ScopeInfo : public FixedArray {
   // Return the language mode of this scope.
   LanguageMode language_mode();
 
+  // Is this scope a qml mode scope?
+  bool IsQmlMode();
+
   // Does this scope make a non-strict eval call?
   bool CallsNonStrictEval() {
     return CallsEval() && (language_mode() == CLASSIC_MODE);
@@ -3370,7 +3373,7 @@ class ScopeInfo : public FixedArray {
   //  3. One context slot for the function name if it is context allocated.
   // Parameters allocated in the context count as context allocated locals. If
   // no contexts are allocated for this scope ContextLength returns 0.
-  int ContextLength();
+  int ContextLength(bool qml_function = false);
 
   // Is this scope the scope of a named function expression?
   bool HasFunctionName();
@@ -3519,8 +3522,9 @@ class ScopeInfo : public FixedArray {
   class TypeField:             public BitField<ScopeType,            0, 3> {};
   class CallsEvalField:        public BitField<bool,                 3, 1> {};
   class LanguageModeField:     public BitField<LanguageMode,         4, 2> {};
-  class FunctionVariableField: public BitField<FunctionVariableInfo, 6, 2> {};
-  class FunctionVariableMode:  public BitField<VariableMode,         8, 3> {};
+  class QmlModeField:          public BitField<bool,                 6, 1> {};
+  class FunctionVariableField: public BitField<FunctionVariableInfo, 7, 2> {};
+  class FunctionVariableMode:  public BitField<VariableMode,         9, 3> {};
 
   // BitFields representing the encoded information for context locals in the
   // ContextLocalInfoEntries part.
@@ -5403,6 +5407,9 @@ class SharedFunctionInfo: public HeapObject {
   // Indicates whether the language mode of this function is EXTENDED_MODE.
   inline bool is_extended_mode();
 
+  // Indicates whether the function is a qml mode function.
+  DECL_BOOLEAN_ACCESSORS(qml_mode)
+
   // False if the function definitely does not allocate an arguments object.
   DECL_BOOLEAN_ACCESSORS(uses_arguments)
 
@@ -5645,6 +5652,7 @@ class SharedFunctionInfo: public HeapObject {
     kOptimizationDisabled = kCodeAgeShift + kCodeAgeSize,
     kStrictModeFunction,
     kExtendedModeFunction,
+    kQmlModeFunction,
     kUsesArguments,
     kHasDuplicateParameters,
     kNative,

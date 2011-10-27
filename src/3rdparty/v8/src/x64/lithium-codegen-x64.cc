@@ -184,12 +184,13 @@ bool LCodeGen::GeneratePrologue() {
 
   // Possibly allocate a local context.
   int heap_slots = scope()->num_heap_slots() - Context::MIN_CONTEXT_SLOTS;
-  if (heap_slots > 0) {
+  if (heap_slots > 0 ||
+      (scope()->is_qml_mode() && scope()->is_global_scope())) {
     Comment(";;; Allocate local context");
     // Argument to NewContext is the function, which is still in rdi.
     __ push(rdi);
     if (heap_slots <= FastNewContextStub::kMaximumSlots) {
-      FastNewContextStub stub(heap_slots);
+      FastNewContextStub stub((heap_slots < 0)?0:heap_slots);
       __ CallStub(&stub);
     } else {
       __ CallRuntime(Runtime::kNewFunctionContext, 1);
@@ -2670,7 +2671,7 @@ void LCodeGen::DoDeclareGlobals(LDeclareGlobals* instr) {
 
 void LCodeGen::DoGlobalObject(LGlobalObject* instr) {
   Register result = ToRegister(instr->result());
-  __ movq(result, GlobalObjectOperand());
+  __ movq(result, instr->qml_global()?QmlGlobalObjectOperand():GlobalObjectOperand());
 }
 
 

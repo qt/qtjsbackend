@@ -665,7 +665,7 @@ Handle<Code> CallICBase::ComputeMonomorphicStub(LookupResult* lookup,
         // applicable.
         if (!holder.is_identical_to(receiver)) return Handle<Code>::null();
         return isolate()->stub_cache()->ComputeCallNormal(
-            argc, kind_, extra_state);
+            argc, kind_, extra_state, IsQmlGlobal(holder));
       }
       break;
     }

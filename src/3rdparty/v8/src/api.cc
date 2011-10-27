@@ -1543,7 +1543,8 @@ ScriptData* ScriptData::New(const char* data, int length) {
 Local<Script> Script::New(v8::Handle<String> source,
                           v8::ScriptOrigin* origin,
                           v8::ScriptData* pre_data,
-                          v8::Handle<String> script_data) {
+                          v8::Handle<String> script_data,
+                          v8::Script::CompileFlags compile_flags) {
   i::Isolate* isolate = i::Isolate::Current();
   ON_BAILOUT(isolate, "v8::Script::New()", return Local<Script>());
   LOG_API(isolate, "Script::New");
@@ -1584,7 +1585,8 @@ Local<Script> Script::New(v8::Handle<String> source,
                            NULL,
                            pre_data_impl,
                            Utils::OpenHandle(*script_data),
-                           i::NOT_NATIVES_CODE);
+                           i::NOT_NATIVES_CODE,
+                           compile_flags);
     has_pending_exception = result.is_null();
     EXCEPTION_BAILOUT_CHECK(isolate, Local<Script>());
     raw_result = *result;
@@ -1595,21 +1597,23 @@ Local<Script> Script::New(v8::Handle<String> source,
 
 
 Local<Script> Script::New(v8::Handle<String> source,
-                          v8::Handle<Value> file_name) {
+                          v8::Handle<Value> file_name,
+                          v8::Script::CompileFlags compile_flags) {
   ScriptOrigin origin(file_name);
-  return New(source, &origin);
+  return New(source, &origin, 0, Handle<String>(), compile_flags);
 }
 
 
 Local<Script> Script::Compile(v8::Handle<String> source,
                               v8::ScriptOrigin* origin,
                               v8::ScriptData* pre_data,
-                              v8::Handle<String> script_data) {
+                              v8::Handle<String> script_data,
+                              v8::Script::CompileFlags compile_flags) {
   i::Isolate* isolate = i::Isolate::Current();
   ON_BAILOUT(isolate, "v8::Script::Compile()", return Local<Script>());
   LOG_API(isolate, "Script::Compile");
   ENTER_V8(isolate);
-  Local<Script> generic = New(source, origin, pre_data, script_data);
+  Local<Script> generic = New(source, origin, pre_data, script_data, compile_flags);
   if (generic.IsEmpty())
     return generic;
   i::Handle<i::Object> obj = Utils::OpenHandle(*generic);
@@ -1625,13 +1629,18 @@ Local<Script> Script::Compile(v8::Handle<String> source,
 
 Local<Script> Script::Compile(v8::Handle<String> source,
                               v8::Handle<Value> file_name,
-                              v8::Handle<String> script_data) {
+                              v8::Handle<String> script_data,
+                              v8::Script::CompileFlags compile_flags) {
   ScriptOrigin origin(file_name);
-  return Compile(source, &origin, 0, script_data);
+  return Compile(source, &origin, 0, script_data, compile_flags);
 }
 
 
 Local<Value> Script::Run() {
+    return Run(Handle<Object>());
+}
+
+Local<Value> Script::Run(Handle<Object> qml) {
   i::Isolate* isolate = i::Isolate::Current();
   ON_BAILOUT(isolate, "v8::Script::Run()", return Local<Value>());
   LOG_API(isolate, "Script::Run");
@@ -1650,10 +1659,11 @@ Local<Value> Script::Run() {
       fun = i::Handle<i::JSFunction>(i::JSFunction::cast(*obj), isolate);
     }
     EXCEPTION_PREAMBLE(isolate);
+    i::Handle<i::Object> qmlglobal = Utils::OpenHandle(*qml);
     i::Handle<i::Object> receiver(
         isolate->context()->global_proxy(), isolate);
     i::Handle<i::Object> result =
-        i::Execution::Call(fun, receiver, 0, NULL, &has_pending_exception);
+        i::Execution::Call(fun, receiver, 0, NULL, &has_pending_exception, false, qmlglobal);
     EXCEPTION_BAILOUT_CHECK_DO_CALLBACK(isolate, Local<Value>());
     raw_result = *result;
   }
@@ -4577,6 +4587,25 @@ v8::Local<v8::Context> Context::GetCalling() {
   if (calling.is_null()) return Local<Context>();
   i::Handle<i::Context> context = i::Handle<i::Context>::cast(calling);
   return Utils::ToLocal(context);
+}
+
+
+v8::Local<v8::Object> Context::GetCallingQmlGlobal() {
+  i::Isolate* isolate = i::Isolate::Current();
+  if (IsDeadCheck(isolate, "v8::Context::GetCallingQmlGlobal()")) {
+    return Local<Object>();
+  }
+
+  i::Context *context = isolate->context();
+  i::JavaScriptFrameIterator it;
+  if (it.done()) return Local<Object>();
+  context = i::Context::cast(it.frame()->context());
+  if (!context->qml_global()->IsUndefined()) {
+    i::Handle<i::Object> qmlglobal(context->qml_global());
+    return Utils::ToLocal(i::Handle<i::JSObject>::cast(qmlglobal));
+  } else {
+      return Local<Object>();
+  }
 }
 
 

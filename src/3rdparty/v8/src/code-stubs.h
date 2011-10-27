@@ -343,7 +343,7 @@ class FastNewContextStub : public CodeStub {
   static const int kMaximumSlots = 64;
 
   explicit FastNewContextStub(int slots) : slots_(slots) {
-    ASSERT(slots_ > 0 && slots_ <= kMaximumSlots);
+    ASSERT(slots_ >= 0 && slots_ <= kMaximumSlots);
   }
 
   void Generate(MacroAssembler* masm);
@@ -361,7 +361,7 @@ class FastNewBlockContextStub : public CodeStub {
   static const int kMaximumSlots = 64;
 
   explicit FastNewBlockContextStub(int slots) : slots_(slots) {
-    ASSERT(slots_ > 0 && slots_ <= kMaximumSlots);
+    ASSERT(slots_ >= 0 && slots_ <= kMaximumSlots);
   }
 
   void Generate(MacroAssembler* masm);

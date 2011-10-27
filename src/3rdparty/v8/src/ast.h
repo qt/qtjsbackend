@@ -2045,6 +2045,8 @@ class FunctionLiteral: public Expression {
   bool is_anonymous() const { return IsAnonymous::decode(bitfield_); }
   bool is_classic_mode() const { return language_mode() == CLASSIC_MODE; }
   LanguageMode language_mode() const;
+  bool qml_mode() const { return qml_mode_flag() == kQmlMode; }
+  QmlModeFlag qml_mode_flag() const;
 
   int materialized_literal_count() { return materialized_literal_count_; }
   int expected_property_count() { return expected_property_count_; }

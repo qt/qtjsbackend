@@ -554,6 +554,7 @@ class FullCodeGenerator: public AstVisitor {
   LanguageMode language_mode() {
     return function()->language_mode();
   }
+  bool is_qml_mode() { return function()->qml_mode(); }
   FunctionLiteral* function() { return info_->function(); }
   Scope* scope() { return scope_; }
 

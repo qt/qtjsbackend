@@ -219,7 +219,8 @@ class StubCache {
 
   Handle<Code> ComputeCallNormal(int argc,
                                  Code::Kind kind,
-                                 Code::ExtraICState state);
+                                 Code::ExtraICState state,
+                                 bool has_qml_global_receiver);
 
   Handle<Code> ComputeCallArguments(int argc, Code::Kind kind);
 
@@ -410,7 +411,7 @@ class StubCompiler BASE_EMBEDDED {
   // is extracted from the code flags.
   Handle<Code> CompileCallInitialize(Code::Flags flags);
   Handle<Code> CompileCallPreMonomorphic(Code::Flags flags);
-  Handle<Code> CompileCallNormal(Code::Flags flags);
+  Handle<Code> CompileCallNormal(Code::Flags flags, bool has_qml_global_receiver);
   Handle<Code> CompileCallMegamorphic(Code::Flags flags);
   Handle<Code> CompileCallArguments(Code::Flags flags);
   Handle<Code> CompileCallMiss(Code::Flags flags);

@@ -221,6 +221,7 @@ class Context: public FixedArray {
     // (with contexts), or the variable name (catch contexts), the serialized
     // scope info (block contexts).
     EXTENSION_INDEX,
+    QML_GLOBAL_INDEX,
     GLOBAL_INDEX,
     MIN_CONTEXT_SLOTS,
 
@@ -326,6 +327,9 @@ class Context: public FixedArray {
     return reinterpret_cast<GlobalObject*>(result);
   }
   void set_global(GlobalObject* global) { set(GLOBAL_INDEX, global); }
+
+  JSObject *qml_global() { return reinterpret_cast<JSObject *>(get(QML_GLOBAL_INDEX)); }
+  void set_qml_global(JSObject *qml_global) { set(QML_GLOBAL_INDEX, qml_global); }
 
   // Returns a JSGlobalProxy object or null.
   JSObject* global_proxy();
