@@ -8519,8 +8519,7 @@ void SharedFunctionInfo::DetachInitialMap() {
   Map* map = reinterpret_cast<Map*>(initial_map());
 
   // Make the map remember to restore the link if it survives the GC.
-  map->set_bit_field2(
-      map->bit_field2() | (1 << Map::kAttachedToSharedFunctionInfo));
+  map->set_attached_to_shared_function_info(true);
 
   // Undo state changes made by StartInobjectTracking (except the
   // construction_count). This way if the initial map does not survive the GC
@@ -8540,8 +8539,7 @@ void SharedFunctionInfo::DetachInitialMap() {
 
 // Called from GC, hence reinterpret_cast and unchecked accessors.
 void SharedFunctionInfo::AttachInitialMap(Map* map) {
-  map->set_bit_field2(
-      map->bit_field2() & ~(1 << Map::kAttachedToSharedFunctionInfo));
+  map->set_attached_to_shared_function_info(false);
 
   // Resume inobject slack tracking.
   set_initial_map(map);

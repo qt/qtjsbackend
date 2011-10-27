@@ -2591,6 +2591,12 @@ class V8EXPORT ObjectTemplate : public Template {
   bool HasExternalResource();
   void SetHasExternalResource(bool value);
 
+  /**
+   * Mark object instances of the template as using the user object
+   * comparison callback.
+   */
+  void MarkAsUseUserObjectComparison();
+
  private:
   ObjectTemplate();
   static Local<ObjectTemplate> New(Handle<FunctionTemplate> constructor);
@@ -2830,6 +2836,10 @@ typedef void (*CallCompletedCallback)();
 typedef void (*FailedAccessCheckCallback)(Local<Object> target,
                                           AccessType type,
                                           Local<Value> data);
+
+// --- User Object Comparison Callback ---
+typedef bool (*UserObjectComparisonCallback)(Local<Object> lhs,
+                                             Local<Object> rhs);
 
 // --- AllowCodeGenerationFromStrings callbacks ---
 
@@ -3265,6 +3275,9 @@ class V8EXPORT V8 {
 
   /** Callback function for reporting failed access checks.*/
   static void SetFailedAccessCheckCallbackFunction(FailedAccessCheckCallback);
+
+  /** Callback for user object comparisons */
+  static void SetUserObjectComparisonCallbackFunction(UserObjectComparisonCallback);
 
   /**
    * Enables the host application to receive a notification before a

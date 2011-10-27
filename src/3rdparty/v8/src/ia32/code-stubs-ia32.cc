@@ -4358,6 +4358,39 @@ void CompareStub::Generate(MacroAssembler* masm) {
   // NOTICE! This code is only reached after a smi-fast-case check, so
   // it is certain that at least one operand isn't a smi.
 
+  {
+    Label not_user_equal, user_equal;
+    __ test(eax, Immediate(kSmiTagMask));
+    __ j(zero, &not_user_equal);
+    __ test(edx, Immediate(kSmiTagMask));
+    __ j(zero, &not_user_equal);
+
+    __ CmpObjectType(eax, JS_OBJECT_TYPE, ebx);
+    __ j(not_equal, &not_user_equal);
+
+    __ CmpObjectType(edx, JS_OBJECT_TYPE, ecx);
+    __ j(not_equal, &not_user_equal);
+
+    __ test_b(FieldOperand(ebx, Map::kBitField2Offset),
+              1 << Map::kUseUserObjectComparison);
+    __ j(not_zero, &user_equal);
+    __ test_b(FieldOperand(ecx, Map::kBitField2Offset),
+              1 << Map::kUseUserObjectComparison);
+    __ j(not_zero, &user_equal);
+
+    __ jmp(&not_user_equal);
+
+    __ bind(&user_equal);
+
+    __ pop(ebx); // Return address.
+    __ push(eax);
+    __ push(edx);
+    __ push(ebx);
+    __ TailCallRuntime(Runtime::kUserObjectEquals, 2, 1);
+
+    __ bind(&not_user_equal);
+  }
+
   // Identical objects can be compared fast, but there are some tricky cases
   // for NaN and undefined.
   {
@@ -6849,8 +6882,14 @@ void ICCompareStub::GenerateObjects(MacroAssembler* masm) {
 
   __ CmpObjectType(eax, JS_OBJECT_TYPE, ecx);
   __ j(not_equal, &miss, Label::kNear);
+  __ test_b(FieldOperand(ecx, Map::kBitField2Offset),
+            1 << Map::kUseUserObjectComparison);
+  __ j(not_zero, &miss, Label::kNear);
   __ CmpObjectType(edx, JS_OBJECT_TYPE, ecx);
   __ j(not_equal, &miss, Label::kNear);
+  __ test_b(FieldOperand(ecx, Map::kBitField2Offset),
+            1 << Map::kUseUserObjectComparison);
+  __ j(not_zero, &miss, Label::kNear);
 
   ASSERT(GetCondition() == equal);
   __ sub(eax, edx);
@@ -6871,8 +6910,14 @@ void ICCompareStub::GenerateKnownObjects(MacroAssembler* masm) {
   __ mov(ebx, FieldOperand(edx, HeapObject::kMapOffset));
   __ cmp(ecx, known_map_);
   __ j(not_equal, &miss, Label::kNear);
+  __ test_b(FieldOperand(ecx, Map::kBitField2Offset),
+            1 << Map::kUseUserObjectComparison);
+  __ j(not_zero, &miss, Label::kNear);
   __ cmp(ebx, known_map_);
   __ j(not_equal, &miss, Label::kNear);
+  __ test_b(FieldOperand(ebx, Map::kBitField2Offset),
+            1 << Map::kUseUserObjectComparison);
+  __ j(not_zero, &miss, Label::kNear);
 
   __ sub(eax, edx);
   __ ret(0);

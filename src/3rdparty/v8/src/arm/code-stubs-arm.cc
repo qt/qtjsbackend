@@ -1713,6 +1713,37 @@ void CompareStub::Generate(MacroAssembler* masm) {
   // NOTICE! This code is only reached after a smi-fast-case check, so
   // it is certain that at least one operand isn't a smi.
 
+  {
+      Label not_user_equal, user_equal;
+      __ and_(r2, r1, Operand(r0));
+      __ tst(r2, Operand(kSmiTagMask));
+      __ b(eq, &not_user_equal);
+
+      __ CompareObjectType(r0, r2, r4, JS_OBJECT_TYPE);
+      __ b(ne, &not_user_equal);
+
+      __ CompareObjectType(r1, r3, r4, JS_OBJECT_TYPE);
+      __ b(ne, &not_user_equal);
+
+      __ ldrb(r2, FieldMemOperand(r2, Map::kBitField2Offset));
+      __ and_(r2, r2, Operand(1 << Map::kUseUserObjectComparison));
+      __ cmp(r2, Operand(1 << Map::kUseUserObjectComparison));
+      __ b(eq, &user_equal);
+
+      __ ldrb(r3, FieldMemOperand(r3, Map::kBitField2Offset));
+      __ and_(r3, r3, Operand(1 << Map::kUseUserObjectComparison));
+      __ cmp(r3, Operand(1 << Map::kUseUserObjectComparison));
+      __ b(ne, &not_user_equal);
+
+      __ bind(&user_equal);
+
+      __ Push(r0, r1);
+      __ TailCallRuntime(Runtime::kUserObjectEquals, 2, 1);
+
+      __ bind(&not_user_equal);
+  }
+
+
   // Handle the case where the objects are identical.  Either returns the answer
   // or goes to slow.  Only falls through if the objects were not identical.
   EmitIdenticalObjectComparison(masm, &slow, cc_, never_nan_nan_);
@@ -6881,10 +6912,18 @@ void ICCompareStub::GenerateObjects(MacroAssembler* masm) {
   __ and_(r2, r1, Operand(r0));
   __ JumpIfSmi(r2, &miss);
 
-  __ CompareObjectType(r0, r2, r2, JS_OBJECT_TYPE);
+  __ CompareObjectType(r0, r2, r3, JS_OBJECT_TYPE);
   __ b(ne, &miss);
-  __ CompareObjectType(r1, r2, r2, JS_OBJECT_TYPE);
+  __ ldrb(r2, FieldMemOperand(r2, Map::kBitField2Offset));
+  __ and_(r2, r2, Operand(1 << Map::kUseUserObjectComparison));
+  __ cmp(r2, Operand(1 << Map::kUseUserObjectComparison));
+  __ b(eq, &miss);
+  __ CompareObjectType(r1, r2, r3, JS_OBJECT_TYPE);
   __ b(ne, &miss);
+  __ ldrb(r2, FieldMemOperand(r2, Map::kBitField2Offset));
+  __ and_(r2, r2, Operand(1 << Map::kUseUserObjectComparison));
+  __ cmp(r2, Operand(1 << Map::kUseUserObjectComparison));
+  __ b(eq, &miss);
 
   ASSERT(GetCondition() == eq);
   __ sub(r0, r0, Operand(r1));
@@ -6903,8 +6942,16 @@ void ICCompareStub::GenerateKnownObjects(MacroAssembler* masm) {
   __ ldr(r3, FieldMemOperand(r1, HeapObject::kMapOffset));
   __ cmp(r2, Operand(known_map_));
   __ b(ne, &miss);
+  __ ldrb(r2, FieldMemOperand(r2, Map::kBitField2Offset));
+  __ and_(r2, r2, Operand(1 << Map::kUseUserObjectComparison));
+  __ cmp(r2, Operand(1 << Map::kUseUserObjectComparison));
+  __ b(eq, &miss);
   __ cmp(r3, Operand(known_map_));
   __ b(ne, &miss);
+  __ ldrb(r3, FieldMemOperand(r3, Map::kBitField2Offset));
+  __ and_(r3, r3, Operand(1 << Map::kUseUserObjectComparison));
+  __ cmp(r3, Operand(1 << Map::kUseUserObjectComparison));
+  __ b(eq, &miss);
 
   __ sub(r0, r0, Operand(r1));
   __ Ret();
