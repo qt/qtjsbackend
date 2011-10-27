@@ -11,6 +11,7 @@
 #include "global-handles.h"
 #include "stub-cache.h"
 #include "cctest.h"
+#include "snapshot.h"
 
 using namespace v8::internal;
 
@@ -1629,13 +1630,14 @@ static int NumberOfGlobalObjects() {
 // optimized code.
 TEST(LeakNativeContextViaMap) {
   i::FLAG_allow_natives_syntax = true;
+  bool snapshot_enabled = i::Snapshot::IsEnabled();
   v8::HandleScope outer_scope;
   v8::Persistent<v8::Context> ctx1 = v8::Context::New();
   v8::Persistent<v8::Context> ctx2 = v8::Context::New();
   ctx1->Enter();
 
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ(4, NumberOfGlobalObjects());
+  CHECK_EQ((snapshot_enabled ? 6 : 4), NumberOfGlobalObjects());
 
   {
     v8::HandleScope inner_scope;
@@ -1656,7 +1658,7 @@ TEST(LeakNativeContextViaMap) {
     v8::V8::ContextDisposedNotification();
   }
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ(2, NumberOfGlobalObjects());
+  CHECK_EQ((snapshot_enabled ? 3 : 2), NumberOfGlobalObjects());
   ctx2.Dispose(ctx2->GetIsolate());
   HEAP->CollectAllAvailableGarbage();
   CHECK_EQ(0, NumberOfGlobalObjects());
@@ -1667,13 +1669,14 @@ TEST(LeakNativeContextViaMap) {
 // optimized code.
 TEST(LeakNativeContextViaFunction) {
   i::FLAG_allow_natives_syntax = true;
+  bool snapshot_enabled = i::Snapshot::IsEnabled();
   v8::HandleScope outer_scope;
   v8::Persistent<v8::Context> ctx1 = v8::Context::New();
   v8::Persistent<v8::Context> ctx2 = v8::Context::New();
   ctx1->Enter();
 
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ(4, NumberOfGlobalObjects());
+  CHECK_EQ((snapshot_enabled ? 6 : 4), NumberOfGlobalObjects());
 
   {
     v8::HandleScope inner_scope;
@@ -1694,7 +1697,7 @@ TEST(LeakNativeContextViaFunction) {
     v8::V8::ContextDisposedNotification();
   }
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ(2, NumberOfGlobalObjects());
+  CHECK_EQ((snapshot_enabled ? 3 : 2), NumberOfGlobalObjects());
   ctx2.Dispose(ctx2->GetIsolate());
   HEAP->CollectAllAvailableGarbage();
   CHECK_EQ(0, NumberOfGlobalObjects());
@@ -1703,13 +1706,14 @@ TEST(LeakNativeContextViaFunction) {
 
 TEST(LeakNativeContextViaMapKeyed) {
   i::FLAG_allow_natives_syntax = true;
+  bool snapshot_enabled = i::Snapshot::IsEnabled();
   v8::HandleScope outer_scope;
   v8::Persistent<v8::Context> ctx1 = v8::Context::New();
   v8::Persistent<v8::Context> ctx2 = v8::Context::New();
   ctx1->Enter();
 
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ(4, NumberOfGlobalObjects());
+  CHECK_EQ((snapshot_enabled ? 6 : 4), NumberOfGlobalObjects());
 
   {
     v8::HandleScope inner_scope;
@@ -1730,7 +1734,7 @@ TEST(LeakNativeContextViaMapKeyed) {
     v8::V8::ContextDisposedNotification();
   }
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ(2, NumberOfGlobalObjects());
+  CHECK_EQ((snapshot_enabled ? 3 : 2), NumberOfGlobalObjects());
   ctx2.Dispose(ctx2->GetIsolate());
   HEAP->CollectAllAvailableGarbage();
   CHECK_EQ(0, NumberOfGlobalObjects());
@@ -1739,13 +1743,14 @@ TEST(LeakNativeContextViaMapKeyed) {
 
 TEST(LeakNativeContextViaMapProto) {
   i::FLAG_allow_natives_syntax = true;
+  bool snapshot_enabled = i::Snapshot::IsEnabled();
   v8::HandleScope outer_scope;
   v8::Persistent<v8::Context> ctx1 = v8::Context::New();
   v8::Persistent<v8::Context> ctx2 = v8::Context::New();
   ctx1->Enter();
 
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ(4, NumberOfGlobalObjects());
+  CHECK_EQ((snapshot_enabled ? 6 : 4), NumberOfGlobalObjects());
 
   {
     v8::HandleScope inner_scope;
@@ -1770,7 +1775,7 @@ TEST(LeakNativeContextViaMapProto) {
     v8::V8::ContextDisposedNotification();
   }
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ(2, NumberOfGlobalObjects());
+  CHECK_EQ((snapshot_enabled ? 3 : 2), NumberOfGlobalObjects());
   ctx2.Dispose(ctx2->GetIsolate());
   HEAP->CollectAllAvailableGarbage();
   CHECK_EQ(0, NumberOfGlobalObjects());

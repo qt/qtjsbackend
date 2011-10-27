@@ -67,6 +67,7 @@ class CompilationInfo {
     return LanguageModeField::decode(flags_);
   }
   bool is_in_loop() const { return IsInLoop::decode(flags_); }
+  bool is_qml_mode() const { return IsQmlMode::decode(flags_); }
   FunctionLiteral* function() const { return function_; }
   Scope* scope() const { return scope_; }
   Scope* global_scope() const { return global_scope_; }
@@ -101,6 +102,9 @@ class CompilationInfo {
   void MarkAsInLoop() {
     ASSERT(is_lazy());
     flags_ |= IsInLoop::encode(true);
+  }
+  void MarkAsQmlMode() {
+    flags_ |= IsQmlMode::encode(true);
   }
   void MarkAsNative() {
     flags_ |= IsNative::encode(true);
@@ -285,7 +289,8 @@ class CompilationInfo {
   class IsNonDeferredCalling: public BitField<bool, 11, 1> {};
   // If the compiled code saves double caller registers that it clobbers.
   class SavesCallerDoubles: public BitField<bool, 12, 1> {};
-
+  // Qml mode
+  class IsQmlMode: public BitField<bool, 13, 1> {};
 
   unsigned flags_;
 
@@ -489,22 +494,25 @@ class Compiler : public AllStatic {
   // contains NULL.
 
   // Compile a String source within a context.
-  static Handle<SharedFunctionInfo> Compile(Handle<String> source,
-                                            Handle<Object> script_name,
-                                            int line_offset,
-                                            int column_offset,
-                                            Handle<Context> context,
-                                            v8::Extension* extension,
-                                            ScriptDataImpl* pre_data,
-                                            Handle<Object> script_data,
-                                            NativesFlag is_natives_code);
+  static Handle<SharedFunctionInfo> Compile(
+          Handle<String> source,
+          Handle<Object> script_name,
+          int line_offset,
+          int column_offset,
+          Handle<Context> context,
+          v8::Extension* extension,
+          ScriptDataImpl* pre_data,
+          Handle<Object> script_data,
+          NativesFlag is_natives_code,
+          v8::Script::CompileFlags = v8::Script::Default);
 
   // Compile a String source within a context for Eval.
   static Handle<SharedFunctionInfo> CompileEval(Handle<String> source,
                                                 Handle<Context> context,
                                                 bool is_global,
                                                 LanguageMode language_mode,
-                                                int scope_position);
+                                                int scope_position,
+                                                bool qml_mode);
 
   // Compile from function info (used for lazy compilation). Returns true on
   // success and false if the compilation resulted in a stack overflow.

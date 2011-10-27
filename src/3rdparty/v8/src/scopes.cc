@@ -37,6 +37,8 @@
 
 #include "allocation-inl.h"
 
+#include "debug.h"
+
 namespace v8 {
 namespace internal {
 
@@ -194,6 +196,8 @@ void Scope::SetDefaults(ScopeType type,
   // Inherit the strict mode from the parent scope.
   language_mode_ = (outer_scope != NULL)
       ? outer_scope->language_mode_ : CLASSIC_MODE;
+  qml_mode_flag_ = (outer_scope != NULL)
+      ? outer_scope->qml_mode_flag_ : kNonQmlMode;
   outer_scope_calls_non_strict_eval_ = false;
   inner_scope_calls_eval_ = false;
   force_eager_compilation_ = false;
@@ -1025,6 +1029,26 @@ bool Scope::ResolveVariable(CompilationInfo* info,
   switch (binding_kind) {
     case BOUND:
       // We found a variable binding.
+      if (is_qml_mode()) {
+        Handle<GlobalObject> global = isolate_->global_object();
+
+#ifdef ENABLE_DEBUGGER_SUPPORT
+        if (isolate_->debug()->IsLoaded() && isolate_->debug()->InDebugger()) {
+          // Get the context before the debugger was entered.
+          SaveContext *save = isolate_->save_context();
+          while (save != NULL &&
+                 *save->context() == *isolate_->debug()->debug_context()) {
+            save = save->prev();
+          }
+
+          global = Handle<GlobalObject>(save->context()->global_object());
+        }
+#endif
+
+        if (!global->HasProperty(*(proxy->name()))) {
+          var->set_is_qml_global(true);
+        }
+      }
       break;
 
     case BOUND_EVAL_SHADOWED:
@@ -1034,6 +1058,28 @@ bool Scope::ResolveVariable(CompilationInfo* info,
       // debugger to evaluate arbitrary expressions at a break point).
       if (var->IsGlobalObjectProperty()) {
         var = NonLocal(proxy->name(), DYNAMIC_GLOBAL);
+
+        if (is_qml_mode()) {
+          Handle<GlobalObject> global = isolate_->global_object();
+
+#ifdef ENABLE_DEBUGGER_SUPPORT
+          if (isolate_->debug()->IsLoaded() &&
+              isolate_->debug()->InDebugger()) {
+            // Get the context before the debugger was entered.
+            SaveContext *save = isolate_->save_context();
+            while (save != NULL &&
+                   *save->context() == *isolate_->debug()->debug_context()) {
+              save = save->prev();
+            }
+
+            global = Handle<GlobalObject>(save->context()->global_object());
+          }
+#endif
+
+          if (!global->HasProperty(*(proxy->name()))) {
+            var->set_is_qml_global(true);
+          }
+        }
       } else if (var->is_dynamic()) {
         var = NonLocal(proxy->name(), DYNAMIC);
       } else {
@@ -1046,12 +1092,56 @@ bool Scope::ResolveVariable(CompilationInfo* info,
     case UNBOUND:
       // No binding has been found. Declare a variable on the global object.
       var = info->global_scope()->DeclareDynamicGlobal(proxy->name());
+
+      if (is_qml_mode()) {
+        Handle<GlobalObject> global = isolate_->global_object();
+
+#ifdef ENABLE_DEBUGGER_SUPPORT
+        if (isolate_->debug()->IsLoaded() && isolate_->debug()->InDebugger()) {
+          // Get the context before the debugger was entered.
+          SaveContext *save = isolate_->save_context();
+          while (save != NULL &&
+                 *save->context() == *isolate_->debug()->debug_context()) {
+            save = save->prev();
+          }
+
+          global = Handle<GlobalObject>(save->context()->global_object());
+        }
+#endif
+
+        if (!global->HasProperty(*(proxy->name()))) {
+          var->set_is_qml_global(true);
+        }
+      }
+
       break;
 
     case UNBOUND_EVAL_SHADOWED:
       // No binding has been found. But some scope makes a
       // non-strict 'eval' call.
       var = NonLocal(proxy->name(), DYNAMIC_GLOBAL);
+
+      if (is_qml_mode()) {
+        Handle<GlobalObject> global = isolate_->global_object();
+
+#ifdef ENABLE_DEBUGGER_SUPPORT
+        if (isolate_->debug()->IsLoaded() && isolate_->debug()->InDebugger()) {
+          // Get the context before the debugger was entered.
+          SaveContext *save = isolate_->save_context();
+          while (save != NULL &&
+                 *save->context() == *isolate_->debug()->debug_context()) {
+            save = save->prev();
+          }
+
+          global = Handle<GlobalObject>(save->context()->global_object());
+        }
+#endif
+
+        if (!global->HasProperty(*(proxy->name()))) {
+          var->set_is_qml_global(true);
+        }
+      }
+
       break;
 
     case DYNAMIC_LOOKUP:

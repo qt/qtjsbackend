@@ -581,6 +581,7 @@ class FullCodeGenerator: public AstVisitor {
   bool is_native() { return info_->is_native(); }
   bool is_classic_mode() { return language_mode() == CLASSIC_MODE; }
   LanguageMode language_mode() { return function()->language_mode(); }
+  bool is_qml_mode() { return function()->qml_mode(); }
   FunctionLiteral* function() { return info_->function(); }
   Scope* scope() { return scope_; }
 

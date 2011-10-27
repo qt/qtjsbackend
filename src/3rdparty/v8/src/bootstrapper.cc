@@ -835,6 +835,7 @@ void Genesis::HookUpInnerGlobal(Handle<GlobalObject> inner_global) {
   Handle<JSBuiltinsObject> builtins_global(native_context_->builtins());
   native_context_->set_extension(*inner_global);
   native_context_->set_global_object(*inner_global);
+  native_context_->set_qml_global_object(*inner_global);
   native_context_->set_security_token(*inner_global);
   static const PropertyAttributes attributes =
       static_cast<PropertyAttributes>(READ_ONLY | DONT_DELETE);
@@ -861,6 +862,7 @@ bool Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
   // Set extension and global object.
   native_context()->set_extension(*inner_global);
   native_context()->set_global_object(*inner_global);
+  native_context()->set_qml_global_object(*inner_global);
   // Security setup: Set the security token of the global object to
   // its the inner global. This makes the security check between two
   // different contexts fail by default even in case of global

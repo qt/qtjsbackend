@@ -1945,10 +1945,13 @@ class HDeclareGlobals: public HUnaryOperation {
 
 class HGlobalObject: public HUnaryOperation {
  public:
-  explicit HGlobalObject(HValue* context) : HUnaryOperation(context) {
+  explicit HGlobalObject(HValue* context)
+      : HUnaryOperation(context), qml_global_(false) {
     set_representation(Representation::Tagged());
     SetFlag(kUseGVN);
   }
+
+  virtual void PrintDataTo(StringStream* stream);
 
   DECLARE_CONCRETE_INSTRUCTION(GlobalObject)
 
@@ -1956,11 +1959,18 @@ class HGlobalObject: public HUnaryOperation {
     return Representation::Tagged();
   }
 
+  bool qml_global() { return qml_global_; }
+  void set_qml_global(bool v) { qml_global_ = v; }
+
  protected:
-  virtual bool DataEquals(HValue* other) { return true; }
+  virtual bool DataEquals(HValue* other) {
+      HGlobalObject* o = HGlobalObject::cast(other);
+      return o->qml_global_ == qml_global_;
+  }
 
  private:
   virtual bool IsDeletable() const { return true; }
+  bool qml_global_;
 };
 
 
@@ -2155,7 +2165,7 @@ class HCallFunction: public HBinaryCall {
 class HCallGlobal: public HUnaryCall {
  public:
   HCallGlobal(HValue* context, Handle<String> name, int argument_count)
-      : HUnaryCall(context, argument_count), name_(name) {
+      : HUnaryCall(context, argument_count), name_(name), qml_global_(false) {
   }
 
   virtual void PrintDataTo(StringStream* stream);
@@ -2167,10 +2177,14 @@ class HCallGlobal: public HUnaryCall {
     return Representation::Tagged();
   }
 
+  bool qml_global() { return qml_global_; }
+  void set_qml_global(bool v) { qml_global_ = v; }
+
   DECLARE_CONCRETE_INSTRUCTION(CallGlobal)
 
  private:
   Handle<String> name_;
+  bool qml_global_;
 };
 
 

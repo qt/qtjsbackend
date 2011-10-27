@@ -80,6 +80,7 @@ Handle<ScopeInfo> ScopeInfo::Create(Scope* scope, Zone* zone) {
   int flags = TypeField::encode(scope->type()) |
       CallsEvalField::encode(scope->calls_eval()) |
       LanguageModeField::encode(scope->language_mode()) |
+      QmlModeField::encode(scope->is_qml_mode()) |
       FunctionVariableField::encode(function_name_info) |
       FunctionVariableMode::encode(function_variable_mode);
   scope_info->SetFlags(flags);
@@ -170,6 +171,11 @@ LanguageMode ScopeInfo::language_mode() {
 }
 
 
+bool ScopeInfo::IsQmlMode() {
+  return length() > 0 && QmlModeField::decode(Flags());
+}
+
+
 int ScopeInfo::LocalCount() {
   return StackLocalCount() + ContextLocalCount();
 }
@@ -185,7 +191,7 @@ int ScopeInfo::StackSlotCount() {
 }
 
 
-int ScopeInfo::ContextLength() {
+int ScopeInfo::ContextLength(bool qml_function) {
   if (length() > 0) {
     int context_locals = ContextLocalCount();
     bool function_name_context_slot =
@@ -195,7 +201,9 @@ int ScopeInfo::ContextLength() {
         Type() == WITH_SCOPE ||
         (Type() == FUNCTION_SCOPE && CallsEval()) ||
         Type() == MODULE_SCOPE;
-    if (has_context) {
+    // TODO(pvarga): The QML mode should be checked in the
+    // has_context expression.
+    if (has_context || qml_function) {
       return Context::MIN_CONTEXT_SLOTS + context_locals +
           (function_name_context_slot ? 1 : 0);
     }
