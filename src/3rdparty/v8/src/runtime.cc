@@ -7135,6 +7135,29 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_StringEquals) {
 }
 
 
+RUNTIME_FUNCTION(MaybeObject*, Runtime_UserObjectEquals) {
+  NoHandleAllocation ha;
+  ASSERT(args.length() == 2);
+
+  CONVERT_ARG_CHECKED(JSObject, lhs, 1);
+  CONVERT_ARG_CHECKED(JSObject, rhs, 0);
+
+  bool result;
+
+  v8::UserObjectComparisonCallback callback = isolate->UserObjectComparisonCallback();
+  if (callback) {
+      HandleScope scope(isolate);
+      Handle<JSObject> lhs_handle(lhs);
+      Handle<JSObject> rhs_handle(rhs);
+      result = callback(v8::Utils::ToLocal(lhs_handle), v8::Utils::ToLocal(rhs_handle));
+  } else {
+      result = (lhs == rhs);
+  }
+
+  return Smi::FromInt(result?0:1);
+}
+
+
 RUNTIME_FUNCTION(MaybeObject*, Runtime_NumberCompare) {
   NoHandleAllocation ha;
   ASSERT(args.length() == 3);

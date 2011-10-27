@@ -273,6 +273,9 @@ class ThreadLocalTop BASE_EMBEDDED {
   // Head of the list of live LookupResults.
   LookupResult* top_lookup_result_;
 
+  // Call back function for user object comparisons
+  v8::UserObjectComparisonCallback user_object_comparison_callback_;
+
   // Whether out of memory exceptions should be ignored.
   bool ignore_out_of_memory_;
 
@@ -701,6 +704,11 @@ class Isolate {
 
   void SetFailedAccessCheckCallback(v8::FailedAccessCheckCallback callback);
   void ReportFailedAccessCheck(JSObject* receiver, v8::AccessType type);
+
+  void SetUserObjectComparisonCallback(v8::UserObjectComparisonCallback callback);
+  inline v8::UserObjectComparisonCallback UserObjectComparisonCallback() { 
+      return thread_local_top()->user_object_comparison_callback_;
+  }
 
   // Exception throwing support. The caller should use the result
   // of Throw() as its return value.

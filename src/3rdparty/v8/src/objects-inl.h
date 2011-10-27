@@ -2908,14 +2908,14 @@ bool Map::is_extensible() {
 
 void Map::set_attached_to_shared_function_info(bool value) {
   if (value) {
-    set_bit_field2(bit_field2() | (1 << kAttachedToSharedFunctionInfo));
+    set_bit_field3(bit_field3() | (1 << kAttachedToSharedFunctionInfo));
   } else {
-    set_bit_field2(bit_field2() & ~(1 << kAttachedToSharedFunctionInfo));
+    set_bit_field3(bit_field3() & ~(1 << kAttachedToSharedFunctionInfo));
   }
 }
 
 bool Map::attached_to_shared_function_info() {
-  return ((1 << kAttachedToSharedFunctionInfo) & bit_field2()) != 0;
+  return ((1 << kAttachedToSharedFunctionInfo) & bit_field3()) != 0;
 }
 
 
@@ -2942,6 +2942,20 @@ void Map::set_has_external_resource(bool value) {
 bool Map::has_external_resource()
 {
     return ((1 << kHasExternalResource) & bit_field()) != 0;
+}
+
+
+void Map::set_use_user_object_comparison(bool value) {
+  if (value) {
+    set_bit_field2(bit_field2() | (1 << kUseUserObjectComparison));
+  } else {
+    set_bit_field2(bit_field2() & ~(1 << kUseUserObjectComparison));
+  }
+}
+
+
+bool Map::use_user_object_comparison() {
+    return ((1 << kUseUserObjectComparison) & bit_field2()) != 0;
 }
 
 
@@ -3507,6 +3521,8 @@ ACCESSORS(ObjectTemplateInfo, internal_field_count, Object,
           kInternalFieldCountOffset)
 ACCESSORS(ObjectTemplateInfo, has_external_resource, Object,
           kHasExternalResourceOffset)
+ACCESSORS(ObjectTemplateInfo, use_user_object_comparison, Object, 
+          kUseUserObjectComparisonOffset)
 
 ACCESSORS(SignatureInfo, receiver, Object, kReceiverOffset)
 ACCESSORS(SignatureInfo, args, Object, kArgsOffset)
