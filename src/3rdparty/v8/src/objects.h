@@ -4713,6 +4713,11 @@ class Map: public HeapObject {
   inline void set_has_external_resource(bool value);
   inline bool has_external_resource();
 
+  // Tells whether the user object comparison callback should be used for
+  // comparisons involving this object
+  inline void set_use_user_object_comparison(bool value);
+  inline bool use_user_object_comparison();
+  
   // [prototype]: implicit prototype object.
   DECL_ACCESSORS(prototype, Object)
 
@@ -4968,7 +4973,7 @@ class Map: public HeapObject {
   static const int kIsExtensible = 0;
   static const int kFunctionWithPrototype = 1;
   static const int kStringWrapperSafeForDefaultValueOf = 2;
-  static const int kAttachedToSharedFunctionInfo = 3;
+  static const int kUseUserObjectComparison = 3;
   // No bits can be used after kElementsKindFirstBit, they are all reserved for
   // storing ElementKind.
   static const int kElementsKindShift = 4;
@@ -4987,6 +4992,7 @@ class Map: public HeapObject {
   static const int kIsShared = 0;
   static const int kNamedInterceptorIsFallback = 1;
   static const int kHasInstanceCallHandler = 2;
+  static const int kAttachedToSharedFunctionInfo = 3;
 
   // Layout of the default cache. It holds alternating name and code objects.
   static const int kCodeCacheEntrySize = 2;
@@ -8374,6 +8380,7 @@ class ObjectTemplateInfo: public TemplateInfo {
   DECL_ACCESSORS(constructor, Object)
   DECL_ACCESSORS(internal_field_count, Object)
   DECL_ACCESSORS(has_external_resource, Object)
+  DECL_ACCESSORS(use_user_object_comparison, Object)
 
   static inline ObjectTemplateInfo* cast(Object* obj);
 
@@ -8391,7 +8398,8 @@ class ObjectTemplateInfo: public TemplateInfo {
   static const int kInternalFieldCountOffset =
       kConstructorOffset + kPointerSize;
   static const int kHasExternalResourceOffset = kInternalFieldCountOffset + kPointerSize;
-  static const int kSize = kHasExternalResourceOffset + kPointerSize;
+  static const int kUseUserObjectComparisonOffset = kHasExternalResourceOffset + kPointerSize;
+  static const int kSize = kUseUserObjectComparisonOffset + kPointerSize;
 };
 
 

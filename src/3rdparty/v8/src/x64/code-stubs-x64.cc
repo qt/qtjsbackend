@@ -3328,6 +3328,37 @@ void CompareStub::Generate(MacroAssembler* masm) {
   // NOTICE! This code is only reached after a smi-fast-case check, so
   // it is certain that at least one operand isn't a smi.
 
+  {
+    Label not_user_equal, user_equal;
+    __ JumpIfSmi(rax, &not_user_equal);
+    __ JumpIfSmi(rdx, &not_user_equal);
+
+    __ CmpObjectType(rax, JS_OBJECT_TYPE, rbx);
+    __ j(not_equal, &not_user_equal);
+
+    __ CmpObjectType(rdx, JS_OBJECT_TYPE, rcx);
+    __ j(not_equal, &not_user_equal);
+
+    __ testb(FieldOperand(rbx, Map::kBitField2Offset),
+             Immediate(1 << Map::kUseUserObjectComparison));
+    __ j(not_zero, &user_equal);
+    __ testb(FieldOperand(rcx, Map::kBitField2Offset),
+             Immediate(1 << Map::kUseUserObjectComparison));
+    __ j(not_zero, &user_equal);
+
+    __ jmp(&not_user_equal);
+
+    __ bind(&user_equal);
+   
+    __ pop(rbx); // Return address.
+    __ push(rax);
+    __ push(rdx);
+    __ push(rbx);
+    __ TailCallRuntime(Runtime::kUserObjectEquals, 2, 1);
+   
+    __ bind(&not_user_equal);
+  }
+
   // Two identical objects are equal unless they are both NaN or undefined.
   {
     Label not_identical;
@@ -5705,8 +5736,14 @@ void ICCompareStub::GenerateObjects(MacroAssembler* masm) {
 
   __ CmpObjectType(rax, JS_OBJECT_TYPE, rcx);
   __ j(not_equal, &miss, Label::kNear);
+  __ testb(FieldOperand(rcx, Map::kBitField2Offset),
+           Immediate(1 << Map::kUseUserObjectComparison));
+  __ j(not_zero, &miss, Label::kNear);
   __ CmpObjectType(rdx, JS_OBJECT_TYPE, rcx);
   __ j(not_equal, &miss, Label::kNear);
+  __ testb(FieldOperand(rcx, Map::kBitField2Offset),
+           Immediate(1 << Map::kUseUserObjectComparison));
+  __ j(not_zero, &miss, Label::kNear);
 
   ASSERT(GetCondition() == equal);
   __ subq(rax, rdx);
@@ -5726,8 +5763,14 @@ void ICCompareStub::GenerateKnownObjects(MacroAssembler* masm) {
   __ movq(rbx, FieldOperand(rdx, HeapObject::kMapOffset));
   __ Cmp(rcx, known_map_);
   __ j(not_equal, &miss, Label::kNear);
+  __ testb(FieldOperand(rcx, Map::kBitField2Offset),
+           Immediate(1 << Map::kUseUserObjectComparison));
+  __ j(not_zero, &miss, Label::kNear);
   __ Cmp(rbx, known_map_);
   __ j(not_equal, &miss, Label::kNear);
+  __ testb(FieldOperand(rbx, Map::kBitField2Offset),
+           Immediate(1 << Map::kUseUserObjectComparison));
+  __ j(not_zero, &miss, Label::kNear);
 
   __ subq(rax, rdx);
   __ ret(0);
