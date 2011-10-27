@@ -1217,6 +1217,7 @@ void FunctionTemplate::SetNamedInstancePropertyHandler(
       NamedPropertyQuery query,
       NamedPropertyDeleter remover,
       NamedPropertyEnumerator enumerator,
+      bool is_fallback,
       Handle<Value> data) {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
   if (IsDeadCheck(isolate,
@@ -1235,6 +1236,7 @@ void FunctionTemplate::SetNamedInstancePropertyHandler(
   if (query != 0) SET_FIELD_WRAPPED(obj, set_query, query);
   if (remover != 0) SET_FIELD_WRAPPED(obj, set_deleter, remover);
   if (enumerator != 0) SET_FIELD_WRAPPED(obj, set_enumerator, enumerator);
+  obj->set_is_fallback(i::Smi::FromInt(is_fallback));
 
   if (data.IsEmpty()) data = v8::Undefined();
   obj->set_data(*Utils::OpenHandle(*data));
@@ -1360,12 +1362,13 @@ void ObjectTemplate::SetAccessor(v8::Handle<String> name,
 }
 
 
-void ObjectTemplate::SetNamedPropertyHandler(NamedPropertyGetter getter,
-                                             NamedPropertySetter setter,
-                                             NamedPropertyQuery query,
-                                             NamedPropertyDeleter remover,
-                                             NamedPropertyEnumerator enumerator,
-                                             Handle<Value> data) {
+void ObjectTemplate::SetNamedPropertyHandler(
+      NamedPropertyGetter getter,
+      NamedPropertySetter setter,
+      NamedPropertyQuery query,
+      NamedPropertyDeleter remover,
+      NamedPropertyEnumerator enumerator,
+      Handle<Value> data) {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
   if (IsDeadCheck(isolate, "v8::ObjectTemplate::SetNamedPropertyHandler()")) {
     return;
@@ -1381,6 +1384,35 @@ void ObjectTemplate::SetNamedPropertyHandler(NamedPropertyGetter getter,
                                                         query,
                                                         remover,
                                                         enumerator,
+                                                        false,
+                                                        data);
+}
+
+
+void ObjectTemplate::SetFallbackPropertyHandler(
+      NamedPropertyGetter getter,
+      NamedPropertySetter setter,
+      NamedPropertyQuery query,
+      NamedPropertyDeleter remover,
+      NamedPropertyEnumerator enumerator,
+      Handle<Value> data) {
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  if (IsDeadCheck(isolate,
+                  "v8::ObjectTemplate::SetFallbackPropertyHandler()")) {
+    return;
+  }
+  ENTER_V8(isolate);
+  i::HandleScope scope(isolate);
+  EnsureConstructor(this);
+  i::FunctionTemplateInfo* constructor =
+      i::FunctionTemplateInfo::cast(Utils::OpenHandle(this)->constructor());
+  i::Handle<i::FunctionTemplateInfo> cons(constructor);
+  Utils::ToLocal(cons)->SetNamedInstancePropertyHandler(getter,
+                                                        setter,
+                                                        query,
+                                                        remover,
+                                                        enumerator,
+                                                        true,
                                                         data);
 }
 

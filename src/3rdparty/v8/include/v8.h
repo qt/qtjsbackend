@@ -2426,6 +2426,7 @@ class V8EXPORT FunctionTemplate : public Template {
                                        NamedPropertyQuery query,
                                        NamedPropertyDeleter remover,
                                        NamedPropertyEnumerator enumerator,
+                                       bool is_fallback,
                                        Handle<Value> data);
   void SetIndexedInstancePropertyHandler(IndexedPropertyGetter getter,
                                          IndexedPropertySetter setter,
@@ -2516,6 +2517,12 @@ class V8EXPORT ObjectTemplate : public Template {
                                NamedPropertyDeleter deleter = 0,
                                NamedPropertyEnumerator enumerator = 0,
                                Handle<Value> data = Handle<Value>());
+  void SetFallbackPropertyHandler(NamedPropertyGetter getter,
+                                  NamedPropertySetter setter = 0,
+                                  NamedPropertyQuery query = 0,
+                                  NamedPropertyDeleter deleter = 0,
+                                  NamedPropertyEnumerator enumerator = 0,
+                                  Handle<Value> data = Handle<Value>());
 
   /**
    * Sets an indexed property handler on the object template.

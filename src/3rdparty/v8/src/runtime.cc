@@ -1314,9 +1314,9 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
       // Do the lookup locally only, see ES5 erratum.
       LookupResult lookup(isolate);
       if (FLAG_es52_globals) {
-        global->LocalLookup(*name, &lookup, true);
+        global->LocalLookup(*name, &lookup, true, true);
       } else {
-        global->Lookup(*name, &lookup);
+        global->Lookup(*name, &lookup, true);
       }
       if (lookup.IsFound()) {
         // We found an existing property. Unless it was an interceptor
@@ -1374,7 +1374,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
       RETURN_IF_EMPTY_HANDLE(isolate,
           JSObject::SetProperty(
               global, name, value, static_cast<PropertyAttributes>(attr),
-              language_mode == CLASSIC_MODE ? kNonStrictMode : kStrictMode));
+              language_mode == CLASSIC_MODE ? kNonStrictMode : kStrictMode,
+              true));
     }
   }
 
@@ -1516,7 +1517,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   // the whole chain of hidden prototypes to do a 'local' lookup.
   Object* object = global;
   LookupResult lookup(isolate);
-  JSObject::cast(object)->LocalLookup(*name, &lookup, true);
+  JSObject::cast(object)->LocalLookup(*name, &lookup, true, true);
   if (lookup.IsInterceptor()) {
     HandleScope handle_scope(isolate);
     PropertyAttributes intercepted =
@@ -1535,7 +1536,9 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   // Reload global in case the loop above performed a GC.
   global = isolate->context()->global_object();
   if (assign) {
-    return global->SetProperty(*name, args[2], attributes, strict_mode_flag);
+    return global->SetProperty(
+        *name, args[2], attributes, strict_mode_flag,
+        JSReceiver::MAY_BE_STORE_FROM_KEYED, true);
   }
   return isolate->heap()->undefined_value();
 }

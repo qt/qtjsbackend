@@ -3398,6 +3398,14 @@ bool Map::is_shared() {
   return IsShared::decode(bit_field3());
 }
 
+void Map::set_named_interceptor_is_fallback(bool value) {
+  set_bit_field3(NamedInterceptorIsFallback::update(bit_field3(), value));
+}
+
+bool Map::named_interceptor_is_fallback() {
+  return NamedInterceptorIsFallback::decode(bit_field3());
+}
+
 
 void Map::set_dictionary_map(bool value) {
   set_bit_field3(DictionaryMap::update(bit_field3(), value));
@@ -4169,6 +4177,7 @@ ACCESSORS(InterceptorInfo, query, Object, kQueryOffset)
 ACCESSORS(InterceptorInfo, deleter, Object, kDeleterOffset)
 ACCESSORS(InterceptorInfo, enumerator, Object, kEnumeratorOffset)
 ACCESSORS(InterceptorInfo, data, Object, kDataOffset)
+ACCESSORS(InterceptorInfo, is_fallback, Smi, kFallbackOffset)
 
 ACCESSORS(CallHandlerInfo, callback, Object, kCallbackOffset)
 ACCESSORS(CallHandlerInfo, data, Object, kDataOffset)
