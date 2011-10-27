@@ -1280,6 +1280,10 @@ Handle<JSFunction> Factory::CreateApiFunction(
   // Set interceptor information in the map.
   if (!obj->named_property_handler()->IsUndefined()) {
     map->set_has_named_interceptor();
+    InterceptorInfo *nph = InterceptorInfo::cast(obj->named_property_handler());
+    bool is_fallback =
+        nph->is_fallback()->IsUndefined()?false:nph->is_fallback()->value();
+    map->set_named_interceptor_is_fallback(is_fallback);
   }
   if (!obj->indexed_property_handler()->IsUndefined()) {
     map->set_has_indexed_interceptor();

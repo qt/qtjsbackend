@@ -1295,7 +1295,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
       // Lookup the property in the global object, and don't set the
       // value of the variable if the property is already there.
       LookupResult lookup(isolate);
-      global->Lookup(*name, &lookup);
+      global->Lookup(*name, &lookup, true);
       if (lookup.IsProperty()) {
         // We found an existing property. Unless it was an interceptor
         // that claims the property is absent, skip this declaration.
@@ -1322,7 +1322,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
     }
 
     LookupResult lookup(isolate);
-    global->LocalLookup(*name, &lookup);
+    global->LocalLookup(*name, &lookup, true);
 
     // Compute the property attributes. According to ECMA-262, section
     // 13, page 71, the property must be read-only and
@@ -1372,7 +1372,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
           JSReceiver::SetProperty(global, name, value,
                                   static_cast<PropertyAttributes>(attr),
                                   language_mode == CLASSIC_MODE
-                                      ? kNonStrictMode : kStrictMode));
+                                      ? kNonStrictMode : kStrictMode,
+                                  true));
     }
   }
 
@@ -1510,7 +1511,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   while (object->IsJSObject() &&
          JSObject::cast(object)->map()->is_hidden_prototype()) {
     JSObject* raw_holder = JSObject::cast(object);
-    raw_holder->LocalLookup(*name, &lookup);
+    raw_holder->LocalLookup(*name, &lookup, true);
     if (lookup.IsFound() && lookup.type() == INTERCEPTOR) {
       HandleScope handle_scope(isolate);
       Handle<JSObject> holder(raw_holder);
@@ -1533,7 +1534,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   // Reload global in case the loop above performed a GC.
   global = isolate->context()->global();
   if (assign) {
-    return global->SetProperty(*name, args[2], attributes, strict_mode_flag);
+    return global->SetProperty(
+        *name, args[2], attributes, strict_mode_flag, true);
   }
   return isolate->heap()->undefined_value();
 }
