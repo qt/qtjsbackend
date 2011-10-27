@@ -4865,15 +4865,16 @@ class Map: public HeapObject {
   inline int bit_field3();
   inline void set_bit_field3(int value);
 
-  class EnumLengthBits:             public BitField<int,   0, 11> {};
-  class NumberOfOwnDescriptorsBits: public BitField<int,  11, 11> {};
-  class IsShared:                   public BitField<bool, 22,  1> {};
-  class FunctionWithPrototype:      public BitField<bool, 23,  1> {};
-  class DictionaryMap:              public BitField<bool, 24,  1> {};
-  class OwnsDescriptors:            public BitField<bool, 25,  1> {};
-  class IsObserved:                 public BitField<bool, 26,  1> {};
-  class NamedInterceptorIsFallback: public BitField<bool, 27,  1> {};
-  class HasInstanceCallHandler:     public BitField<bool, 28,  1> {};
+  class EnumLengthBits:               public BitField<int,   0, 11> {};
+  class NumberOfOwnDescriptorsBits:   public BitField<int,  11, 11> {};
+  class IsShared:                     public BitField<bool, 22,  1> {};
+  class FunctionWithPrototype:        public BitField<bool, 23,  1> {};
+  class DictionaryMap:                public BitField<bool, 24,  1> {};
+  class OwnsDescriptors:              public BitField<bool, 25,  1> {};
+  class IsObserved:                   public BitField<bool, 26,  1> {};
+  class NamedInterceptorIsFallback:   public BitField<bool, 27,  1> {};
+  class HasInstanceCallHandler:       public BitField<bool, 28,  1> {};
+  class AttachedToSharedFunctionInfo: public BitField<bool, 29,  1> {};
 
   // Tells whether the object in the prototype property will be used
   // for instances created from this function.  If the prototype
@@ -5048,6 +5049,11 @@ class Map: public HeapObject {
   // object
   inline void set_has_external_resource(bool value);
   inline bool has_external_resource();
+
+  // Tells whether the user object comparison callback should be used for
+  // comparisons involving this object
+  inline void set_use_user_object_comparison(bool value);
+  inline bool use_user_object_comparison();
 
   // [prototype]: implicit prototype object.
   DECL_ACCESSORS(prototype, Object)
@@ -5382,7 +5388,7 @@ class Map: public HeapObject {
   // Bit positions for bit field 2
   static const int kIsExtensible = 0;
   static const int kStringWrapperSafeForDefaultValueOf = 1;
-  static const int kAttachedToSharedFunctionInfo = 2;
+  static const int kUseUserObjectComparison = 2;
   // No bits can be used after kElementsKindFirstBit, they are all reserved for
   // storing ElementKind.
   static const int kElementsKindShift = 3;
@@ -8845,6 +8851,7 @@ class ObjectTemplateInfo: public TemplateInfo {
   DECL_ACCESSORS(constructor, Object)
   DECL_ACCESSORS(internal_field_count, Object)
   DECL_ACCESSORS(has_external_resource, Object)
+  DECL_ACCESSORS(use_user_object_comparison, Object)
 
   static inline ObjectTemplateInfo* cast(Object* obj);
 
@@ -8857,7 +8864,9 @@ class ObjectTemplateInfo: public TemplateInfo {
       kConstructorOffset + kPointerSize;
   static const int kHasExternalResourceOffset =
       kInternalFieldCountOffset + kPointerSize;
-  static const int kSize = kHasExternalResourceOffset + kPointerSize;
+  static const int kUseUserObjectComparisonOffset =
+      kHasExternalResourceOffset + kPointerSize;
+  static const int kSize = kUseUserObjectComparisonOffset + kPointerSize;
 };
 
 

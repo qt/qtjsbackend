@@ -1245,6 +1245,7 @@ Handle<JSFunction> Factory::CreateApiFunction(
 
   int internal_field_count = 0;
   bool has_external_resource = false;
+  bool use_user_object_comparison = false;
 
   if (!obj->instance_template()->IsUndefined()) {
     Handle<ObjectTemplateInfo> instance_template =
@@ -1254,6 +1255,8 @@ Handle<JSFunction> Factory::CreateApiFunction(
         Smi::cast(instance_template->internal_field_count())->value();
     has_external_resource =
         !instance_template->has_external_resource()->IsUndefined();
+    use_user_object_comparison =
+        !instance_template->use_user_object_comparison()->IsUndefined();
   }
 
   int instance_size = kPointerSize * internal_field_count;
@@ -1300,6 +1303,11 @@ Handle<JSFunction> Factory::CreateApiFunction(
   // Mark as having external data object if needed
   if (has_external_resource) {
     map->set_has_external_resource(true);
+  }
+
+  // Mark as using user object comparison if needed
+  if (use_user_object_comparison) {
+    map->set_use_user_object_comparison(true);
   }
 
   // Mark as undetectable if needed.

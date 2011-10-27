@@ -1560,6 +1560,17 @@ void ObjectTemplate::SetHasExternalResource(bool value) {
 }
 
 
+void ObjectTemplate::MarkAsUseUserObjectComparison() {
+  i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
+  if (IsDeadCheck(isolate,
+                  "v8::ObjectTemplate::MarkAsUseUserObjectComparison()")) {
+    return;
+  }
+  ENTER_V8(isolate);
+  EnsureConstructor(this);
+  Utils::OpenHandle(this)->set_use_user_object_comparison(i::Smi::FromInt(1));
+}
+
 // --- S c r i p t D a t a ---
 
 
@@ -5576,6 +5587,17 @@ void V8::SetFailedAccessCheckCallbackFunction(
     return;
   }
   isolate->SetFailedAccessCheckCallback(callback);
+}
+
+
+void V8::SetUserObjectComparisonCallbackFunction(
+      UserObjectComparisonCallback callback) {
+  i::Isolate* isolate = i::Isolate::Current();
+  if (IsDeadCheck(isolate,
+                  "v8::V8::SetUserObjectComparisonCallbackFunction()")) {
+    return;
+  }
+  isolate->SetUserObjectComparisonCallback(callback);
 }
 
 
