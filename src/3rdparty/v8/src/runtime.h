@@ -447,6 +447,7 @@ namespace internal {
   F(GetThreadDetails, 2, 1) \
   F(SetDisableBreak, 1, 1) \
   F(GetBreakLocations, 1, 1) \
+  F(AllowBreakPointRelocation, 0, 1) \
   F(SetFunctionBreakPoint, 3, 1) \
   F(SetScriptBreakPoint, 3, 1) \
   F(ClearBreakPoint, 1, 1) \
