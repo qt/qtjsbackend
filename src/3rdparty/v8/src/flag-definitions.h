@@ -351,6 +351,7 @@ DEFINE_bool(trace_debug_json, false, "trace debugging JSON request/response")
 DEFINE_bool(debugger_auto_break, true,
             "automatically set the debug break flag when debugger commands are "
             "in the queue")
+DEFINE_bool(breakpoint_relocation, true, "relocate breakpoints to the next executable line")
 DEFINE_bool(enable_liveedit, true, "enable liveedit experimental feature")
 DEFINE_bool(break_on_abort, true, "always cause a debug break before aborting")
 
