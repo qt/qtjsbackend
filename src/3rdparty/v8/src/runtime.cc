@@ -11605,6 +11605,12 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_GetBreakLocations) {
 }
 
 
+// Return the value of breakpoint_relocation flag
+RUNTIME_FUNCTION(MaybeObject*, Runtime_AllowBreakPointRelocation) {
+  return Smi::FromInt(FLAG_breakpoint_relocation);
+}
+
+
 // Set a break point in a function
 // args[0]: function
 // args[1]: number: break source position (within the function source)
