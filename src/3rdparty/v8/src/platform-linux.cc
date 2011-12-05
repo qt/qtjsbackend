@@ -46,7 +46,7 @@
 #include <sys/stat.h>   // open
 #include <fcntl.h>      // open
 #include <unistd.h>     // sysconf
-#ifdef __GLIBC__
+#if defined(__GLIBC__) && !defined(__UCLIBC__)
 #include <execinfo.h>   // backtrace, backtrace_symbols
 #endif  // def __GLIBC__
 #include <strings.h>    // index
@@ -553,7 +553,7 @@ void OS::SignalCodeMovingGC() {
 
 int OS::StackWalk(Vector<OS::StackFrame> frames) {
   // backtrace is a glibc extension.
-#ifdef __GLIBC__
+#if defined(__GLIBC__) && !defined(__UCLIBC__)
   int frames_size = frames.length();
   ScopedVector<void*> addresses(frames_size);
 
