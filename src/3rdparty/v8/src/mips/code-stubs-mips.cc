@@ -1648,6 +1648,46 @@ void CompareStub::Generate(MacroAssembler* masm) {
 
   // NOTICE! This code is only reached after a smi-fast-case check, so
   // it is certain that at least one operand isn't a smi.
+  {
+    // This is optimized for reading the code and not benchmarked for
+    // speed or amount of instructions. The code is not ordered for speed
+    // or anything like this
+    Label miss, user_compare;
+
+    // No global compare if both operands are SMIs
+    __ And(a2, a1, Operand(a0));
+    __ JumpIfSmi(a2, &miss);
+
+
+    // We need to check if lhs and rhs are both objects, if not we are
+    // jumping out of the function. We will keep the 'map' in t0 (lhs) and
+    // t1 (rhs) for later usage.
+    __ GetObjectType(a0, t0, a3);
+    __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
+
+    __ GetObjectType(a1, t1, a3);
+    __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
+
+    // Check if the UseUserComparison flag is set by using the map of t0 for lhs
+    __ lbu(t0, FieldMemOperand(t0, Map::kBitField2Offset));
+    __ And(t0, t0, Operand(1 << Map::kUseUserObjectComparison));
+    __ Branch(&user_compare, eq, t0, Operand(1 << Map::kUseUserObjectComparison));
+
+
+    // Check if the UseUserComparison flag is _not_ set by using the map of t1 for
+    // rhs and then jump to the miss label.
+    __ lbu(t1, FieldMemOperand(t1, Map::kBitField2Offset));
+    __ And(t1, t1, Operand(1 << Map::kUseUserObjectComparison));
+    __ Branch(&miss, ne, t1, Operand(1 << Map::kUseUserObjectComparison));
+
+    // Invoke the runtime function here
+    __ bind(&user_compare);
+    __ Push(a0, a1);
+    __ TailCallRuntime(Runtime::kUserObjectEquals, 2, 1);
+
+    // We exit here without doing anything
+    __ bind(&miss);
+  }
 
   // Handle the case where the objects are identical.  Either returns the answer
   // or goes to slow.  Only falls through if the objects were not identical.
@@ -6866,10 +6906,20 @@ void ICCompareStub::GenerateObjects(MacroAssembler* masm) {
   __ And(a2, a1, Operand(a0));
   __ JumpIfSmi(a2, &miss);
 
-  __ GetObjectType(a0, a2, a2);
-  __ Branch(&miss, ne, a2, Operand(JS_OBJECT_TYPE));
-  __ GetObjectType(a1, a2, a2);
-  __ Branch(&miss, ne, a2, Operand(JS_OBJECT_TYPE));
+  // Compare lhs, a2 holds the map, a3 holds the type_reg
+  __ GetObjectType(a0, a2, a3);
+  __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
+  __ lbu(a2, FieldMemOperand(a2, Map::kBitField2Offset));
+  __ And(a2, a2, Operand(1 << Map::kUseUserObjectComparison));
+  __ Branch(&miss, eq, a2, Operand(1 << Map::kUseUserObjectComparison));
+
+
+  // Compare rhs, a2 holds the map, a3 holds the type_reg
+  __ GetObjectType(a1, a2, a3);
+  __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
+  __ lbu(a2, FieldMemOperand(a2, Map::kBitField2Offset));
+  __ And(a2, a2, Operand(1 << Map::kUseUserObjectComparison));
+  __ Branch(&miss, eq, a2, Operand(1 << Map::kUseUserObjectComparison));
 
   ASSERT(GetCondition() == eq);
   __ Subu(v0, a0, Operand(a1));
