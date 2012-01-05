@@ -5,16 +5,19 @@ affects V8 itself and not the build system around it.
 
 Updating v8:
 
-1) Reset src/3rdparty/v8 to a V8 commit of your choice, for example:
+Run
 
-    git fetch https://github.com/v8/v8.git refs/tags/3.7.2
-    git rm --cached -r src/3rdparty/v8
-    git read-tree --prefix=src/3rdparty/v8 FETCH_HEAD
-    git checkout src/3rdparty/v8
-    git commit
+    ./bin/update-v8.sh [url] [refspec]
 
-2) Cherry-pick our modifications from before:
+to update src/3rdparty/v8 to a specific v8 version. The script will remove
+all Qt specific modifications and save them in /tmp/v8_patch, where they
+can be applied from using git am.
 
-    gitk src/3rdparty/v8
+For example:
 
-   and then cherry-pick the changes since the last v8 import.
+    ./bin/update-v8.sh https://github.com/v8/v8.git refs/tags/3.7.3
+    git commit -e -F commitlog.txt
+    git am -3 /tmp/v8_patch
+
+In the likely case of conflicts, follow the git instructions about continuing
+the patch application process after resolving the conflicts.
