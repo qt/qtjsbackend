@@ -1,0 +1,4 @@
+# This file is used to ignore files which are generated in the Qt build system
+# ----------------------------------------------------------------------------
+src/v8/qtv8version.h
+src/v8/generated-debug/
