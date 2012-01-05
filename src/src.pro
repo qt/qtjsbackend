@@ -1,2 +1,3 @@
 TEMPLATE = subdirs
-SUBDIRS = v8
+CONFIG += ordered
+SUBDIRS = tools v8
