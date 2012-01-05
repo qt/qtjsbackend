@@ -1,0 +1,20 @@
+This repository contains a copy of V8 with additional changes needed for Qt.
+
+Please use [V8] as prefix to the subject of your commit messages when your change
+affects V8 itself and not the build system around it.
+
+Updating v8:
+
+1) Reset src/3rdparty/v8 to a V8 commit of your choice, for example:
+
+    git fetch https://github.com/v8/v8.git refs/tags/3.7.2
+    git rm --cached -r src/3rdparty/v8
+    git read-tree --prefix=src/3rdparty/v8 FETCH_HEAD
+    git checkout src/3rdparty/v8
+    git commit
+
+2) Cherry-pick our modifications from before:
+
+    gitk src/3rdparty/v8
+
+   and then cherry-pick the changes since the last v8 import.
