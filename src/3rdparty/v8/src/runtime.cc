@@ -11262,7 +11262,7 @@ class ScopeIterator {
     ZoneScope zone_scope(isolate, DELETE_ON_EXIT);
     Handle<Script> script(Script::cast(shared_info->script()));
     Scope* scope;
-    if (index >= 0 || shared_info->qml_mode()) {
+    if (index >= 0) {
       // Global code
       CompilationInfo info(script);
       info.MarkAsGlobal();
@@ -11276,6 +11276,8 @@ class ScopeIterator {
     } else {
       // Function code
       CompilationInfo info(shared_info);
+      if (shared_info->qml_mode())
+          info.MarkAsQmlMode();
       bool result = ParserApi::Parse(&info);
       ASSERT(result);
       result = Scope::Analyze(&info);
@@ -11360,10 +11362,7 @@ class ScopeIterator {
         return Handle<JSObject>(CurrentContext()->global());
       case ScopeIterator::ScopeTypeLocal: {
         Handle<SerializedScopeInfo> scope_info = nested_scope_chain_.last();
-        if (scope_info->IsQmlMode())
-            ASSERT(nested_scope_chain_.length() == 2);
-        else
-            ASSERT(nested_scope_chain_.length() == 1);
+        ASSERT(nested_scope_chain_.length() == 1);
         // Materialize the content of the local scope into a JSObject.
         return MaterializeLocalScope(isolate_, frame_, inlined_frame_index_);
       }
