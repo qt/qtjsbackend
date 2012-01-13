@@ -248,7 +248,7 @@ SOURCES += \
     $$V8SRC/platform-freebsd.cc \
     $$V8SRC/platform-posix.cc
 LIBS += -lexecinfo
-} else:unix:!symbian {
+} else:unix:!symbian:!qnx{
 SOURCES += \
     $$V8SRC/platform-linux.cc \
     $$V8SRC/platform-posix.cc
@@ -261,6 +261,14 @@ SOURCES += \
 LIBS += -lWs2_32 -lWinmm
 win32-msvc*: QMAKE_CXXFLAGS += -wd4100 -wd 4291 -wd4351 -wd4355 -wd4800
 win32-msvc*:arch_i386: DEFINES += _USE_32BIT_TIME_T
+}
+
+#os:qnx
+qnx {
+SOURCES += \
+    $$V8SRC/platform-qnx.cc \
+    $$V8SRC/platform-posix.cc
+LIBS += -lbacktrace -lsocket
 }
 
 #mode:debug
