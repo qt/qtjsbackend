@@ -48,8 +48,12 @@ die() {
 if [ $# -eq 2 ]; then
     repository=$1
     tag=$2
+elif [ $# -eq 3 ]; then
+    repository=$1
+    tag=$2
+    rev=$3
 else
-    die "usage: $0 [url] [commit]"
+    die "usage: $0 [url] [commit] ([hash])"
 fi
 
 require_clean_work_tree() {
@@ -76,7 +80,9 @@ if [ $? != 0 ]; then
     die "git fetch failed"
 fi
 
-rev=`git rev-parse FETCH_HEAD`
+if [ -z $rev ]; then
+    rev=`git rev-parse FETCH_HEAD`
+fi
 
 srcdir=src/3rdparty/v8
 absSrcDir=$PWD/$srcdir
@@ -107,6 +113,9 @@ else
 fi
 
 git read-tree --prefix=$srcdir $rev
+if [ $? != 0 ]; then
+    die "Invalid hash!"
+fi
 git checkout $srcdir
 
 cat >commitlog.txt <<EOT
