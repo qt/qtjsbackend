@@ -106,6 +106,16 @@ namespace internal {
   type name = NumberTo##Type(obj);
 
 
+// Assert that the given argument has a valid value for a StrictModeFlag
+// and store it in a StrictModeFlag variable with the given name.
+#define CONVERT_STRICT_MODE_ARG(name, index)                         \
+  ASSERT(args[index]->IsSmi());                                      \
+  ASSERT(args.smi_at(index) == kStrictMode ||                        \
+         args.smi_at(index) == kNonStrictMode);                      \
+  StrictModeFlag name =                                              \
+      static_cast<StrictModeFlag>(args.smi_at(index));
+
+
 MUST_USE_RESULT static MaybeObject* DeepCopyBoilerplate(Isolate* isolate,
                                                    JSObject* boilerplate) {
   StackLimitCheck check(isolate);
@@ -1307,23 +1317,19 @@ static Failure* ThrowRedeclarationError(Isolate* isolate,
 RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
   ASSERT(args.length() == 3);
   HandleScope scope(isolate);
+  Handle<GlobalObject> global = Handle<GlobalObject>(
+      isolate->context()->global());
 
   Handle<Context> context = args.at<Context>(0);
   CONVERT_ARG_CHECKED(FixedArray, pairs, 1);
   CONVERT_SMI_ARG_CHECKED(flags, 2);
 
-  Handle<JSObject> js_global = Handle<JSObject>(isolate->context()->global());
-  Handle<JSObject> qml_global = Handle<JSObject>(isolate->context()->qml_global());
-
   // Traverse the name/value pairs and set the properties.
   int length = pairs->length();
-  for (int i = 0; i < length; i += 3) {
+  for (int i = 0; i < length; i += 2) {
     HandleScope scope(isolate);
     Handle<String> name(String::cast(pairs->get(i)));
     Handle<Object> value(pairs->get(i + 1), isolate);
-    Handle<Smi> is_qml_global(Smi::cast(pairs->get(i + 2)));
-
-    Handle<JSObject> global = is_qml_global->value()?qml_global:js_global;
 
     // We have to declare a global const property. To capture we only
     // assign to it when evaluating the assignment for "const x =
@@ -1334,7 +1340,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
       // Lookup the property in the global object, and don't set the
       // value of the variable if the property is already there.
       LookupResult lookup(isolate);
-      global->Lookup(*name, &lookup, true);
+      global->Lookup(*name, &lookup);
       if (lookup.IsProperty()) {
         // We found an existing property. Unless it was an interceptor
         // that claims the property is absent, skip this declaration.
@@ -1361,7 +1367,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
     }
 
     LookupResult lookup(isolate);
-    global->LocalLookup(*name, &lookup, true);
+    global->LocalLookup(*name, &lookup);
 
     // Compute the property attributes. According to ECMA-262, section
     // 13, page 71, the property must be read-only and
@@ -1402,8 +1408,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
                                          name,
                                          value,
                                          static_cast<PropertyAttributes>(attr),
-                                         strict_mode,
-                                         true));
+                                         strict_mode));
     }
   }
 
@@ -1510,23 +1515,17 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   NoHandleAllocation nha;
   // args[0] == name
   // args[1] == strict_mode
-  // args[2] == qml_mode
-  // args[3] == value (optional)
+  // args[2] == value (optional)
 
   // Determine if we need to assign to the variable if it already
   // exists (based on the number of arguments).
-  RUNTIME_ASSERT(args.length() == 3 || args.length() == 4);
-  bool assign = args.length() == 4;
+  RUNTIME_ASSERT(args.length() == 2 || args.length() == 3);
+  bool assign = args.length() == 3;
 
   CONVERT_ARG_CHECKED(String, name, 0);
+  GlobalObject* global = isolate->context()->global();
   RUNTIME_ASSERT(args[1]->IsSmi());
-  StrictModeFlag strict_mode = static_cast<StrictModeFlag>(args.smi_at(1));
-  ASSERT(strict_mode == kStrictMode || strict_mode == kNonStrictMode);
-
-  RUNTIME_ASSERT(args[2]->IsSmi());
-  int qml_mode = Smi::cast(args[2])->value();
-
-  JSObject* global = qml_mode?isolate->context()->qml_global():isolate->context()->global();
+  CONVERT_STRICT_MODE_ARG(strict_mode, 1);
 
   // According to ECMA-262, section 12.2, page 62, the property must
   // not be deletable.
@@ -1544,7 +1543,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   while (object->IsJSObject() &&
          JSObject::cast(object)->map()->is_hidden_prototype()) {
     JSObject* raw_holder = JSObject::cast(object);
-    raw_holder->LocalLookup(*name, &lookup, true);
+    raw_holder->LocalLookup(*name, &lookup);
     if (lookup.IsProperty() && lookup.type() == INTERCEPTOR) {
       HandleScope handle_scope(isolate);
       Handle<JSObject> holder(raw_holder);
@@ -1555,7 +1554,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
         // Found an interceptor that's not read only.
         if (assign) {
           return raw_holder->SetProperty(
-              &lookup, *name, args[3], attributes, strict_mode);
+              &lookup, *name, args[2], attributes, strict_mode);
         } else {
           return isolate->heap()->undefined_value();
         }
@@ -1565,9 +1564,9 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   }
 
   // Reload global in case the loop above performed a GC.
-  global = qml_mode?isolate->context()->qml_global():isolate->context()->global();
+  global = isolate->context()->global();
   if (assign) {
-    return global->SetProperty(*name, args[3], attributes, strict_mode, true);
+    return global->SetProperty(*name, args[2], attributes, strict_mode);
   }
   return isolate->heap()->undefined_value();
 }
@@ -1577,15 +1576,12 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeConstGlobal) {
   // All constants are declared with an initial value. The name
   // of the constant is the first argument and the initial value
   // is the second.
-  RUNTIME_ASSERT(args.length() == 3);
+  RUNTIME_ASSERT(args.length() == 2);
   CONVERT_ARG_CHECKED(String, name, 0);
   Handle<Object> value = args.at<Object>(1);
 
-  RUNTIME_ASSERT(args[2]->IsSmi());
-  int qml_mode = Smi::cast(args[2])->value();
-
   // Get the current global object from top.
-  JSObject* global = qml_mode?isolate->context()->qml_global():isolate->context()->global();
+  GlobalObject* global = isolate->context()->global();
 
   // According to ECMA-262, section 12.2, page 62, the property must
   // not be deletable. Since it's a const, it must be READ_ONLY too.
@@ -1609,7 +1605,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeConstGlobal) {
     // Restore global object from context (in case of GC) and continue
     // with setting the value.
     HandleScope handle_scope(isolate);
-    Handle<JSObject> global(qml_mode?isolate->context()->qml_global():isolate->context()->global());
+    Handle<GlobalObject> global(isolate->context()->global());
 
     // BUG 1213575: Handle the case where we have to set a read-only
     // property through an interceptor and only do it if it's
@@ -4184,6 +4180,23 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_GetProperty) {
 }
 
 
+MaybeObject* TransitionElements(Handle<Object> object,
+                                ElementsKind to_kind,
+                                Isolate* isolate) {
+  HandleScope scope(isolate);
+  if (!object->IsJSObject()) return isolate->ThrowIllegalOperation();
+  ElementsKind from_kind =
+      Handle<JSObject>::cast(object)->map()->elements_kind();
+  if (Map::IsValidElementsTransition(from_kind, to_kind)) {
+    Handle<Object> result =
+        TransitionElementsKind(Handle<JSObject>::cast(object), to_kind);
+    if (result.is_null()) return isolate->ThrowIllegalOperation();
+    return *result;
+  }
+  return isolate->ThrowIllegalOperation();
+}
+
+
 // KeyedStringGetProperty is called from KeyedLoadIC::GenerateGeneric.
 RUNTIME_FUNCTION(MaybeObject*, Runtime_KeyedGetProperty) {
   NoHandleAllocation ha;
@@ -4200,40 +4213,63 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_KeyedGetProperty) {
   //
   // Additionally, we need to make sure that we do not cache results
   // for objects that require access checks.
-  if (args[0]->IsJSObject() &&
-      !args[0]->IsJSGlobalProxy() &&
-      !args[0]->IsAccessCheckNeeded() &&
-      args[1]->IsString()) {
-    JSObject* receiver = JSObject::cast(args[0]);
-    String* key = String::cast(args[1]);
-    if (receiver->HasFastProperties()) {
-      // Attempt to use lookup cache.
-      Map* receiver_map = receiver->map();
-      KeyedLookupCache* keyed_lookup_cache = isolate->keyed_lookup_cache();
-      int offset = keyed_lookup_cache->Lookup(receiver_map, key);
-      if (offset != -1) {
-        Object* value = receiver->FastPropertyAt(offset);
-        return value->IsTheHole() ? isolate->heap()->undefined_value() : value;
+  if (args[0]->IsJSObject()) {
+    if (!args[0]->IsJSGlobalProxy() &&
+        !args[0]->IsAccessCheckNeeded() &&
+        args[1]->IsString()) {
+      JSObject* receiver = JSObject::cast(args[0]);
+      String* key = String::cast(args[1]);
+      if (receiver->HasFastProperties()) {
+        // Attempt to use lookup cache.
+        Map* receiver_map = receiver->map();
+        KeyedLookupCache* keyed_lookup_cache = isolate->keyed_lookup_cache();
+        int offset = keyed_lookup_cache->Lookup(receiver_map, key);
+        if (offset != -1) {
+          Object* value = receiver->FastPropertyAt(offset);
+          return value->IsTheHole()
+              ? isolate->heap()->undefined_value()
+              : value;
+        }
+        // Lookup cache miss.  Perform lookup and update the cache if
+        // appropriate.
+        LookupResult result(isolate);
+        receiver->LocalLookup(key, &result);
+        if (result.IsProperty() && result.type() == FIELD) {
+          int offset = result.GetFieldIndex();
+          keyed_lookup_cache->Update(receiver_map, key, offset);
+          return receiver->FastPropertyAt(offset);
+        }
+      } else {
+        // Attempt dictionary lookup.
+        StringDictionary* dictionary = receiver->property_dictionary();
+        int entry = dictionary->FindEntry(key);
+        if ((entry != StringDictionary::kNotFound) &&
+            (dictionary->DetailsAt(entry).type() == NORMAL)) {
+          Object* value = dictionary->ValueAt(entry);
+          if (!receiver->IsGlobalObject()) return value;
+          value = JSGlobalPropertyCell::cast(value)->value();
+          if (!value->IsTheHole()) return value;
+          // If value is the hole do the general lookup.
+        }
       }
-      // Lookup cache miss.  Perform lookup and update the cache if appropriate.
-      LookupResult result(isolate);
-      receiver->LocalLookup(key, &result);
-      if (result.IsProperty() && result.type() == FIELD) {
-        int offset = result.GetFieldIndex();
-        keyed_lookup_cache->Update(receiver_map, key, offset);
-        return receiver->FastPropertyAt(offset);
-      }
-    } else {
-      // Attempt dictionary lookup.
-      StringDictionary* dictionary = receiver->property_dictionary();
-      int entry = dictionary->FindEntry(key);
-      if ((entry != StringDictionary::kNotFound) &&
-          (dictionary->DetailsAt(entry).type() == NORMAL)) {
-        Object* value = dictionary->ValueAt(entry);
-        if (!receiver->IsGlobalObject()) return value;
-        value = JSGlobalPropertyCell::cast(value)->value();
-        if (!value->IsTheHole()) return value;
-        // If value is the hole do the general lookup.
+    } else if (FLAG_smi_only_arrays && args.at<Object>(1)->IsSmi()) {
+      // JSObject without a string key. If the key is a Smi, check for a
+      // definite out-of-bounds access to elements, which is a strong indicator
+      // that subsequent accesses will also call the runtime. Proactively
+      // transition elements to FAST_ELEMENTS to avoid excessive boxing of
+      // doubles for those future calls in the case that the elements would
+      // become FAST_DOUBLE_ELEMENTS.
+      Handle<JSObject> js_object(args.at<JSObject>(0));
+      ElementsKind elements_kind = js_object->GetElementsKind();
+      if (elements_kind == FAST_SMI_ONLY_ELEMENTS ||
+          elements_kind == FAST_DOUBLE_ELEMENTS) {
+        FixedArrayBase* elements = js_object->elements();
+        if (args.at<Smi>(1)->value() >= elements->length()) {
+          MaybeObject* maybe_object = TransitionElements(js_object,
+                                                         FAST_ELEMENTS,
+                                                         isolate);
+          if (maybe_object->IsFailure()) return maybe_object;
+        }
       }
     }
   } else if (args[0]->IsString() && args[1]->IsSmi()) {
@@ -4607,10 +4643,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_SetProperty) {
 
   StrictModeFlag strict_mode = kNonStrictMode;
   if (args.length() == 5) {
-    CONVERT_SMI_ARG_CHECKED(strict_unchecked, 4);
-    RUNTIME_ASSERT(strict_unchecked == kStrictMode ||
-                   strict_unchecked == kNonStrictMode);
-    strict_mode = static_cast<StrictModeFlag>(strict_unchecked);
+    CONVERT_STRICT_MODE_ARG(strict_mode_flag, 4);
+    strict_mode = strict_mode_flag;
   }
 
   return Runtime::SetObjectProperty(isolate,
@@ -4619,23 +4653,6 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_SetProperty) {
                                     value,
                                     attributes,
                                     strict_mode);
-}
-
-
-MaybeObject* TransitionElements(Handle<Object> object,
-                                ElementsKind to_kind,
-                                Isolate* isolate) {
-  HandleScope scope(isolate);
-  if (!object->IsJSObject()) return isolate->ThrowIllegalOperation();
-  ElementsKind from_kind =
-      Handle<JSObject>::cast(object)->map()->elements_kind();
-  if (Map::IsValidElementsTransition(from_kind, to_kind)) {
-    Handle<Object> result =
-        TransitionElementsKind(Handle<JSObject>::cast(object), to_kind);
-    if (result.is_null()) return isolate->ThrowIllegalOperation();
-    return *result;
-  }
-  return isolate->ThrowIllegalOperation();
 }
 
 
@@ -4669,6 +4686,44 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_SetNativeFlag) {
     func->shared()->set_native(true);
   }
   return isolate->heap()->undefined_value();
+}
+
+
+RUNTIME_FUNCTION(MaybeObject*, Runtime_StoreArrayLiteralElement) {
+  RUNTIME_ASSERT(args.length() == 5);
+  CONVERT_ARG_CHECKED(JSObject, object, 0);
+  CONVERT_SMI_ARG_CHECKED(store_index, 1);
+  Handle<Object> value = args.at<Object>(2);
+  CONVERT_ARG_CHECKED(FixedArray, literals, 3);
+  CONVERT_SMI_ARG_CHECKED(literal_index, 4);
+  HandleScope scope;
+
+  Object* raw_boilerplate_object = literals->get(literal_index);
+  Handle<JSArray> boilerplate_object(JSArray::cast(raw_boilerplate_object));
+#if DEBUG
+  ElementsKind elements_kind = object->GetElementsKind();
+#endif
+  ASSERT(elements_kind <= FAST_DOUBLE_ELEMENTS);
+  // Smis should never trigger transitions.
+  ASSERT(!value->IsSmi());
+
+  if (value->IsNumber()) {
+    ASSERT(elements_kind == FAST_SMI_ONLY_ELEMENTS);
+    TransitionElementsKind(object, FAST_DOUBLE_ELEMENTS);
+    ASSERT(object->GetElementsKind() == FAST_DOUBLE_ELEMENTS);
+    FixedDoubleArray* double_array =
+        FixedDoubleArray::cast(object->elements());
+    HeapNumber* number = HeapNumber::cast(*value);
+    double_array->set(store_index, number->Number());
+  } else {
+    ASSERT(elements_kind == FAST_SMI_ONLY_ELEMENTS ||
+           elements_kind == FAST_DOUBLE_ELEMENTS);
+    TransitionElementsKind(object, FAST_ELEMENTS);
+    FixedArray* object_array =
+        FixedArray::cast(object->elements());
+    object_array->set(store_index, *value);
+  }
+  return *object;
 }
 
 
@@ -7095,29 +7150,6 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_StringEquals) {
 }
 
 
-RUNTIME_FUNCTION(MaybeObject*, Runtime_UserObjectEquals) {
-  NoHandleAllocation ha;
-  ASSERT(args.length() == 2);
-
-  CONVERT_CHECKED(JSObject, lhs, args[1]);
-  CONVERT_CHECKED(JSObject, rhs, args[0]);
-
-  bool result;
-
-  v8::UserObjectComparisonCallback callback = isolate->UserObjectComparisonCallback();
-  if (callback) {
-      HandleScope scope(isolate);
-      Handle<JSObject> lhs_handle(lhs);
-      Handle<JSObject> rhs_handle(rhs);
-      result = callback(v8::Utils::ToLocal(lhs_handle), v8::Utils::ToLocal(rhs_handle));
-  } else {
-      result = (lhs == rhs);
-  }
-
-  return Smi::FromInt(result?0:1);
-}
-
-
 RUNTIME_FUNCTION(MaybeObject*, Runtime_NumberCompare) {
   NoHandleAllocation ha;
   ASSERT(args.length() == 3);
@@ -7526,7 +7558,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_Math_tan) {
 }
 
 
-static int MakeDay(int year, int month, int day) {
+static int MakeDay(int year, int month) {
   static const int day_from_month[] = {0, 31, 59, 90, 120, 151,
                                        181, 212, 243, 273, 304, 334};
   static const int day_from_month_leap[] = {0, 31, 60, 91, 121, 152,
@@ -7563,23 +7595,22 @@ static int MakeDay(int year, int month, int day) {
                       year1 / 400 -
                       base_day;
 
-  if (year % 4 || (year % 100 == 0 && year % 400 != 0)) {
-    return day_from_year + day_from_month[month] + day - 1;
+  if ((year % 4 != 0) || (year % 100 == 0 && year % 400 != 0)) {
+    return day_from_year + day_from_month[month];
   }
 
-  return day_from_year + day_from_month_leap[month] + day - 1;
+  return day_from_year + day_from_month_leap[month];
 }
 
 
 RUNTIME_FUNCTION(MaybeObject*, Runtime_DateMakeDay) {
   NoHandleAllocation ha;
-  ASSERT(args.length() == 3);
+  ASSERT(args.length() == 2);
 
   CONVERT_SMI_ARG_CHECKED(year, 0);
   CONVERT_SMI_ARG_CHECKED(month, 1);
-  CONVERT_SMI_ARG_CHECKED(date, 2);
 
-  return Smi::FromInt(MakeDay(year, month, date));
+  return Smi::FromInt(MakeDay(year, month));
 }
 
 
@@ -7808,7 +7839,7 @@ static inline void DateYMDFromTimeAfter1970(int date,
   month = kMonthInYear[date];
   day = kDayInYear[date];
 
-  ASSERT(MakeDay(year, month, day) == save_date);
+  ASSERT(MakeDay(year, month) + day - 1 == save_date);
 }
 
 
@@ -7822,7 +7853,7 @@ static inline void DateYMDFromTimeSlow(int date,
   year = 400 * (date / kDaysIn400Years) - kYearsOffset;
   date %= kDaysIn400Years;
 
-  ASSERT(MakeDay(year, 0, 1) + date == save_date);
+  ASSERT(MakeDay(year, 0) + date == save_date);
 
   date--;
   int yd1 = date / kDaysIn100Years;
@@ -7845,8 +7876,8 @@ static inline void DateYMDFromTimeSlow(int date,
   ASSERT(is_leap || (date >= 0));
   ASSERT((date < 365) || (is_leap && (date < 366)));
   ASSERT(is_leap == ((year % 4 == 0) && (year % 100 || (year % 400 == 0))));
-  ASSERT(is_leap || ((MakeDay(year, 0, 1) + date) == save_date));
-  ASSERT(!is_leap || ((MakeDay(year, 0, 1) + date + 1) == save_date));
+  ASSERT(is_leap || ((MakeDay(year, 0) + date) == save_date));
+  ASSERT(!is_leap || ((MakeDay(year, 0) + date + 1) == save_date));
 
   if (is_leap) {
     day = kDayInYear[2*365 + 1 + date];
@@ -7856,7 +7887,7 @@ static inline void DateYMDFromTimeSlow(int date,
     month = kMonthInYear[date];
   }
 
-  ASSERT(MakeDay(year, month, day) == save_date);
+  ASSERT(MakeDay(year, month) + day - 1 == save_date);
 }
 
 
@@ -7882,19 +7913,14 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DateYMDFromTime) {
 
   FixedArrayBase* elms_base = FixedArrayBase::cast(res_array->elements());
   RUNTIME_ASSERT(elms_base->length() == 3);
-  RUNTIME_ASSERT(res_array->GetElementsKind() <= FAST_DOUBLE_ELEMENTS);
+  RUNTIME_ASSERT(res_array->HasFastTypeElements());
 
-  if (res_array->HasFastDoubleElements()) {
-    FixedDoubleArray* elms = FixedDoubleArray::cast(res_array->elements());
-    elms->set(0, year);
-    elms->set(1, month);
-    elms->set(2, day);
-  } else {
-    FixedArray* elms = FixedArray::cast(res_array->elements());
-    elms->set(0, Smi::FromInt(year));
-    elms->set(1, Smi::FromInt(month));
-    elms->set(2, Smi::FromInt(day));
-  }
+  MaybeObject* maybe = res_array->EnsureWritableFastElements();
+  if (maybe->IsFailure()) return maybe;
+  FixedArray* elms = FixedArray::cast(res_array->elements());
+  elms->set(0, Smi::FromInt(year));
+  elms->set(1, Smi::FromInt(month));
+  elms->set(2, Smi::FromInt(day));
 
   return isolate->heap()->undefined_value();
 }
@@ -8221,13 +8247,9 @@ static void TrySettingInlineConstructStub(Isolate* isolate,
     prototype = Handle<Object>(function->instance_prototype(), isolate);
   }
   if (function->shared()->CanGenerateInlineConstructor(*prototype)) {
-    HandleScope scope(isolate);
     ConstructStubCompiler compiler(isolate);
-    MaybeObject* code = compiler.CompileConstructStub(*function);
-    if (!code->IsFailure()) {
-      function->shared()->set_construct_stub(
-          Code::cast(code->ToObjectUnchecked()));
-    }
+    Handle<Code> code = compiler.CompileConstructStub(function);
+    function->shared()->set_construct_stub(*code);
   }
 }
 
@@ -9048,10 +9070,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_StoreContextSlot) {
   Handle<Object> value(args[0], isolate);
   CONVERT_ARG_CHECKED(Context, context, 1);
   CONVERT_ARG_CHECKED(String, name, 2);
-  CONVERT_SMI_ARG_CHECKED(strict_unchecked, 3);
-  RUNTIME_ASSERT(strict_unchecked == kStrictMode ||
-                 strict_unchecked == kNonStrictMode);
-  StrictModeFlag strict_mode = static_cast<StrictModeFlag>(strict_unchecked);
+  CONVERT_STRICT_MODE_ARG(strict_mode, 3);
 
   int index;
   PropertyAttributes attributes;
@@ -9421,8 +9440,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CompileString) {
   Handle<SharedFunctionInfo> shared = Compiler::CompileEval(source,
                                                             context,
                                                             true,
-                                                            kNonStrictMode,
-                                                            false);
+                                                            kNonStrictMode);
   if (shared.is_null()) return Failure::Exception();
   Handle<JSFunction> fun =
       isolate->factory()->NewFunctionFromSharedFunctionInfo(shared,
@@ -9435,8 +9453,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CompileString) {
 static ObjectPair CompileGlobalEval(Isolate* isolate,
                                     Handle<String> source,
                                     Handle<Object> receiver,
-                                    StrictModeFlag strict_mode, 
-                                    bool qml_mode) {
+                                    StrictModeFlag strict_mode) {
   Handle<Context> context = Handle<Context>(isolate->context());
   Handle<Context> global_context = Handle<Context>(context->global_context());
 
@@ -9454,8 +9471,7 @@ static ObjectPair CompileGlobalEval(Isolate* isolate,
       source,
       Handle<Context>(isolate->context()),
       context->IsGlobalContext(),
-      strict_mode,
-      qml_mode);
+      strict_mode);
   if (shared.is_null()) return MakePair(Failure::Exception(), NULL);
   Handle<JSFunction> compiled =
       isolate->factory()->NewFunctionFromSharedFunctionInfo(
@@ -9465,98 +9481,26 @@ static ObjectPair CompileGlobalEval(Isolate* isolate,
 
 
 RUNTIME_FUNCTION(ObjectPair, Runtime_ResolvePossiblyDirectEval) {
-  ASSERT(args.length() == 5);
+  ASSERT(args.length() == 4);
 
   HandleScope scope(isolate);
   Handle<Object> callee = args.at<Object>(0);
-  Handle<Object> receiver;  // Will be overwritten.
 
-  // Compute the calling context.
-  Handle<Context> context = Handle<Context>(isolate->context(), isolate);
-#ifdef DEBUG
-  // Make sure Isolate::context() agrees with the old code that traversed
-  // the stack frames to compute the context.
-  StackFrameLocator locator;
-  JavaScriptFrame* frame = locator.FindJavaScriptFrame(0);
-  ASSERT(Context::cast(frame->context()) == *context);
-#endif
-
-  // Find where the 'eval' symbol is bound. It is unaliased only if
-  // it is bound in the global context.
-  int index = -1;
-  PropertyAttributes attributes = ABSENT;
-  BindingFlags binding_flags;
-  while (true) {
-    // Don't follow context chains in Context::Lookup and implement the loop
-    // up the context chain here, so that we can know the context where eval
-    // was found.
-    receiver = context->Lookup(isolate->factory()->eval_symbol(),
-                               FOLLOW_PROTOTYPE_CHAIN,
-                               &index,
-                               &attributes,
-                               &binding_flags);
-    // Stop search when eval is found or when the global context is
-    // reached.
-    if (attributes != ABSENT || context->IsGlobalContext()) break;
-    context = Handle<Context>(context->previous(), isolate);
-  }
-
-  // If eval could not be resolved, it has been deleted and we need to
-  // throw a reference error.
-  if (attributes == ABSENT) {
-    Handle<Object> name = isolate->factory()->eval_symbol();
-    Handle<Object> reference_error =
-        isolate->factory()->NewReferenceError("not_defined",
-                                              HandleVector(&name, 1));
-    return MakePair(isolate->Throw(*reference_error), NULL);
-  }
-
-  if (!context->IsGlobalContext()) {
-    // 'eval' is not bound in the global context. Just call the function
-    // with the given arguments. This is not necessarily the global eval.
-    if (receiver->IsContext() || receiver->IsJSContextExtensionObject()) {
-      receiver = isolate->factory()->the_hole_value();
-    }
-    return MakePair(*callee, *receiver);
-  }
-
-  // 'eval' is bound in the global context, but it may have been overwritten.
-  // Compare it to the builtin 'GlobalEval' function to make sure.
+  // If "eval" didn't refer to the original GlobalEval, it's not a
+  // direct call to eval.
+  // (And even if it is, but the first argument isn't a string, just let
+  // execution default to an indirect call to eval, which will also return
+  // the first argument without doing anything).
   if (*callee != isolate->global_context()->global_eval_fun() ||
       !args[1]->IsString()) {
     return MakePair(*callee, isolate->heap()->the_hole_value());
   }
 
-  ASSERT(args[3]->IsSmi());
-  ASSERT(args[4]->IsSmi());
+  CONVERT_STRICT_MODE_ARG(strict_mode, 3);
   return CompileGlobalEval(isolate,
                            args.at<String>(1),
                            args.at<Object>(2),
-                           static_cast<StrictModeFlag>(args.smi_at(3)),
-                           Smi::cast(args[4])->value());
-}
-
-
-RUNTIME_FUNCTION(ObjectPair, Runtime_ResolvePossiblyDirectEvalNoLookup) {
-  ASSERT(args.length() == 5);
-
-  HandleScope scope(isolate);
-  Handle<Object> callee = args.at<Object>(0);
-
-  // 'eval' is bound in the global context, but it may have been overwritten.
-  // Compare it to the builtin 'GlobalEval' function to make sure.
-  if (*callee != isolate->global_context()->global_eval_fun() ||
-      !args[1]->IsString()) {
-    return MakePair(*callee, isolate->heap()->the_hole_value());
-  }
-
-  ASSERT(args[3]->IsSmi());
-  ASSERT(args[4]->IsSmi());
-  return CompileGlobalEval(isolate,
-                           args.at<String>(1),
-                           args.at<Object>(2),
-                           static_cast<StrictModeFlag>(args.smi_at(3)),
-                           Smi::cast(args[4])->value());
+                           strict_mode);
 }
 
 
@@ -10742,6 +10686,18 @@ static const int kFrameDetailsAtReturnIndex = 7;
 static const int kFrameDetailsFlagsIndex = 8;
 static const int kFrameDetailsFirstDynamicIndex = 9;
 
+
+static SaveContext* FindSavedContextForFrame(Isolate* isolate,
+                                             JavaScriptFrame* frame) {
+  SaveContext* save = isolate->save_context();
+  while (save != NULL && !save->IsBelowFrame(frame)) {
+    save = save->prev();
+  }
+  ASSERT(save != NULL);
+  return save;
+}
+
+
 // Return an array with frame details
 // args[0]: number: break id
 // args[1]: number: frame index
@@ -10797,11 +10753,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_GetFrameDetails) {
 
   // Traverse the saved contexts chain to find the active context for the
   // selected frame.
-  SaveContext* save = isolate->save_context();
-  while (save != NULL && !save->below(it.frame())) {
-    save = save->prev();
-  }
-  ASSERT(save != NULL);
+  SaveContext* save = FindSavedContextForFrame(isolate, it.frame());
 
   // Get the frame id.
   Handle<Object> frame_id(WrapFrameId(it.frame()->id()), isolate);
@@ -11266,22 +11218,14 @@ class ScopeIterator {
       // Global code
       CompilationInfo info(script);
       info.MarkAsGlobal();
-      if (shared_info->qml_mode())
-          info.MarkAsQmlMode();
-      bool result = ParserApi::Parse(&info);
-      ASSERT(result);
-      result = Scope::Analyze(&info);
-      ASSERT(result);
+      CHECK(ParserApi::Parse(&info));
+      CHECK(Scope::Analyze(&info));
       scope = info.function()->scope();
     } else {
       // Function code
       CompilationInfo info(shared_info);
-      if (shared_info->qml_mode())
-          info.MarkAsQmlMode();
-      bool result = ParserApi::Parse(&info);
-      ASSERT(result);
-      result = Scope::Analyze(&info);
-      ASSERT(result);
+      CHECK(ParserApi::Parse(&info));
+      CHECK(Scope::Analyze(&info));
       scope = info.function()->scope();
     }
 
@@ -11299,6 +11243,7 @@ class ScopeIterator {
     ScopeType scope_type = Type();
     if (scope_type == ScopeTypeGlobal) {
       // The global scope is always the last in the chain.
+      ASSERT(context_->IsGlobalContext());
       context_ = Handle<Context>();
       return;
     }
@@ -11322,7 +11267,7 @@ class ScopeIterator {
                  !scope_info->HasContext());
           return ScopeTypeLocal;
         case GLOBAL_SCOPE:
-          ASSERT(context_->IsGlobalContext() || scope_info->IsQmlMode());
+          ASSERT(context_->IsGlobalContext());
           return ScopeTypeGlobal;
         case WITH_SCOPE:
           ASSERT(context_->IsWithContext());
@@ -11360,12 +11305,10 @@ class ScopeIterator {
     switch (Type()) {
       case ScopeIterator::ScopeTypeGlobal:
         return Handle<JSObject>(CurrentContext()->global());
-      case ScopeIterator::ScopeTypeLocal: {
-        Handle<SerializedScopeInfo> scope_info = nested_scope_chain_.last();
-        ASSERT(nested_scope_chain_.length() == 1);
+      case ScopeIterator::ScopeTypeLocal:
         // Materialize the content of the local scope into a JSObject.
+        ASSERT(nested_scope_chain_.length() == 1);
         return MaterializeLocalScope(isolate_, frame_, inlined_frame_index_);
-      }
       case ScopeIterator::ScopeTypeWith:
         // Return the with object.
         return Handle<JSObject>(JSObject::cast(CurrentContext()->extension()));
@@ -12081,15 +12024,11 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluate) {
   Handle<JSFunction> function(JSFunction::cast(frame->function()));
   Handle<SerializedScopeInfo> scope_info(function->shared()->scope_info());
   ScopeInfo<> sinfo(*scope_info);
-  bool qml_mode = function->shared()->qml_mode();
 
   // Traverse the saved contexts chain to find the active context for the
   // selected frame.
-  SaveContext* save = isolate->save_context();
-  while (save != NULL && !save->below(frame)) {
-    save = save->prev();
-  }
-  ASSERT(save != NULL);
+  SaveContext* save = FindSavedContextForFrame(isolate, frame);
+
   SaveContext savex(isolate);
   isolate->set_context(*(save->context()));
 
@@ -12155,8 +12094,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluate) {
       Compiler::CompileEval(function_source,
                             context,
                             context->IsGlobalContext(),
-                            kNonStrictMode,
-                            qml_mode);
+                            kNonStrictMode);
   if (shared.is_null()) return Failure::Exception();
   Handle<JSFunction> compiled_function =
       isolate->factory()->NewFunctionFromSharedFunctionInfo(shared, context);
@@ -12166,8 +12104,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluate) {
   Handle<Object> receiver(frame->receiver(), isolate);
   Handle<Object> evaluation_function =
       Execution::Call(compiled_function, receiver, 0, NULL,
-                      &has_pending_exception, false,
-                      Handle<Object>(function->context()->qml_global()));
+                      &has_pending_exception);
   if (has_pending_exception) return Failure::Exception();
 
   Handle<Object> arguments = GetArgumentsObject(isolate,
@@ -12248,7 +12185,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluateGlobal) {
   // Currently, the eval code will be executed in non-strict mode,
   // even in the strict code context.
   Handle<SharedFunctionInfo> shared =
-      Compiler::CompileEval(source, context, is_global, kNonStrictMode, false);
+      Compiler::CompileEval(source, context, is_global, kNonStrictMode);
   if (shared.is_null()) return Failure::Exception();
   Handle<JSFunction> compiled_function =
       Handle<JSFunction>(

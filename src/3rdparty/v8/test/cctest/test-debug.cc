@@ -856,7 +856,7 @@ static void DebugEventRemoveBreakPoint(v8::DebugEvent event,
 
   if (event == v8::Break) {
     break_point_hit_count++;
-    v8::Handle<v8::Function> fun = v8::Handle<v8::Function>::Cast(data);
+    v8::Handle<v8::Function> fun(v8::Handle<v8::Function>::Cast(data));
     ClearBreakPoint(debug_event_remove_break_point);
   }
 }
@@ -1447,8 +1447,8 @@ TEST(BreakPointSurviveGC) {
 
   // Test IC store break point with garbage collection.
   {
-    v8::Local<v8::Function> bar =
-        CompileFunction(&env, "function foo(){}", "foo");
+    v8::Local<v8::Function> bar(
+        CompileFunction(&env, "function foo(){}", "foo"));
     foo = CompileFunction(&env, "function foo(){bar=0;}", "foo");
     SetBreakPoint(foo, 0);
   }
@@ -1456,8 +1456,8 @@ TEST(BreakPointSurviveGC) {
 
   // Test IC load break point with garbage collection.
   {
-    v8::Local<v8::Function> bar =
-        CompileFunction(&env, "function foo(){}", "foo");
+    v8::Local<v8::Function> bar(
+        CompileFunction(&env, "function foo(){}", "foo"));
     foo = CompileFunction(&env, "bar=1;function foo(){var x=bar;}", "foo");
     SetBreakPoint(foo, 0);
   }
@@ -1465,8 +1465,8 @@ TEST(BreakPointSurviveGC) {
 
   // Test IC call break point with garbage collection.
   {
-    v8::Local<v8::Function> bar =
-        CompileFunction(&env, "function foo(){}", "foo");
+    v8::Local<v8::Function> bar(
+        CompileFunction(&env, "function foo(){}", "foo"));
     foo = CompileFunction(&env,
                           "function bar(){};function foo(){bar();}",
                           "foo");
@@ -1476,8 +1476,8 @@ TEST(BreakPointSurviveGC) {
 
   // Test return break point with garbage collection.
   {
-    v8::Local<v8::Function> bar =
-        CompileFunction(&env, "function foo(){}", "foo");
+    v8::Local<v8::Function> bar(
+        CompileFunction(&env, "function foo(){}", "foo"));
     foo = CompileFunction(&env, "function foo(){}", "foo");
     SetBreakPoint(foo, 0);
   }
@@ -1485,8 +1485,8 @@ TEST(BreakPointSurviveGC) {
 
   // Test non IC break point with garbage collection.
   {
-    v8::Local<v8::Function> bar =
-        CompileFunction(&env, "function foo(){}", "foo");
+    v8::Local<v8::Function> bar(
+        CompileFunction(&env, "function foo(){}", "foo"));
     foo = CompileFunction(&env, "function foo(){var bar=0;}", "foo");
     SetBreakPoint(foo, 0);
   }
@@ -2305,65 +2305,6 @@ TEST(ScriptBreakPointTopLevelCrash) {
   CheckDebuggerUnloaded();
 }
 
-// Test that breakpoint_relocation flag is honored
-TEST(ScriptBreakPointNoRelocation) {
-    i::FLAG_breakpoint_relocation = false;
-
-    v8::HandleScope scope;
-    DebugLocalContext env;
-    env.ExposeDebug();
-
-    // Create a function for checking the function when hitting a break point.
-    frame_function_name = CompileFunction(&env,
-                                          frame_function_name_source,
-                                          "frame_function_name");
-
-    v8::Debug::SetDebugEventListener(DebugEventBreakPointHitCount,
-                                     v8::Undefined());
-
-    v8::Local<v8::String> script1 = v8::String::New(
-      "a = 0                      // line 0\n"
-      "                           // line 1\n"
-      "                           // line 2\n"
-      "                           // line 3\n"
-      "function f() {             // line 4\n"
-      "  return 0;                // line 5\n"
-      "}                          // line 6");
-
-    // Set the script break point on the empty line
-    SetScriptBreakPointByNameFromJS("test.html", 2, -1);
-
-    // Compile the script and call the function.
-    v8::ScriptOrigin origin(v8::String::New("test.html"), v8::Integer::New(0));
-    v8::Script::Compile(script1, &origin)->Run();
-    v8::Local<v8::Function> f
-            = v8::Local<v8::Function>::Cast(env->Global()->Get(v8::String::New("f")));
-    f->Call(env->Global(), 0, NULL);
-
-    // Check that a break point was not hit
-    CHECK_EQ(0, break_point_hit_count);
-
-    v8::Local<v8::String> script2 = v8::String::New(
-      "a = 0                      // line 0\n"
-      "function g() {             // line 1\n"
-      "  return 0;                // line 2\n"
-      "}                          // line 3\n"
-      "function f() {             // line 4\n"
-      "  return 0;                // line 5\n"
-      "}                          // line 6");
-
-    // Compile the script and call the new function
-    v8::Script::Compile(script2, &origin)->Run();
-    v8::Local<v8::Function> g
-            = v8::Local<v8::Function>::Cast(env->Global()->Get(v8::String::New("g")));
-    g->Call(env->Global(), 0, NULL);
-
-    // Check that a break point was not hit
-    CHECK_EQ(1, break_point_hit_count);
-
-    v8::Debug::SetDebugEventListener(NULL);
-    CheckDebuggerUnloaded();
-}
 
 // Test that it is possible to remove the last break point for a function
 // inside the break handling of that break point.
@@ -3810,8 +3751,8 @@ TEST(BreakOnException) {
   v8::internal::Isolate::Current()->TraceException(false);
 
   // Create functions for testing break on exception.
-  v8::Local<v8::Function> throws =
-      CompileFunction(&env, "function throws(){throw 1;}", "throws");
+  v8::Local<v8::Function> throws(
+      CompileFunction(&env, "function throws(){throw 1;}", "throws"));
   v8::Local<v8::Function> caught =
       CompileFunction(&env,
                       "function caught(){try {throws();} catch(e) {};}",
@@ -5606,10 +5547,10 @@ TEST(DebuggerUnload) {
     v8::HandleScope scope;
 
     // Get the test functions again.
-    v8::Local<v8::Function> foo =
-      v8::Local<v8::Function>::Cast(env->Global()->Get(v8::String::New("foo")));
-    v8::Local<v8::Function> bar =
-      v8::Local<v8::Function>::Cast(env->Global()->Get(v8::String::New("foo")));
+    v8::Local<v8::Function> foo(v8::Local<v8::Function>::Cast(
+        env->Global()->Get(v8::String::New("foo"))));
+    v8::Local<v8::Function> bar(v8::Local<v8::Function>::Cast(
+        env->Global()->Get(v8::String::New("foo"))));
 
     foo->Call(env->Global(), 0, NULL);
     CHECK_EQ(0, break_point_hit_count);
@@ -6086,7 +6027,7 @@ TEST(DebugGetLoadedScripts) {
 
   EmptyExternalStringResource source_ext_str;
   v8::Local<v8::String> source = v8::String::NewExternal(&source_ext_str);
-  v8::Handle<v8::Script> evil_script = v8::Script::Compile(source);
+  v8::Handle<v8::Script> evil_script(v8::Script::Compile(source));
   Handle<i::ExternalTwoByteString> i_source(
       i::ExternalTwoByteString::cast(*v8::Utils::OpenHandle(*source)));
   // This situation can happen if source was an external string disposed
@@ -6734,7 +6675,7 @@ static void BreakMessageHandler(const v8::Debug::Message& message) {
     break_point_hit_count++;
 
     v8::HandleScope scope;
-    v8::Handle<v8::String> json = message.GetJSON();
+    v8::Handle<v8::String> json(message.GetJSON());
 
     SendContinueCommand();
   } else if (message.IsEvent() && message.GetEvent() == v8::AfterCompile) {
@@ -6745,7 +6686,7 @@ static void BreakMessageHandler(const v8::Debug::Message& message) {
     isolate->stack_guard()->DebugBreak();
 
     // Force serialization to trigger some internal JS execution.
-    v8::Handle<v8::String> json = message.GetJSON();
+    v8::Handle<v8::String> json(message.GetJSON());
 
     // Restore previous state.
     if (is_debug_break) {

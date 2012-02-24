@@ -134,8 +134,7 @@ class Variable: public ZoneObject {
 
   // True if the variable is named eval and not known to be shadowed.
   bool is_possibly_eval() const {
-    return IsVariable(FACTORY->eval_symbol()) &&
-        (mode_ == DYNAMIC || mode_ == DYNAMIC_GLOBAL);
+    return IsVariable(FACTORY->eval_symbol());
   }
 
   Variable* local_if_not_shadowed() const {
@@ -155,8 +154,6 @@ class Variable: public ZoneObject {
     index_ = index;
   }
 
-  bool is_qml_global() const { return is_qml_global_; }
-  void set_is_qml_global(bool is_qml_global) { is_qml_global_ = is_qml_global; }
  private:
   Scope* scope_;
   Handle<String> name_;
@@ -177,9 +174,6 @@ class Variable: public ZoneObject {
   // Usage info.
   bool is_accessed_from_inner_scope_;  // set by variable resolver
   bool is_used_;
-
-  // QML info
-  bool is_qml_global_;
 };
 
 

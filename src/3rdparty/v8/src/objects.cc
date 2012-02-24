@@ -220,7 +220,7 @@ MaybeObject* JSObject::GetPropertyWithCallback(Object* receiver,
   if (structure->IsForeign()) {
     AccessorDescriptor* callback =
         reinterpret_cast<AccessorDescriptor*>(
-            Foreign::cast(structure)->address());
+            Foreign::cast(structure)->foreign_address());
     MaybeObject* value = (callback->getter)(receiver, callback->data);
     RETURN_IF_SCHEDULED_EXCEPTION(isolate);
     return value;
@@ -1980,10 +1980,9 @@ MaybeObject* JSObject::SetPropertyWithInterceptor(
 MaybeObject* JSReceiver::SetProperty(String* name,
                                      Object* value,
                                      PropertyAttributes attributes,
-                                     StrictModeFlag strict_mode,
-                                     bool skip_fallback_interceptor) {
+                                     StrictModeFlag strict_mode) {
   LookupResult result(GetIsolate());
-  LocalLookup(name, &result, skip_fallback_interceptor);
+  LocalLookup(name, &result);
   return SetProperty(&result, name, value, attributes, strict_mode);
 }
 
@@ -2007,7 +2006,7 @@ MaybeObject* JSObject::SetPropertyWithCallback(Object* structure,
   if (structure->IsForeign()) {
     AccessorDescriptor* callback =
         reinterpret_cast<AccessorDescriptor*>(
-            Foreign::cast(structure)->address());
+            Foreign::cast(structure)->foreign_address());
     MaybeObject* obj = (callback->setter)(this,  value, callback->data);
     RETURN_IF_SCHEDULED_EXCEPTION(isolate);
     if (obj->IsFailure()) return obj;
@@ -2149,47 +2148,35 @@ MaybeObject* JSObject::SetPropertyWithCallbackSetterInPrototypes(
     bool* found,
     StrictModeFlag strict_mode) {
   Heap* heap = GetHeap();
-  LookupResult result(heap->isolate());
-  LookupCallbackSetterInPrototypes(name, &result);
-  if (result.IsFound()) {
+  // We could not find a local property so let's check whether there is an
+  // accessor that wants to handle the property.
+  LookupResult accessor_result(heap->isolate());
+  LookupCallbackSetterInPrototypes(name, &accessor_result);
+  if (accessor_result.IsFound()) {
     *found = true;
-    if (result.type() == CALLBACKS) {
-      return SetPropertyWithCallback(result.GetCallbackObject(),
+    if (accessor_result.type() == CALLBACKS) {
+      return SetPropertyWithCallback(accessor_result.GetCallbackObject(),
                                      name,
                                      value,
-                                     result.holder(),
+                                     accessor_result.holder(),
                                      strict_mode);
-    } else if (result.type() == HANDLER) {
-      // We could not find a local property so let's check whether there is an
-      // accessor that wants to handle the property.
-      LookupResult accessor_result(heap->isolate());
-      LookupCallbackSetterInPrototypes(name, &accessor_result);
-      if (accessor_result.IsFound()) {
-        if (accessor_result.type() == CALLBACKS) {
-          return SetPropertyWithCallback(accessor_result.GetCallbackObject(),
-                                         name,
-                                         value,
-                                         accessor_result.holder(),
-                                         strict_mode);
-        } else if (accessor_result.type() == HANDLER) {
-          // There is a proxy in the prototype chain. Invoke its
-          // getPropertyDescriptor trap.
-          bool found = false;
-          // SetPropertyWithHandlerIfDefiningSetter can cause GC,
-          // make sure to use the handlified references after calling
-          // the function.
-          Handle<JSObject> self(this);
-          Handle<String> hname(name);
-          Handle<Object> hvalue(value);
-          MaybeObject* result =
-              accessor_result.proxy()->SetPropertyWithHandlerIfDefiningSetter(
-                  name, value, attributes, strict_mode, &found);
-          if (found) return result;
-          // The proxy does not define the property as an accessor.
-          // Consequently, it has no effect on setting the receiver.
-          return self->AddProperty(*hname, *hvalue, attributes, strict_mode);
-        }
-      }
+    } else if (accessor_result.type() == HANDLER) {
+      // There is a proxy in the prototype chain. Invoke its
+      // getPropertyDescriptor trap.
+      bool found = false;
+      // SetPropertyWithHandlerIfDefiningSetter can cause GC,
+      // make sure to use the handlified references after calling
+      // the function.
+      Handle<JSObject> self(this);
+      Handle<String> hname(name);
+      Handle<Object> hvalue(value);
+      MaybeObject* result =
+          accessor_result.proxy()->SetPropertyWithHandlerIfDefiningSetter(
+              name, value, attributes, strict_mode, &found);
+      if (found) return result;
+      // The proxy does not define the property as an accessor.
+      // Consequently, it has no effect on setting the receiver.
+      return self->AddProperty(*hname, *hvalue, attributes, strict_mode);
     }
   }
   *found = false;
@@ -4214,8 +4201,7 @@ AccessorDescriptor* Map::FindAccessor(String* name) {
 }
 
 
-void JSReceiver::LocalLookup(String* name, LookupResult* result, 
-                             bool skip_fallback_interceptor) {
+void JSReceiver::LocalLookup(String* name, LookupResult* result) {
   ASSERT(name->IsString());
 
   Heap* heap = GetHeap();
@@ -4247,31 +4233,23 @@ void JSReceiver::LocalLookup(String* name, LookupResult* result,
   }
 
   // Check for lookup interceptor except when bootstrapping.
-  bool wouldIntercept = js_object->HasNamedInterceptor() && 
-                        !heap->isolate()->bootstrapper()->IsActive();
-  if (wouldIntercept && !map()->named_interceptor_is_fallback()) {
+  if (js_object->HasNamedInterceptor() &&
+      !heap->isolate()->bootstrapper()->IsActive()) {
     result->InterceptorResult(js_object);
     return;
   }
 
   js_object->LocalLookupRealNamedProperty(name, result);
-
-  if (wouldIntercept && !skip_fallback_interceptor && !result->IsProperty() &&
-      map()->named_interceptor_is_fallback()) {
-    result->InterceptorResult(js_object);
-    return;
-  }
 }
 
 
-void JSReceiver::Lookup(String* name, LookupResult* result, 
-                        bool skip_fallback_interceptor) {
+void JSReceiver::Lookup(String* name, LookupResult* result) {
   // Ecma-262 3rd 8.6.2.4
   Heap* heap = GetHeap();
   for (Object* current = this;
        current != heap->null_value();
        current = JSObject::cast(current)->GetPrototype()) {
-    JSReceiver::cast(current)->LocalLookup(name, result, skip_fallback_interceptor);
+    JSReceiver::cast(current)->LocalLookup(name, result);
     if (result->IsProperty()) return;
   }
   result->NotFound();
@@ -6726,71 +6704,6 @@ static inline bool CompareStringContentsPartial(Isolate* isolate,
 }
 
 
-bool String::SlowEqualsExternal(uc16 *string, int length) {
-  int len = this->length();
-  if (len != length) return false;
-  if (len == 0) return true;
-
-  // We know the strings are both non-empty. Compare the first chars
-  // before we try to flatten the strings.
-  if (this->Get(0) != string[0]) return false;
-
-  String* lhs = this->TryFlattenGetString();
-
-  if (lhs->IsFlat()) {
-    String::FlatContent lhs_content = lhs->GetFlatContent();
-    if (lhs->IsAsciiRepresentation()) {
-      Vector<const char> vec1 = lhs_content.ToAsciiVector();
-      VectorIterator<char> buf1(vec1);
-      VectorIterator<uc16> ib(string, length);
-      return CompareStringContents(&buf1, &ib);
-    } else {
-      Vector<const uc16> vec1 = lhs_content.ToUC16Vector();
-      Vector<const uc16> vec2(string, length);
-      return CompareRawStringContents(vec1, vec2);
-    }
-  } else {
-    Isolate* isolate = GetIsolate();
-    isolate->objects_string_compare_buffer_a()->Reset(0, lhs);
-    VectorIterator<uc16> ib(string, length);
-    return CompareStringContents(isolate->objects_string_compare_buffer_a(), &ib);
-  }
-}
-
-
-bool String::SlowEqualsExternal(char *string, int length)
-{
-  int len = this->length();
-  if (len != length) return false;
-  if (len == 0) return true;
-
-  // We know the strings are both non-empty. Compare the first chars
-  // before we try to flatten the strings.
-  if (this->Get(0) != string[0]) return false;
-
-  String* lhs = this->TryFlattenGetString();
-
-  if (StringShape(lhs).IsSequentialAscii()) {
-      const char* str1 = SeqAsciiString::cast(lhs)->GetChars();
-      return CompareRawStringContents(Vector<const char>(str1, len),
-                                      Vector<const char>(string, len));
-  }
-
-  if (lhs->IsFlat()) {
-    String::FlatContent lhs_content = lhs->GetFlatContent();
-    Vector<const uc16> vec1 = lhs_content.ToUC16Vector();
-    VectorIterator<const uc16> buf1(vec1);
-    VectorIterator<char> buf2(string, length);
-    return CompareStringContents(&buf1, &buf2);
-  } else {
-    Isolate* isolate = GetIsolate();
-    isolate->objects_string_compare_buffer_a()->Reset(0, lhs);
-    VectorIterator<char> ib(string, length);
-    return CompareStringContents(isolate->objects_string_compare_buffer_a(), &ib);
-  }
-}
-
-
 bool String::SlowEquals(String* other) {
   // Fast check: negative check with lengths.
   int len = length();
@@ -7686,8 +7599,8 @@ void SharedFunctionInfo::DetachInitialMap() {
   Map* map = reinterpret_cast<Map*>(initial_map());
 
   // Make the map remember to restore the link if it survives the GC.
-  map->set_bit_field3(
-      map->bit_field3() | (1 << Map::kAttachedToSharedFunctionInfo));
+  map->set_bit_field2(
+      map->bit_field2() | (1 << Map::kAttachedToSharedFunctionInfo));
 
   // Undo state changes made by StartInobjectTracking (except the
   // construction_count). This way if the initial map does not survive the GC
@@ -7707,8 +7620,8 @@ void SharedFunctionInfo::DetachInitialMap() {
 
 // Called from GC, hence reinterpret_cast and unchecked accessors.
 void SharedFunctionInfo::AttachInitialMap(Map* map) {
-  map->set_bit_field3(
-      map->bit_field3() & ~(1 << Map::kAttachedToSharedFunctionInfo));
+  map->set_bit_field2(
+      map->bit_field2() & ~(1 << Map::kAttachedToSharedFunctionInfo));
 
   // Resume inobject slack tracking.
   set_initial_map(map);
@@ -10599,8 +10512,10 @@ class StringSharedKey : public HashTableKey {
     FixedArray* pair = FixedArray::cast(other);
     SharedFunctionInfo* shared = SharedFunctionInfo::cast(pair->get(0));
     if (shared != shared_) return false;
-    StrictModeFlag strict_mode = static_cast<StrictModeFlag>(
-        Smi::cast(pair->get(2))->value());
+    int strict_unchecked = Smi::cast(pair->get(2))->value();
+    ASSERT(strict_unchecked == kStrictMode ||
+           strict_unchecked == kNonStrictMode);
+    StrictModeFlag strict_mode = static_cast<StrictModeFlag>(strict_unchecked);
     if (strict_mode != strict_mode_) return false;
     String* source = String::cast(pair->get(1));
     return source->Equals(source_);
@@ -10632,8 +10547,10 @@ class StringSharedKey : public HashTableKey {
     FixedArray* pair = FixedArray::cast(obj);
     SharedFunctionInfo* shared = SharedFunctionInfo::cast(pair->get(0));
     String* source = String::cast(pair->get(1));
-    StrictModeFlag strict_mode = static_cast<StrictModeFlag>(
-        Smi::cast(pair->get(2))->value());
+    int strict_unchecked = Smi::cast(pair->get(2))->value();
+    ASSERT(strict_unchecked == kStrictMode ||
+           strict_unchecked == kNonStrictMode);
+    StrictModeFlag strict_mode = static_cast<StrictModeFlag>(strict_unchecked);
     return StringSharedHashHelper(source, shared, strict_mode);
   }
 
@@ -10791,24 +10708,9 @@ class AsciiSymbolKey : public SequentialSymbolKey<char> {
 
   MaybeObject* AsObject() {
     if (hash_field_ == 0) Hash();
-    MaybeObject *result = HEAP->AllocateAsciiSymbol(string_, hash_field_);
-    if (!result->IsFailure() && result->ToObjectUnchecked()->IsSeqString()) {
-        while (true) {
-            Atomic32 my_symbol_id = next_symbol_id;
-            if (my_symbol_id > Smi::kMaxValue)
-                break;
-            if (my_symbol_id == NoBarrier_CompareAndSwap(&next_symbol_id, my_symbol_id, my_symbol_id + 1)) {
-                SeqString::cast(result->ToObjectUnchecked())->set_symbol_id(my_symbol_id);
-                break;
-            }
-        }
-    }
-    return result;
+    return HEAP->AllocateAsciiSymbol(string_, hash_field_);
   }
-
-  static Atomic32 next_symbol_id;
 };
-Atomic32 AsciiSymbolKey::next_symbol_id = 1;
 
 
 class SubStringAsciiSymbolKey : public HashTableKey {

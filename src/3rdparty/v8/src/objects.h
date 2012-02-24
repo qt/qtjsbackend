@@ -1362,8 +1362,7 @@ class JSReceiver: public HeapObject {
   MUST_USE_RESULT MaybeObject* SetProperty(String* key,
                                            Object* value,
                                            PropertyAttributes attributes,
-                                           StrictModeFlag strict_mode,
-                                           bool skip_fallback_interceptor = false);
+                                           StrictModeFlag strict_mode);
   MUST_USE_RESULT MaybeObject* SetProperty(LookupResult* result,
                                            String* key,
                                            Object* value,
@@ -1415,8 +1414,8 @@ class JSReceiver: public HeapObject {
 
   // Lookup a property.  If found, the result is valid and has
   // detailed information.
-  void LocalLookup(String* name, LookupResult* result, bool skip_fallback_interceptor = false);
-  void Lookup(String* name, LookupResult* result, bool skip_fallback_interceptor = false);
+  void LocalLookup(String* name, LookupResult* result);
+  void Lookup(String* name, LookupResult* result);
 
  protected:
   Smi* GenerateIdentityHash();
@@ -1759,9 +1758,6 @@ class JSObject: public JSReceiver {
   inline int GetInternalFieldOffset(int index);
   inline Object* GetInternalField(int index);
   inline void SetInternalField(int index, Object* value);
-
-  inline void SetExternalResourceObject(Object *);
-  inline Object *GetExternalResourceObject();
 
   // The following lookup functions skip interceptors.
   void LocalLookupRealNamedProperty(String* name, LookupResult* result);
@@ -3120,9 +3116,6 @@ class SerializedScopeInfo : public FixedArray {
   // Is this scope a strict mode scope?
   bool IsStrictMode();
 
-  // Is this scope a qml mode scope?
-  bool IsQmlMode();
-
   // Return the number of stack slots for code.
   int NumberOfStackSlots();
 
@@ -4177,11 +4170,11 @@ class Map: public HeapObject {
 
   // Tells whether the instance has a call-as-function handler.
   inline void set_has_instance_call_handler() {
-    set_bit_field3(bit_field3() | (1 << kHasInstanceCallHandler));
+    set_bit_field(bit_field() | (1 << kHasInstanceCallHandler));
   }
 
   inline bool has_instance_call_handler() {
-    return ((1 << kHasInstanceCallHandler) & bit_field3()) != 0;
+    return ((1 << kHasInstanceCallHandler) & bit_field()) != 0;
   }
 
   inline void set_is_extensible(bool value);
@@ -4249,20 +4242,6 @@ class Map: public HeapObject {
   inline void set_is_access_check_needed(bool access_check_needed);
   inline bool is_access_check_needed();
 
-  // Whether the named interceptor is a fallback interceptor or not
-  inline void set_named_interceptor_is_fallback(bool value);
-  inline bool named_interceptor_is_fallback();
-
-  // Tells whether the instance has the space for an external resource
-  // object
-  inline void set_has_external_resource(bool value);
-  inline bool has_external_resource();
-
-  // Tells whether the user object comparison callback should be used for
-  // comparisons involving this object
-  inline void set_use_user_object_comparison(bool value);
-  inline bool use_user_object_comparison();
-  
   // [prototype]: implicit prototype object.
   DECL_ACCESSORS(prototype, Object)
 
@@ -4503,14 +4482,14 @@ class Map: public HeapObject {
   static const int kHasNamedInterceptor = 3;
   static const int kHasIndexedInterceptor = 4;
   static const int kIsUndetectable = 5;
-  static const int kHasExternalResource = 6;
+  static const int kHasInstanceCallHandler = 6;
   static const int kIsAccessCheckNeeded = 7;
 
   // Bit positions for bit field 2
   static const int kIsExtensible = 0;
   static const int kFunctionWithPrototype = 1;
   static const int kStringWrapperSafeForDefaultValueOf = 2;
-  static const int kUseUserObjectComparison = 3;
+  static const int kAttachedToSharedFunctionInfo = 3;
   // No bits can be used after kElementsKindFirstBit, they are all reserved for
   // storing ElementKind.
   static const int kElementsKindShift = 4;
@@ -4527,9 +4506,6 @@ class Map: public HeapObject {
 
   // Bit positions for bit field 3
   static const int kIsShared = 0;
-  static const int kNamedInterceptorIsFallback = 1;
-  static const int kHasInstanceCallHandler = 2;
-  static const int kAttachedToSharedFunctionInfo = 3;
 
   // Layout of the default cache. It holds alternating name and code objects.
   static const int kCodeCacheEntrySize = 2;
@@ -4938,9 +4914,6 @@ class SharedFunctionInfo: public HeapObject {
   inline StrictModeFlag strict_mode_flag();
   inline void set_strict_mode_flag(StrictModeFlag strict_mode_flag);
 
-  // Indicates whether the function is a qml mode function.
-  DECL_BOOLEAN_ACCESSORS(qml_mode)
-
   // False if the function definitely does not allocate an arguments object.
   DECL_BOOLEAN_ACCESSORS(uses_arguments)
 
@@ -5162,7 +5135,6 @@ class SharedFunctionInfo: public HeapObject {
     kCodeAgeShift,
     kOptimizationDisabled = kCodeAgeShift + kCodeAgeSize,
     kStrictModeFunction,
-    kQmlModeFunction,
     kUsesArguments,
     kHasDuplicateParameters,
     kNative,
@@ -6229,9 +6201,6 @@ class String: public HeapObject {
   bool IsAsciiEqualTo(Vector<const char> str);
   bool IsTwoByteEqualTo(Vector<const uc16> str);
 
-  bool SlowEqualsExternal(uc16 *string, int length);
-  bool SlowEqualsExternal(char *string, int length);
-
   // Return a UTF8 representation of the string.  The string is null
   // terminated but may optionally contain nulls.  Length is returned
   // in length_output if length_output is not a null pointer  The string
@@ -6488,13 +6457,8 @@ class SeqString: public String {
   // Casting.
   static inline SeqString* cast(Object* obj);
 
-  // Get and set the symbol id of the string
-  inline int symbol_id();
-  inline void set_symbol_id(int value);
-
   // Layout description.
-  static const int kSymbolIdOffset = String::kSize;
-  static const int kHeaderSize = kSymbolIdOffset + kPointerSize;
+  static const int kHeaderSize = String::kSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(SeqString);
@@ -7210,8 +7174,8 @@ class JSWeakMap: public JSObject {
 class Foreign: public HeapObject {
  public:
   // [address]: field containing the address.
-  inline Address address();
-  inline void set_address(Address value);
+  inline Address foreign_address();
+  inline void set_foreign_address(Address value);
 
   // Casting.
   static inline Foreign* cast(Object* obj);
@@ -7234,10 +7198,10 @@ class Foreign: public HeapObject {
 
   // Layout description.
 
-  static const int kAddressOffset = HeapObject::kHeaderSize;
-  static const int kSize = kAddressOffset + kPointerSize;
+  static const int kForeignAddressOffset = HeapObject::kHeaderSize;
+  static const int kSize = kForeignAddressOffset + kPointerSize;
 
-  STATIC_CHECK(kAddressOffset == Internals::kForeignAddressOffset);
+  STATIC_CHECK(kForeignAddressOffset == Internals::kForeignAddressOffset);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(Foreign);
@@ -7418,7 +7382,6 @@ class InterceptorInfo: public Struct {
   DECL_ACCESSORS(deleter, Object)
   DECL_ACCESSORS(enumerator, Object)
   DECL_ACCESSORS(data, Object)
-  DECL_ACCESSORS(is_fallback, Smi)
 
   static inline InterceptorInfo* cast(Object* obj);
 
@@ -7438,8 +7401,7 @@ class InterceptorInfo: public Struct {
   static const int kDeleterOffset = kQueryOffset + kPointerSize;
   static const int kEnumeratorOffset = kDeleterOffset + kPointerSize;
   static const int kDataOffset = kEnumeratorOffset + kPointerSize;
-  static const int kFallbackOffset = kDataOffset + kPointerSize;
-  static const int kSize = kFallbackOffset + kPointerSize;
+  static const int kSize = kDataOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(InterceptorInfo);
@@ -7561,8 +7523,6 @@ class ObjectTemplateInfo: public TemplateInfo {
  public:
   DECL_ACCESSORS(constructor, Object)
   DECL_ACCESSORS(internal_field_count, Object)
-  DECL_ACCESSORS(has_external_resource, Object)
-  DECL_ACCESSORS(use_user_object_comparison, Object)
 
   static inline ObjectTemplateInfo* cast(Object* obj);
 
@@ -7579,9 +7539,7 @@ class ObjectTemplateInfo: public TemplateInfo {
   static const int kConstructorOffset = TemplateInfo::kHeaderSize;
   static const int kInternalFieldCountOffset =
       kConstructorOffset + kPointerSize;
-  static const int kHasExternalResourceOffset = kInternalFieldCountOffset + kPointerSize;
-  static const int kUseUserObjectComparisonOffset = kHasExternalResourceOffset + kPointerSize;
-  static const int kSize = kUseUserObjectComparisonOffset + kPointerSize;
+  static const int kSize = kInternalFieldCountOffset + kPointerSize;
 };
 
 

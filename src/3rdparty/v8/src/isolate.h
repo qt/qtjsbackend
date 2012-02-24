@@ -258,9 +258,6 @@ class ThreadLocalTop BASE_EMBEDDED {
   // Head of the list of live LookupResults.
   LookupResult* top_lookup_result_;
 
-  // Call back function for user object comparisons
-  v8::UserObjectComparisonCallback user_object_comparison_callback_;
-
   // Whether out of memory exceptions should be ignored.
   bool ignore_out_of_memory_;
 
@@ -705,11 +702,6 @@ class Isolate {
 
   void SetFailedAccessCheckCallback(v8::FailedAccessCheckCallback callback);
   void ReportFailedAccessCheck(JSObject* receiver, v8::AccessType type);
-
-  void SetUserObjectComparisonCallback(v8::UserObjectComparisonCallback callback);
-  inline v8::UserObjectComparisonCallback UserObjectComparisonCallback() { 
-      return thread_local_top()->user_object_comparison_callback_;
-  }
 
   // Exception throwing support. The caller should use the result
   // of Throw() as its return value.
@@ -1254,8 +1246,8 @@ class SaveContext BASE_EMBEDDED {
   SaveContext* prev() { return prev_; }
 
   // Returns true if this save context is below a given JavaScript frame.
-  bool below(JavaScriptFrame* frame) {
-    return (js_sp_ == 0) || (frame->sp() < js_sp_);
+  bool IsBelowFrame(JavaScriptFrame* frame) {
+    return (c_entry_fp_ == 0) || (c_entry_fp_ > frame->sp());
   }
 
  private:
@@ -1264,7 +1256,7 @@ class SaveContext BASE_EMBEDDED {
   Handle<Context> dummy_;
 #endif
   SaveContext* prev_;
-  Address js_sp_;  // The top JS frame's sp when saving context.
+  Address c_entry_fp_;
 };
 
 

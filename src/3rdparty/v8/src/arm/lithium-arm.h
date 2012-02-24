@@ -796,18 +796,15 @@ class LBoundsCheck: public LTemplateInstruction<0, 2, 0> {
 
 class LBitI: public LTemplateInstruction<1, 2, 0> {
  public:
-  LBitI(Token::Value op, LOperand* left, LOperand* right)
-      : op_(op) {
+  LBitI(LOperand* left, LOperand* right) {
     inputs_[0] = left;
     inputs_[1] = right;
   }
 
-  Token::Value op() const { return op_; }
+  Token::Value op() const { return hydrogen()->op(); }
 
   DECLARE_CONCRETE_INSTRUCTION(BitI, "bit-i")
-
- private:
-  Token::Value op_;
+  DECLARE_HYDROGEN_ACCESSOR(Bitwise)
 };
 
 
@@ -1303,17 +1300,13 @@ class LOuterContext: public LTemplateInstruction<1, 1, 0> {
 
 class LGlobalObject: public LTemplateInstruction<1, 1, 0> {
  public:
-  explicit LGlobalObject(LOperand* context, bool qml_global) {
+  explicit LGlobalObject(LOperand* context) {
     inputs_[0] = context;
-    qml_global_ = qml_global;
   }
 
   DECLARE_CONCRETE_INSTRUCTION(GlobalObject, "global-object")
 
   LOperand* context() { return InputAt(0); }
-  bool qml_global() { return qml_global_; }
- private:
-  bool qml_global_;
 };
 
 
@@ -1400,16 +1393,10 @@ class LCallGlobal: public LTemplateInstruction<1, 0, 0> {
   DECLARE_CONCRETE_INSTRUCTION(CallGlobal, "call-global")
   DECLARE_HYDROGEN_ACCESSOR(CallGlobal)
 
-  explicit LCallGlobal(bool qml_global) : qml_global_(qml_global) {}
-
   virtual void PrintDataTo(StringStream* stream);
 
   Handle<String> name() const {return hydrogen()->name(); }
   int arity() const { return hydrogen()->argument_count() - 1; }
-
-  bool qml_global() { return qml_global_; }
- private:
-  bool qml_global_;
 };
 
 
@@ -2202,7 +2189,6 @@ class LChunkBuilder BASE_EMBEDDED {
   void VisitInstruction(HInstruction* current);
 
   void DoBasicBlock(HBasicBlock* block, HBasicBlock* next_block);
-  LInstruction* DoBit(Token::Value op, HBitwiseBinaryOperation* instr);
   LInstruction* DoShift(Token::Value op, HBitwiseBinaryOperation* instr);
   LInstruction* DoArithmeticD(Token::Value op,
                               HArithmeticBinaryOperation* instr);

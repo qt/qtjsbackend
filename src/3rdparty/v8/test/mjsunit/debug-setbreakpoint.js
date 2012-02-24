@@ -49,17 +49,14 @@ function safeEval(code) {
   }
 }
 
-function testArguments(dcp, arguments, success, is_script, is_script_reg_exp) {
+function testArguments(dcp, arguments, success, is_script) {
   var request = '{' + base_request + ',"arguments":' + arguments + '}'
   var json_response = dcp.processDebugJSONRequest(request);
   var response = safeEval(json_response);
   if (success) {
     assertTrue(response.success, request + ' -> ' + json_response);
     if (is_script) {
-      if (is_script_reg_exp)
-        assertEquals('scriptRegExp', response.body.type, request + ' -> ' + json_response);
-      else
-        assertEquals('scriptName', response.body.type, request + ' -> ' + json_response);
+      assertEquals('scriptName', response.body.type, request + ' -> ' + json_response);
     } else {
       assertEquals('scriptId', response.body.type, request + ' -> ' + json_response);
     }
@@ -110,11 +107,6 @@ function listener(event, exec_state, event_data, data) {
     testArguments(dcp, '{"type":"script","target":"test"}', true, true);
     testArguments(dcp, '{"type":"script","target":"test","line":1}', true, true);
     testArguments(dcp, '{"type":"script","target":"test","column":1}', true, true);
-
-    testArguments(dcp, '{"type":"scriptRegExp","target":"test"}', true, true, true);
-    testArguments(dcp, '{"type":"scriptRegExp","target":"test"}', true, true, true);
-    testArguments(dcp, '{"type":"scriptRegExp","target":"test","line":1}', true, true, true);
-    testArguments(dcp, '{"type":"scriptRegExp","target":"test","column":1}', true, true, true);
 
     testArguments(dcp, '{"type":"scriptId","target":' + f_script_id + ',"line":' + f_line + '}', true, false);
     testArguments(dcp, '{"type":"scriptId","target":' + g_script_id + ',"line":' + g_line + '}', true, false);

@@ -618,9 +618,6 @@ void AstPrinter::PrintLiteralWithModeIndented(const char* info,
     EmbeddedVector<char, 256> buf;
     int pos = OS::SNPrintF(buf, "%s (mode = %s", info,
                            Variable::Mode2String(var->mode()));
-    if (var->is_qml_global()) {
-      pos += OS::SNPrintF(buf + pos, ":QML");
-    }
     OS::SNPrintF(buf + pos, ")");
     PrintLiteralIndented(buf.start(), value, true);
   }

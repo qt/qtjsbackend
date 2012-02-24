@@ -173,11 +173,6 @@ void FastNewContextStub::Generate(MacroAssembler* masm) {
   __ lw(a1, MemOperand(cp, Context::SlotOffset(Context::GLOBAL_INDEX)));
   __ sw(a1, MemOperand(v0, Context::SlotOffset(Context::GLOBAL_INDEX)));
 
-  // Copy the qml global object from the surrounding context.
-  __ lw(a1, MemOperand(cp, Context::SlotOffset(Context::QML_GLOBAL_INDEX)));
-  __ sw(a1, MemOperand(v0, Context::SlotOffset(Context::QML_GLOBAL_INDEX)));
-
-
   // Initialize the rest of the slots to undefined.
   __ LoadRoot(a1, Heap::kUndefinedValueRootIndex);
   for (int i = Context::MIN_CONTEXT_SLOTS; i < length; i++) {
@@ -1644,46 +1639,6 @@ void CompareStub::Generate(MacroAssembler* masm) {
 
   // NOTICE! This code is only reached after a smi-fast-case check, so
   // it is certain that at least one operand isn't a smi.
-  {
-    // This is optimized for reading the code and not benchmarked for
-    // speed or amount of instructions. The code is not ordered for speed
-    // or anything like this
-    Label miss, user_compare;
-
-    // No global compare if both operands are SMIs
-    __ And(a2, a1, Operand(a0));
-    __ JumpIfSmi(a2, &miss);
-
-
-    // We need to check if lhs and rhs are both objects, if not we are
-    // jumping out of the function. We will keep the 'map' in t0 (lhs) and
-    // t1 (rhs) for later usage.
-    __ GetObjectType(a0, t0, a3);
-    __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
-
-    __ GetObjectType(a1, t1, a3);
-    __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
-
-    // Check if the UseUserComparison flag is set by using the map of t0 for lhs
-    __ lbu(t0, FieldMemOperand(t0, Map::kBitField2Offset));
-    __ And(t0, t0, Operand(1 << Map::kUseUserObjectComparison));
-    __ Branch(&user_compare, eq, t0, Operand(1 << Map::kUseUserObjectComparison));
-
-
-    // Check if the UseUserComparison flag is _not_ set by using the map of t1 for
-    // rhs and then jump to the miss label.
-    __ lbu(t1, FieldMemOperand(t1, Map::kBitField2Offset));
-    __ And(t1, t1, Operand(1 << Map::kUseUserObjectComparison));
-    __ Branch(&miss, ne, t1, Operand(1 << Map::kUseUserObjectComparison));
-
-    // Invoke the runtime function here
-    __ bind(&user_compare);
-    __ Push(a0, a1);
-    __ TailCallRuntime(Runtime::kUserObjectEquals, 2, 1);
-
-    // We exit here without doing anything
-    __ bind(&miss);
-  }
 
   // Handle the case where the objects are identical.  Either returns the answer
   // or goes to slow.  Only falls through if the objects were not identical.
@@ -5396,7 +5351,8 @@ void StringCharCodeAtGenerator::GenerateFast(MacroAssembler* masm) {
 
 
 void StringCharCodeAtGenerator::GenerateSlow(
-    MacroAssembler* masm, const RuntimeCallHelper& call_helper) {
+    MacroAssembler* masm,
+    const RuntimeCallHelper& call_helper) {
   __ Abort("Unexpected fallthrough to CharCodeAt slow case");
 
   // Index is not a smi.
@@ -5482,7 +5438,8 @@ void StringCharFromCodeGenerator::GenerateFast(MacroAssembler* masm) {
 
 
 void StringCharFromCodeGenerator::GenerateSlow(
-    MacroAssembler* masm, const RuntimeCallHelper& call_helper) {
+    MacroAssembler* masm,
+    const RuntimeCallHelper& call_helper) {
   __ Abort("Unexpected fallthrough to CharFromCode slow case");
 
   __ bind(&slow_case_);
@@ -5508,7 +5465,8 @@ void StringCharAtGenerator::GenerateFast(MacroAssembler* masm) {
 
 
 void StringCharAtGenerator::GenerateSlow(
-    MacroAssembler* masm, const RuntimeCallHelper& call_helper) {
+    MacroAssembler* masm,
+    const RuntimeCallHelper& call_helper) {
   char_code_at_generator_.GenerateSlow(masm, call_helper);
   char_from_code_generator_.GenerateSlow(masm, call_helper);
 }
@@ -6899,20 +6857,10 @@ void ICCompareStub::GenerateObjects(MacroAssembler* masm) {
   __ And(a2, a1, Operand(a0));
   __ JumpIfSmi(a2, &miss);
 
-  // Compare lhs, a2 holds the map, a3 holds the type_reg
-  __ GetObjectType(a0, a2, a3);
-  __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
-  __ lbu(a2, FieldMemOperand(a2, Map::kBitField2Offset));
-  __ And(a2, a2, Operand(1 << Map::kUseUserObjectComparison));
-  __ Branch(&miss, eq, a2, Operand(1 << Map::kUseUserObjectComparison));
-
-
-  // Compare rhs, a2 holds the map, a3 holds the type_reg
-  __ GetObjectType(a1, a2, a3);
-  __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
-  __ lbu(a2, FieldMemOperand(a2, Map::kBitField2Offset));
-  __ And(a2, a2, Operand(1 << Map::kUseUserObjectComparison));
-  __ Branch(&miss, eq, a2, Operand(1 << Map::kUseUserObjectComparison));
+  __ GetObjectType(a0, a2, a2);
+  __ Branch(&miss, ne, a2, Operand(JS_OBJECT_TYPE));
+  __ GetObjectType(a1, a2, a2);
+  __ Branch(&miss, ne, a2, Operand(JS_OBJECT_TYPE));
 
   ASSERT(GetCondition() == eq);
   __ Subu(v0, a0, Operand(a1));
@@ -7034,84 +6982,6 @@ void StringDictionaryLookupStub::GenerateNegativeLookup(MacroAssembler* masm,
     // Having undefined at this place means the name is not contained.
     ASSERT_EQ(kSmiTagSize, 1);
     Register tmp = properties;
-    __ sll(tmp, index, 1);
-    __ Addu(tmp, properties, tmp);
-    __ lw(entity_name, FieldMemOperand(tmp, kElementsStartOffset));
-
-    ASSERT(!tmp.is(entity_name));
-    __ LoadRoot(tmp, Heap::kUndefinedValueRootIndex);
-    __ Branch(done, eq, entity_name, Operand(tmp));
-
-    if (i != kInlinedProbes - 1) {
-      // Stop if found the property.
-      __ Branch(miss, eq, entity_name, Operand(Handle<String>(name)));
-
-      // Check if the entry name is not a symbol.
-      __ lw(entity_name, FieldMemOperand(entity_name, HeapObject::kMapOffset));
-      __ lbu(entity_name,
-             FieldMemOperand(entity_name, Map::kInstanceTypeOffset));
-      __ And(tmp, entity_name, Operand(kIsSymbolMask));
-      __ Branch(miss, eq, tmp, Operand(zero_reg));
-
-      // Restore the properties.
-      __ lw(properties,
-            FieldMemOperand(receiver, JSObject::kPropertiesOffset));
-    }
-  }
-
-  const int spill_mask =
-      (ra.bit() | t2.bit() | t1.bit() | t0.bit() | a3.bit() |
-       a2.bit() | a1.bit() | a0.bit() | v0.bit());
-
-  __ MultiPush(spill_mask);
-  __ lw(a0, FieldMemOperand(receiver, JSObject::kPropertiesOffset));
-  __ li(a1, Operand(Handle<String>(name)));
-  StringDictionaryLookupStub stub(NEGATIVE_LOOKUP);
-  __ CallStub(&stub);
-  __ mov(at, v0);
-  __ MultiPop(spill_mask);
-
-  __ Branch(done, eq, at, Operand(zero_reg));
-  __ Branch(miss, ne, at, Operand(zero_reg));
-}
-
-
-// TODO(kmillikin): Eliminate this function when the stub cache is fully
-// handlified.
-MaybeObject* StringDictionaryLookupStub::TryGenerateNegativeLookup(
-    MacroAssembler* masm,
-    Label* miss,
-    Label* done,
-    Register receiver,
-    Register properties,
-    String* name,
-    Register scratch0) {
-// If names of slots in range from 1 to kProbes - 1 for the hash value are
-  // not equal to the name and kProbes-th slot is not used (its name is the
-  // undefined value), it guarantees the hash table doesn't contain the
-  // property. It's true even if some slots represent deleted properties
-  // (their names are the null value).
-  for (int i = 0; i < kInlinedProbes; i++) {
-    // scratch0 points to properties hash.
-    // Compute the masked index: (hash + i + i * i) & mask.
-    Register index = scratch0;
-    // Capacity is smi 2^n.
-    __ lw(index, FieldMemOperand(properties, kCapacityOffset));
-    __ Subu(index, index, Operand(1));
-    __ And(index, index, Operand(
-         Smi::FromInt(name->Hash() + StringDictionary::GetProbeOffset(i))));
-
-    // Scale the index by multiplying by the entry size.
-    ASSERT(StringDictionary::kEntrySize == 3);
-    // index *= 3.
-    __ sll(at, index, 1);
-    __ Addu(index, index, at);
-
-    Register entity_name = scratch0;
-    // Having undefined at this place means the name is not contained.
-    ASSERT_EQ(kSmiTagSize, 1);
-    Register tmp = properties;
-
     __ sll(scratch0, index, 1);
     __ Addu(tmp, properties, scratch0);
     __ lw(entity_name, FieldMemOperand(tmp, kElementsStartOffset));
@@ -7145,14 +7015,12 @@ MaybeObject* StringDictionaryLookupStub::TryGenerateNegativeLookup(
   __ lw(a0, FieldMemOperand(receiver, JSObject::kPropertiesOffset));
   __ li(a1, Operand(Handle<String>(name)));
   StringDictionaryLookupStub stub(NEGATIVE_LOOKUP);
-  MaybeObject* result = masm->TryCallStub(&stub);
-  if (result->IsFailure()) return result;
+  __ CallStub(&stub);
   __ mov(at, v0);
   __ MultiPop(spill_mask);
 
   __ Branch(done, eq, at, Operand(zero_reg));
   __ Branch(miss, ne, at, Operand(zero_reg));
-  return result;
 }
 
 
@@ -7167,6 +7035,11 @@ void StringDictionaryLookupStub::GeneratePositiveLookup(MacroAssembler* masm,
                                                         Register name,
                                                         Register scratch1,
                                                         Register scratch2) {
+  ASSERT(!elements.is(scratch1));
+  ASSERT(!elements.is(scratch2));
+  ASSERT(!name.is(scratch1));
+  ASSERT(!name.is(scratch2));
+
   // Assert that name contains a string.
   if (FLAG_debug_code) __ AbortIfNotString(name);
 

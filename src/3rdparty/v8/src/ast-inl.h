@@ -126,11 +126,6 @@ StrictModeFlag FunctionLiteral::strict_mode_flag() const {
 }
 
 
-bool FunctionLiteral::qml_mode() const {
-  return scope()->is_qml_mode();
-}
-
-
 } }  // namespace v8::internal
 
 #endif  // V8_AST_INL_H_

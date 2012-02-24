@@ -58,10 +58,8 @@ namespace internal {
   V(FastNewContext)                      \
   V(FastNewBlockContext)                 \
   V(FastCloneShallowArray)               \
-  V(RevertToNumber)                      \
   V(ToBoolean)                           \
   V(ToNumber)                            \
-  V(CounterOp)                           \
   V(ArgumentsAccess)                     \
   V(RegExpConstructResult)               \
   V(NumberToString)                      \
@@ -71,7 +69,8 @@ namespace internal {
   V(KeyedStoreElement)                   \
   V(DebuggerStatement)                   \
   V(StringDictionaryLookup)              \
-  V(ElementsTransitionAndStore)
+  V(ElementsTransitionAndStore)          \
+  V(StoreArrayLiteralElement)
 
 // List of code stubs only used on ARM platforms.
 #ifdef V8_TARGET_ARCH_ARM
@@ -326,7 +325,7 @@ class FastNewContextStub : public CodeStub {
   static const int kMaximumSlots = 64;
 
   explicit FastNewContextStub(int slots) : slots_(slots) {
-    ASSERT(slots_ >= 0 && slots <= kMaximumSlots);
+    ASSERT(slots_ > 0 && slots_ <= kMaximumSlots);
   }
 
   void Generate(MacroAssembler* masm);
@@ -1062,6 +1061,20 @@ class ElementsTransitionAndStoreStub : public CodeStub {
   StrictModeFlag strict_mode_;
 
   DISALLOW_COPY_AND_ASSIGN(ElementsTransitionAndStoreStub);
+};
+
+
+class StoreArrayLiteralElementStub : public CodeStub {
+ public:
+  explicit StoreArrayLiteralElementStub() {}
+
+ private:
+  Major MajorKey() { return StoreArrayLiteralElement; }
+  int MinorKey() { return 0; }
+
+  void Generate(MacroAssembler* masm);
+
+  DISALLOW_COPY_AND_ASSIGN(StoreArrayLiteralElementStub);
 };
 
 } }  // namespace v8::internal

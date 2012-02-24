@@ -607,8 +607,7 @@ Parser::Parser(Handle<Script> script,
 
 FunctionLiteral* Parser::ParseProgram(Handle<String> source,
                                       bool in_global_context,
-                                      StrictModeFlag strict_mode,
-                                      bool qml_mode) {
+                                      StrictModeFlag strict_mode) {
   ZoneScope zone_scope(isolate(), DONT_DELETE_ON_EXIT);
 
   HistogramTimerScope timer(isolate()->counters()->parse());
@@ -624,11 +623,11 @@ FunctionLiteral* Parser::ParseProgram(Handle<String> source,
     ExternalTwoByteStringUC16CharacterStream stream(
         Handle<ExternalTwoByteString>::cast(source), 0, source->length());
     scanner_.Initialize(&stream);
-    return DoParseProgram(source, in_global_context, strict_mode, qml_mode, &zone_scope);
+    return DoParseProgram(source, in_global_context, strict_mode, &zone_scope);
   } else {
     GenericStringUC16CharacterStream stream(source, 0, source->length());
     scanner_.Initialize(&stream);
-    return DoParseProgram(source, in_global_context, strict_mode, qml_mode, &zone_scope);
+    return DoParseProgram(source, in_global_context, strict_mode, &zone_scope);
   }
 }
 
@@ -636,7 +635,6 @@ FunctionLiteral* Parser::ParseProgram(Handle<String> source,
 FunctionLiteral* Parser::DoParseProgram(Handle<String> source,
                                         bool in_global_context,
                                         StrictModeFlag strict_mode,
-                                        bool qml_mode,
                                         ZoneScope* zone_scope) {
   ASSERT(top_scope_ == NULL);
   ASSERT(target_stack_ == NULL);
@@ -656,9 +654,6 @@ FunctionLiteral* Parser::DoParseProgram(Handle<String> source,
     LexicalScope lexical_scope(this, scope, isolate());
     ASSERT(top_scope_->strict_mode_flag() == kNonStrictMode);
     top_scope_->SetStrictModeFlag(strict_mode);
-    if (qml_mode) {
-      scope->EnableQmlMode();
-    }
     ZoneList<Statement*>* body = new(zone()) ZoneList<Statement*>(16);
     bool ok = true;
     int beg_loc = scanner().location().beg_pos;
@@ -752,10 +747,6 @@ FunctionLiteral* Parser::ParseLazy(CompilationInfo* info,
            scope->strict_mode_flag() == info->strict_mode_flag());
     ASSERT(info->strict_mode_flag() == shared_info->strict_mode_flag());
     scope->SetStrictModeFlag(shared_info->strict_mode_flag());
-    if (shared_info->qml_mode()) {
-      top_scope_->EnableQmlMode();
-    }
-
     FunctionLiteral::Type type = shared_info->is_expression()
         ? (shared_info->is_anonymous()
               ? FunctionLiteral::ANONYMOUS_EXPRESSION
@@ -1865,11 +1856,6 @@ Block* Parser::ParseVariableDeclarations(
         arguments->Add(value);
         value = NULL;  // zap the value to avoid the unnecessary assignment
 
-        int qml_mode = 0;
-        if (top_scope_->is_qml_mode() && !Isolate::Current()->global()->HasProperty(*name)) 
-          qml_mode = 1;
-        arguments->Add(NewNumberLiteral(qml_mode));
-
         // Construct the call to Runtime_InitializeConstGlobal
         // and add it to the initialization statement block.
         // Note that the function does different things depending on
@@ -1885,11 +1871,6 @@ Block* Parser::ParseVariableDeclarations(
         // We may want to pass singleton to avoid Literal allocations.
         StrictModeFlag flag = initialization_scope->strict_mode_flag();
         arguments->Add(NewNumberLiteral(flag));
-
-        int qml_mode = 0;
-        if (top_scope_->is_qml_mode() && !Isolate::Current()->global()->HasProperty(*name)) 
-          qml_mode = 1;
-        arguments->Add(NewNumberLiteral(qml_mode));
 
         // Be careful not to assign a value to the global variable if
         // we're in a with. The initialization value should not
@@ -2479,7 +2460,7 @@ Statement* Parser::ParseForStatement(ZoneStringList* labels, bool* ok) {
         // implementing stack allocated block scoped variables.
         Variable* temp = top_scope_->DeclarationScope()->NewTemporary(name);
         VariableProxy* temp_proxy = new(zone()) VariableProxy(isolate(), temp);
-        VariableProxy* each = top_scope_->NewUnresolved(name, inside_with());
+        VariableProxy* each = top_scope_->NewUnresolved(name);
         ForInStatement* loop = new(zone()) ForInStatement(isolate(), labels);
         Target target(&this->target_stack_, loop);
 
@@ -2951,23 +2932,14 @@ Expression* Parser::ParseLeftHandSideExpression(bool* ok) {
         // Keep track of eval() calls since they disable all local variable
         // optimizations.
         // The calls that need special treatment are the
-        // direct (i.e. not aliased) eval calls. These calls are all of the
-        // form eval(...) with no explicit receiver object where eval is not
-        // declared in the current scope chain.
+        // direct eval calls. These calls are all of the form eval(...), with
+        // no explicit receiver.
         // These calls are marked as potentially direct eval calls. Whether
         // they are actually direct calls to eval is determined at run time.
-        // TODO(994): In ES5, it doesn't matter if the "eval" var is declared
-        // in the local scope chain. It only matters that it's called "eval",
-        // is called without a receiver and it refers to the original eval
-        // function.
         VariableProxy* callee = result->AsVariableProxy();
         if (callee != NULL &&
             callee->IsVariable(isolate()->factory()->eval_symbol())) {
-          Handle<String> name = callee->name();
-          Variable* var = top_scope_->Lookup(name);
-          if (var == NULL) {
-            top_scope_->DeclarationScope()->RecordEvalCall();
-          }
+          top_scope_->DeclarationScope()->RecordEvalCall();
         }
         result = NewCall(result, args, pos);
         break;
@@ -5330,7 +5302,7 @@ static ScriptDataImpl* DoPreParse(UC16CharacterStream* source,
                                   int flags,
                                   ParserRecorder* recorder) {
   Isolate* isolate = Isolate::Current();
-  JavaScriptScanner scanner(isolate->unicode_cache());
+  Scanner scanner(isolate->unicode_cache());
   scanner.SetHarmonyScoping((flags & kHarmonyScoping) != 0);
   scanner.Initialize(source);
   intptr_t stack_limit = isolate->stack_guard()->real_climit();
@@ -5437,8 +5409,7 @@ bool ParserApi::Parse(CompilationInfo* info) {
       Handle<String> source = Handle<String>(String::cast(script->source()));
       result = parser.ParseProgram(source,
                                    info->is_global(),
-                                   info->strict_mode_flag(),
-                                   info->is_qml_mode());
+                                   info->strict_mode_flag());
     }
   }
   info->SetFunction(result);

@@ -1099,18 +1099,18 @@ void Heap::Scavenge() {
 }
 
 
-HeapObject* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
-                                                                    Object** p) {
+String* Heap::UpdateNewSpaceReferenceInExternalStringTableEntry(Heap* heap,
+                                                                Object** p) {
   MapWord first_word = HeapObject::cast(*p)->map_word();
 
   if (!first_word.IsForwardingAddress()) {
     // Unreachable external string can be finalized.
-    heap->FinalizeExternalString(HeapObject::cast(*p));
+    heap->FinalizeExternalString(String::cast(*p));
     return NULL;
   }
 
   // String is still reachable.
-  return HeapObject::cast(first_word.ToForwardingAddress());
+  return String::cast(first_word.ToForwardingAddress());
 }
 
 
@@ -1128,11 +1128,11 @@ void Heap::UpdateNewSpaceReferencesInExternalStringTable(
 
   for (Object** p = start; p < end; ++p) {
     ASSERT(InFromSpace(*p));
-    HeapObject* target = updater_func(this, p);
+    String* target = updater_func(this, p);
 
     if (target == NULL) continue;
 
-    ASSERT(target->IsExternalString() || target->map()->has_external_resource());
+    ASSERT(target->IsExternalString());
 
     if (InNewSpace(target)) {
       // String is still in new space.  Update the table entry.
@@ -1140,12 +1140,12 @@ void Heap::UpdateNewSpaceReferencesInExternalStringTable(
       ++last;
     } else {
       // String got promoted.  Move it to the old string list.
-      external_string_table_.AddOldObject(target);
+      external_string_table_.AddOldString(target);
     }
   }
 
   ASSERT(last <= end);
-  external_string_table_.ShrinkNewObjects(static_cast<int>(last - start));
+  external_string_table_.ShrinkNewStrings(static_cast<int>(last - start));
 }
 
 
@@ -2629,12 +2629,10 @@ MaybeObject* Heap::AllocateForeign(Address address, PretenureFlag pretenure) {
   // Statically ensure that it is safe to allocate foreigns in paged spaces.
   STATIC_ASSERT(Foreign::kSize <= Page::kMaxHeapObjectSize);
   AllocationSpace space = (pretenure == TENURED) ? OLD_DATA_SPACE : NEW_SPACE;
-  Object* result;
-  { MaybeObject* maybe_result = Allocate(foreign_map(), space);
-    if (!maybe_result->ToObject(&result)) return maybe_result;
-  }
-
-  Foreign::cast(result)->set_address(address);
+  Foreign* result;
+  MaybeObject* maybe_result = Allocate(foreign_map(), space);
+  if (!maybe_result->To(&result)) return maybe_result;
+  result->set_foreign_address(address);
   return result;
 }
 
@@ -4009,7 +4007,6 @@ MaybeObject* Heap::AllocateInternalSymbol(unibrow::CharacterStream* buffer,
   String* answer = String::cast(result);
   answer->set_length(chars);
   answer->set_hash_field(hash_field);
-  SeqString::cast(answer)->set_symbol_id(0);
 
   ASSERT_EQ(size, answer->Size());
 
@@ -4052,7 +4049,6 @@ MaybeObject* Heap::AllocateRawAsciiString(int length, PretenureFlag pretenure) {
   HeapObject::cast(result)->set_map(ascii_string_map());
   String::cast(result)->set_length(length);
   String::cast(result)->set_hash_field(String::kEmptyHashField);
-  SeqString::cast(result)->set_symbol_id(0);
   ASSERT_EQ(size, HeapObject::cast(result)->Size());
   return result;
 }
@@ -4088,7 +4084,6 @@ MaybeObject* Heap::AllocateRawTwoByteString(int length,
   HeapObject::cast(result)->set_map(string_map());
   String::cast(result)->set_length(length);
   String::cast(result)->set_hash_field(String::kEmptyHashField);
-  SeqString::cast(result)->set_symbol_id(0);
   ASSERT_EQ(size, HeapObject::cast(result)->Size());
   return result;
 }
@@ -4355,7 +4350,6 @@ MaybeObject* Heap::AllocateFunctionContext(int length, JSFunction* function) {
   context->set_previous(function->context());
   context->set_extension(NULL);
   context->set_global(function->context()->global());
-  context->set_qml_global(function->context()->qml_global());
   return context;
 }
 
@@ -4376,7 +4370,6 @@ MaybeObject* Heap::AllocateCatchContext(JSFunction* function,
   context->set_previous(previous);
   context->set_extension(name);
   context->set_global(previous->global());
-  context->set_qml_global(previous->qml_global());
   context->set(Context::THROWN_OBJECT_INDEX, thrown_object);
   return context;
 }
@@ -4395,7 +4388,6 @@ MaybeObject* Heap::AllocateWithContext(JSFunction* function,
   context->set_previous(previous);
   context->set_extension(extension);
   context->set_global(previous->global());
-  context->set_qml_global(previous->qml_global());
   return context;
 }
 
@@ -4414,7 +4406,6 @@ MaybeObject* Heap::AllocateBlockContext(JSFunction* function,
   context->set_previous(previous);
   context->set_extension(scope_info);
   context->set_global(previous->global());
-  context->set_qml_global(previous->qml_global());
   return context;
 }
 
@@ -6371,19 +6362,6 @@ void ExternalStringTable::CleanUp() {
 
 
 void ExternalStringTable::TearDown() {
-  for (int i = 0; i < new_space_strings_.length(); ++i) { 
-    if (new_space_strings_[i] == heap_->raw_unchecked_null_value()) continue;
-    HeapObject *object = HeapObject::cast(new_space_strings_[i]);
-    if (!object->IsExternalString())
-        heap_->FinalizeExternalString(object);
-  }
-  for (int i = 0; i < old_space_strings_.length(); ++i) { 
-    if (old_space_strings_[i] == heap_->raw_unchecked_null_value()) continue;
-    HeapObject *object = HeapObject::cast(old_space_strings_[i]);
-    if (!object->IsExternalString())
-        heap_->FinalizeExternalString(object);
-  }
-
   new_space_strings_.Free();
   old_space_strings_.Free();
 }

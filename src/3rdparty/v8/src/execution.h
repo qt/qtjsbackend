@@ -65,14 +65,6 @@ class Execution : public AllStatic {
                              bool* pending_exception,
                              bool convert_receiver = false);
 
-  static Handle<Object> Call(Handle<Object> callable,
-                             Handle<Object> receiver,
-                             int argc,
-                             Handle<Object> argv[],
-                             bool* pending_exception,
-                             bool convert_receiver,
-                             Handle<Object> qml);
-
   // Construct object from function, the caller supplies an array of
   // arguments. Arguments are Object* type. After function returns,
   // pointers in 'args' might be invalid.

@@ -96,7 +96,6 @@ void ThreadLocalTop::InitializeInternal() {
   thread_id_ = ThreadId::Invalid();
   external_caught_exception_ = false;
   failed_access_check_callback_ = NULL;
-  user_object_comparison_callback_ = NULL;
   save_context_ = NULL;
   catcher_ = NULL;
   top_lookup_result_ = NULL;
@@ -728,12 +727,6 @@ void Isolate::PrintStack(StringStream* accumulator) {
 void Isolate::SetFailedAccessCheckCallback(
     v8::FailedAccessCheckCallback callback) {
   thread_local_top()->failed_access_check_callback_ = callback;
-}
-
- 
-void Isolate::SetUserObjectComparisonCallback(
-    v8::UserObjectComparisonCallback callback) {
-  thread_local_top()->user_object_comparison_callback_ = callback;
 }
 
 

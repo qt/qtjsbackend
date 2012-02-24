@@ -42,10 +42,6 @@ class VariableMap: public HashMap {
  public:
   VariableMap();
 
-  // Dummy constructor.  This constructor doesn't set up the map
-  // properly so don't use it unless you have a good reason.
-  explicit VariableMap(bool gotta_love_static_overloading);
-
   virtual ~VariableMap();
 
   Variable* Declare(Scope* scope,
@@ -228,11 +224,6 @@ class Scope: public ZoneObject {
     end_position_ = statement_pos;
   }
 
-  // Enable qml mode for this scope
-  void EnableQmlMode() {
-    qml_mode_ = true;
-  }
-
   // ---------------------------------------------------------------------------
   // Predicates.
 
@@ -247,7 +238,6 @@ class Scope: public ZoneObject {
     return is_eval_scope() || is_function_scope() || is_global_scope();
   }
   bool is_strict_mode() const { return strict_mode_flag() == kStrictMode; }
-  bool is_qml_mode() const { return qml_mode_; }
   bool is_strict_mode_eval_scope() const {
     return is_eval_scope() && is_strict_mode();
   }
@@ -379,8 +369,6 @@ class Scope: public ZoneObject {
  protected:
   friend class ParserFactory;
 
-  explicit Scope(ScopeType type);
-
   Isolate* const isolate_;
 
   // Scope tree.
@@ -433,8 +421,6 @@ class Scope: public ZoneObject {
   // Source positions.
   int start_position_;
   int end_position_;
-  // This scope is a qml mode scope.
-  bool qml_mode_;
 
   // Computed via PropagateScopeInfo.
   bool outer_scope_calls_non_strict_eval_;

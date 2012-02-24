@@ -88,7 +88,6 @@ class ScopeInfo BASE_EMBEDDED {
   Handle<String> function_name_;
   bool calls_eval_;
   bool is_strict_mode_;
-  bool is_qml_mode_;
   ScopeType type_;
   List<Handle<String>, Allocator > parameters_;
   List<Handle<String>, Allocator > stack_slots_;

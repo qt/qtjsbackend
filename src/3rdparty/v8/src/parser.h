@@ -77,6 +77,8 @@ class FunctionEntry BASE_EMBEDDED {
   int literal_count() { return backing_[kLiteralCountOffset]; }
   int property_count() { return backing_[kPropertyCountOffset]; }
   StrictModeFlag strict_mode_flag() {
+    ASSERT(backing_[kStrictModeOffset] == kStrictMode ||
+           backing_[kStrictModeOffset] == kNonStrictMode);
     return static_cast<StrictModeFlag>(backing_[kStrictModeOffset]);
   }
 
@@ -430,8 +432,7 @@ class Parser {
   // Returns NULL if parsing failed.
   FunctionLiteral* ParseProgram(Handle<String> source,
                                 bool in_global_context,
-                                StrictModeFlag strict_mode,
-                                bool qml_mode = false);
+                                StrictModeFlag strict_mode);
 
   FunctionLiteral* ParseLazy(CompilationInfo* info);
 
@@ -477,7 +478,6 @@ class Parser {
   FunctionLiteral* DoParseProgram(Handle<String> source,
                                   bool in_global_context,
                                   StrictModeFlag strict_mode,
-                                  bool qml_mode,
                                   ZoneScope* zone_scope);
 
   // Report syntax error
@@ -486,7 +486,7 @@ class Parser {
   void ReportMessage(const char* message, Vector<const char*> args);
 
   bool inside_with() const { return top_scope_->inside_with(); }
-  JavaScriptScanner& scanner()  { return scanner_; }
+  Scanner& scanner()  { return scanner_; }
   Mode mode() const { return mode_; }
   ScriptDataImpl* pre_data() const { return pre_data_; }
 
@@ -726,7 +726,7 @@ class Parser {
   ZoneList<Handle<String> > symbol_cache_;
 
   Handle<Script> script_;
-  JavaScriptScanner scanner_;
+  Scanner scanner_;
 
   Scope* top_scope_;
 

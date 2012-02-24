@@ -447,8 +447,7 @@ Handle<SharedFunctionInfo> Compiler::Compile(Handle<String> source,
                                              v8::Extension* extension,
                                              ScriptDataImpl* input_pre_data,
                                              Handle<Object> script_data,
-                                             NativesFlag natives,
-                                             v8::Script::CompileFlags compile_flags) {
+                                             NativesFlag natives) {
   Isolate* isolate = source->GetIsolate();
   int source_length = source->length();
   isolate->counters()->total_load_size()->Increment(source_length);
@@ -499,7 +498,7 @@ Handle<SharedFunctionInfo> Compiler::Compile(Handle<String> source,
 
     // Create a script object describing the script to be compiled.
     Handle<Script> script = FACTORY->NewScript(source);
-    if (natives == NATIVES_CODE || compile_flags & v8::Script::NativeMode) {
+    if (natives == NATIVES_CODE) {
       script->set_type(Smi::FromInt(Script::TYPE_NATIVE));
     }
     if (!script_name.is_null()) {
@@ -516,7 +515,6 @@ Handle<SharedFunctionInfo> Compiler::Compile(Handle<String> source,
     info.MarkAsGlobal();
     info.SetExtension(extension);
     info.SetPreParseData(pre_data);
-    if (compile_flags & v8::Script::QmlMode) info.MarkAsQmlMode();
     result = MakeFunctionInfo(&info);
     if (extension == NULL && !result.is_null()) {
       compilation_cache->PutScript(source, result);
@@ -536,8 +534,7 @@ Handle<SharedFunctionInfo> Compiler::Compile(Handle<String> source,
 Handle<SharedFunctionInfo> Compiler::CompileEval(Handle<String> source,
                                                  Handle<Context> context,
                                                  bool is_global,
-                                                 StrictModeFlag strict_mode,
-                                                 bool qml_mode) {
+                                                 StrictModeFlag strict_mode) {
   Isolate* isolate = source->GetIsolate();
   int source_length = source->length();
   isolate->counters()->total_eval_size()->Increment(source_length);
@@ -562,7 +559,6 @@ Handle<SharedFunctionInfo> Compiler::CompileEval(Handle<String> source,
     info.MarkAsEval();
     if (is_global) info.MarkAsGlobal();
     info.SetStrictModeFlag(strict_mode);
-    if (qml_mode) info.MarkAsQmlMode();
     info.SetCallingContext(context);
     result = MakeFunctionInfo(&info);
     if (!result.is_null()) {
@@ -609,12 +605,6 @@ bool Compiler::CompileLazy(CompilationInfo* info) {
            shared->strict_mode_flag() == strict_mode);
     info->SetStrictModeFlag(strict_mode);
     shared->set_strict_mode_flag(strict_mode);
-
-    // After parsing we know function's qml mode. Remember it.
-    if (info->function()->qml_mode()) {
-      shared->set_qml_mode(true);
-      info->MarkAsQmlMode();
-    }
 
     // Compile the code.
     if (!MakeCode(info)) {
@@ -761,7 +751,6 @@ void Compiler::SetFunctionInfo(Handle<SharedFunctionInfo> function_info,
       *lit->this_property_assignments());
   function_info->set_allows_lazy_compilation(lit->AllowsLazyCompilation());
   function_info->set_strict_mode_flag(lit->strict_mode_flag());
-  function_info->set_qml_mode(lit->qml_mode());
   function_info->set_uses_arguments(lit->scope()->arguments() != NULL);
   function_info->set_has_duplicate_parameters(lit->has_duplicate_parameters());
 }

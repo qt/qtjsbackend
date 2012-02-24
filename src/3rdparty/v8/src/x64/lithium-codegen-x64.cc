@@ -196,13 +196,12 @@ bool LCodeGen::GeneratePrologue() {
 
   // Possibly allocate a local context.
   int heap_slots = scope()->num_heap_slots() - Context::MIN_CONTEXT_SLOTS;
-  if (heap_slots > 0 ||
-      (scope()->is_qml_mode() && scope()->is_global_scope())) {
+  if (heap_slots > 0) {
     Comment(";;; Allocate local context");
     // Argument to NewContext is the function, which is still in rdi.
     __ push(rdi);
     if (heap_slots <= FastNewContextStub::kMaximumSlots) {
-      FastNewContextStub stub((heap_slots < 0)?0:heap_slots);
+      FastNewContextStub stub(heap_slots);
       __ CallStub(&stub);
     } else {
       __ CallRuntime(Runtime::kNewFunctionContext, 1);
@@ -2611,7 +2610,7 @@ void LCodeGen::DoOuterContext(LOuterContext* instr) {
 
 void LCodeGen::DoGlobalObject(LGlobalObject* instr) {
   Register result = ToRegister(instr->result());
-  __ movq(result, instr->qml_global()?QmlGlobalObjectOperand():GlobalObjectOperand());
+  __ movq(result, GlobalObjectOperand());
 }
 
 
@@ -3050,7 +3049,7 @@ void LCodeGen::DoCallFunction(LCallFunction* instr) {
 void LCodeGen::DoCallGlobal(LCallGlobal* instr) {
   ASSERT(ToRegister(instr->result()).is(rax));
   int arity = instr->arity();
-  RelocInfo::Mode mode = instr->qml_global()?RelocInfo::CODE_TARGET:RelocInfo::CODE_TARGET_CONTEXT;
+  RelocInfo::Mode mode = RelocInfo::CODE_TARGET_CONTEXT;
   Handle<Code> ic =
       isolate()->stub_cache()->ComputeCallInitialize(arity, mode);
   __ Move(rcx, instr->name());

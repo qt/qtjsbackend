@@ -190,7 +190,6 @@ inline Heap* _inline_get_heap_();
   V(string_symbol, "string")                                             \
   V(String_symbol, "String")                                             \
   V(Date_symbol, "Date")                                                 \
-  V(Error_symbol, "Error")                                               \
   V(this_symbol, "this")                                                 \
   V(to_string_symbol, "toString")                                        \
   V(char_at_symbol, "CharAt")                                            \
@@ -246,8 +245,8 @@ class Isolate;
 class WeakObjectRetainer;
 
 
-typedef HeapObject* (*ExternalStringTableUpdaterCallback)(Heap* heap,
-                                                          Object** pointer);
+typedef String* (*ExternalStringTableUpdaterCallback)(Heap* heap,
+                                                      Object** pointer);
 
 class StoreBufferRebuilder {
  public:
@@ -332,14 +331,10 @@ typedef void (*ScavengingCallback)(Map* map,
 // External strings table is a place where all external strings are
 // registered.  We need to keep track of such strings to properly
 // finalize them.
-// The ExternalStringTable can contain both strings and objects with
-// external resources.  It was not renamed to make the patch simpler.
 class ExternalStringTable {
  public:
   // Registers an external string.
   inline void AddString(String* string);
-  // Registers an external object.
-  inline void AddObject(HeapObject* string);
 
   inline void Iterate(ObjectVisitor* v);
 
@@ -357,10 +352,10 @@ class ExternalStringTable {
 
   inline void Verify();
 
-  inline void AddOldObject(HeapObject* string);
+  inline void AddOldString(String* string);
 
   // Notifies the table that only a prefix of the new list is valid.
-  inline void ShrinkNewObjects(int position);
+  inline void ShrinkNewStrings(int position);
 
   // To speed up scavenge collections new space string are kept
   // separate from old space strings.
@@ -856,7 +851,7 @@ class Heap {
 
   // Finalizes an external string by deleting the associated external
   // data and clearing the resource pointer.
-  inline void FinalizeExternalString(HeapObject* string);
+  inline void FinalizeExternalString(String* string);
 
   // Allocates an uninitialized object.  The memory is non-executable if the
   // hardware and OS allow.
@@ -1661,7 +1656,7 @@ class Heap {
   // Performs a minor collection in new generation.
   void Scavenge();
 
-  static HeapObject* UpdateNewSpaceReferenceInExternalStringTableEntry(
+  static String* UpdateNewSpaceReferenceInExternalStringTableEntry(
       Heap* heap,
       Object** pointer);
 

@@ -587,12 +587,6 @@ class ScriptOrigin {
  */
 class V8EXPORT Script {
  public:
-  enum CompileFlags {
-      Default    = 0x00,
-      QmlMode    = 0x01,
-      NativeMode = 0x02
-  };
-
   /**
    * Compiles the specified script (context-independent).
    *
@@ -611,8 +605,7 @@ class V8EXPORT Script {
   static Local<Script> New(Handle<String> source,
                            ScriptOrigin* origin = NULL,
                            ScriptData* pre_data = NULL,
-                           Handle<String> script_data = Handle<String>(),
-                           CompileFlags = Default);
+                           Handle<String> script_data = Handle<String>());
 
   /**
    * Compiles the specified script using the specified file name
@@ -625,8 +618,7 @@ class V8EXPORT Script {
    *   will use the currently entered context).
    */
   static Local<Script> New(Handle<String> source,
-                           Handle<Value> file_name,
-                           CompileFlags = Default);
+                           Handle<Value> file_name);
 
   /**
    * Compiles the specified script (bound to current context).
@@ -647,8 +639,7 @@ class V8EXPORT Script {
   static Local<Script> Compile(Handle<String> source,
                                ScriptOrigin* origin = NULL,
                                ScriptData* pre_data = NULL,
-                               Handle<String> script_data = Handle<String>(),
-                               CompileFlags = Default);
+                               Handle<String> script_data = Handle<String>());
 
   /**
    * Compiles the specified script using the specified file name
@@ -665,8 +656,7 @@ class V8EXPORT Script {
    */
   static Local<Script> Compile(Handle<String> source,
                                Handle<Value> file_name,
-                               Handle<String> script_data = Handle<String>(),
-                               CompileFlags = Default);
+                               Handle<String> script_data = Handle<String>());
 
   /**
    * Runs the script returning the resulting value.  If the script is
@@ -676,7 +666,6 @@ class V8EXPORT Script {
    * compiled.
    */
   Local<Value> Run();
-  Local<Value> Run(Handle<Object> qml);
 
   /**
    * Returns the script id value.
@@ -967,11 +956,6 @@ class Value : public Data {
    */
   V8EXPORT bool IsRegExp() const;
 
-  /**
-   * Returns true if this value is an Error.
-   */
-  V8EXPORT bool IsError() const;
-
   V8EXPORT Local<Boolean> ToBoolean() const;
   V8EXPORT Local<Number> ToNumber() const;
   V8EXPORT Local<String> ToString() const;
@@ -1037,49 +1021,6 @@ class String : public Primitive {
   V8EXPORT int Utf8Length() const;
 
   /**
-   * Returns the hash of this string.
-   */
-  V8EXPORT uint32_t Hash() const;
-
-  struct CompleteHashData {
-    CompleteHashData() : length(0), hash(0), symbol_id(0) {}
-    int length;
-    uint32_t hash;
-    uint32_t symbol_id;
-  };
-
-  /**
-   * Returns the "complete" hash of the string.  This is 
-   * all the information about the string needed to implement
-   * a very efficient hash keyed on the string.
-   *
-   * The members of CompleteHashData are:
-   *    length: The length of the string.  Equivalent to Length()
-   *    hash: The hash of the string.  Equivalent to Hash()
-   *    symbol_id: If the string is a sequential symbol, the symbol
-   *        id, otherwise 0.  If the symbol ids of two strings are 
-   *        the same (and non-zero) the two strings are identical.
-   *        If the symbol ids are different the strings may still be
-   *        identical, but an Equals() check must be performed.
-   */
-  V8EXPORT CompleteHashData CompleteHash() const;
-
-  /**
-   * Compute a hash value for the passed UTF16 string
-   * data.
-   */
-  V8EXPORT static uint32_t ComputeHash(uint16_t *string, int length);
-  V8EXPORT static uint32_t ComputeHash(char *string, int length);
-
-  /**
-   * Returns true if this string is equal to the external
-   * string data provided.
-   */
-  V8EXPORT bool Equals(uint16_t *string, int length);
-  V8EXPORT bool Equals(char *string, int length);
-  inline bool Equals(Handle<Value> that) const { return v8::Value::Equals(that); }
-
-  /**
    * Write the contents of the string to an external buffer.
    * If no arguments are given, expects the buffer to be large
    * enough to hold the entire string and NULL terminator. Copies
@@ -1109,8 +1050,6 @@ class String : public Primitive {
     HINT_MANY_WRITES_EXPECTED = 1,
     NO_NULL_TERMINATION = 2
   };
-
-  V8EXPORT uint16_t GetCharacter(int index);
 
   // 16-bit character codes.
   V8EXPORT int Write(uint16_t* buffer,
@@ -1612,25 +1551,6 @@ class Object : public Value {
 
   /** Sets a native pointer in an internal field. */
   V8EXPORT void SetPointerInInternalField(int index, void* value);
-
-  class V8EXPORT ExternalResource { // NOLINT
-   public:
-    ExternalResource() {}
-    virtual ~ExternalResource() {}
-
-   protected:
-    virtual void Dispose() { delete this; }
-
-   private:
-    // Disallow copying and assigning.
-    ExternalResource(const ExternalResource&);
-    void operator=(const ExternalResource&);
-
-    friend class v8::internal::Heap;
-  };
-
-  V8EXPORT void SetExternalResource(ExternalResource *);
-  V8EXPORT ExternalResource *GetExternalResource();
 
   // Testers for local properties.
   V8EXPORT bool HasOwnProperty(Handle<String> key);
@@ -2340,7 +2260,6 @@ class V8EXPORT FunctionTemplate : public Template {
                                        NamedPropertyQuery query,
                                        NamedPropertyDeleter remover,
                                        NamedPropertyEnumerator enumerator,
-                                       bool is_fallback,
                                        Handle<Value> data);
   void SetIndexedInstancePropertyHandler(IndexedPropertyGetter getter,
                                          IndexedPropertySetter setter,
@@ -2424,12 +2343,6 @@ class V8EXPORT ObjectTemplate : public Template {
                                NamedPropertyDeleter deleter = 0,
                                NamedPropertyEnumerator enumerator = 0,
                                Handle<Value> data = Handle<Value>());
-  void SetFallbackPropertyHandler(NamedPropertyGetter getter,
-                                  NamedPropertySetter setter = 0,
-                                  NamedPropertyQuery query = 0,
-                                  NamedPropertyDeleter deleter = 0,
-                                  NamedPropertyEnumerator enumerator = 0,
-                                  Handle<Value> data = Handle<Value>());
 
   /**
    * Sets an indexed property handler on the object template.
@@ -2501,18 +2414,6 @@ class V8EXPORT ObjectTemplate : public Template {
    */
   void SetInternalFieldCount(int value);
 
-  /**
-   * Sets whether the object can store an "external resource" object.
-   */
-  bool HasExternalResource();
-  void SetHasExternalResource(bool value);
-
-  /**
-   * Mark object instances of the template as using the user object 
-   * comparison callback.
-   */
-  void MarkAsUseUserObjectComparison();
-
  private:
   ObjectTemplate();
   static Local<ObjectTemplate> New(Handle<FunctionTemplate> constructor);
@@ -2579,7 +2480,7 @@ class V8EXPORT Extension {  // NOLINT
             int source_length = -1);
   virtual ~Extension() { }
   virtual v8::Handle<v8::FunctionTemplate>
-      GetNativeFunction(v8::Handle<v8::String>) {
+      GetNativeFunction(v8::Handle<v8::String> name) {
     return v8::Handle<v8::FunctionTemplate>();
   }
 
@@ -2731,10 +2632,6 @@ typedef void (*MemoryAllocationCallback)(ObjectSpace space,
 typedef void (*FailedAccessCheckCallback)(Local<Object> target,
                                           AccessType type,
                                           Local<Value> data);
-
-// --- User Object Comparisoa nCallback ---
-typedef bool (*UserObjectComparisonCallback)(Local<Object> lhs, 
-                                             Local<Object> rhs);
 
 // --- AllowCodeGenerationFromStrings callbacks ---
 
@@ -3061,9 +2958,6 @@ class V8EXPORT V8 {
 
   /** Callback function for reporting failed access checks.*/
   static void SetFailedAccessCheckCallbackFunction(FailedAccessCheckCallback);
-
-  /** Callback for user object comparisons */
-  static void SetUserObjectComparisonCallbackFunction(UserObjectComparisonCallback);
 
   /**
    * Enables the host application to receive a notification before a
@@ -3535,8 +3429,6 @@ class V8EXPORT Context {
    * JavaScript frames an empty handle is returned.
    */
   static Local<Context> GetCalling();
-  static Local<Object> GetCallingQmlGlobal();
-  static Local<Value> GetCallingScriptData();
 
   /**
    * Sets the security token for the context.  To access an object in
@@ -3946,13 +3838,13 @@ class Internals {
     return *reinterpret_cast<T*>(addr);
   }
 
-  static inline bool CanCastToHeapObject(void*) { return false; }
-  static inline bool CanCastToHeapObject(Context*) { return true; }
-  static inline bool CanCastToHeapObject(String*) { return true; }
-  static inline bool CanCastToHeapObject(Object*) { return true; }
-  static inline bool CanCastToHeapObject(Message*) { return true; }
-  static inline bool CanCastToHeapObject(StackTrace*) { return true; }
-  static inline bool CanCastToHeapObject(StackFrame*) { return true; }
+  static inline bool CanCastToHeapObject(void* o) { return false; }
+  static inline bool CanCastToHeapObject(Context* o) { return true; }
+  static inline bool CanCastToHeapObject(String* o) { return true; }
+  static inline bool CanCastToHeapObject(Object* o) { return true; }
+  static inline bool CanCastToHeapObject(Message* o) { return true; }
+  static inline bool CanCastToHeapObject(StackTrace* o) { return true; }
+  static inline bool CanCastToHeapObject(StackFrame* o) { return true; }
 };
 
 }  // namespace internal

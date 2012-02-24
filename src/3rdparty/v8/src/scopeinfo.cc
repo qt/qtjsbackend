@@ -51,7 +51,6 @@ ScopeInfo<Allocator>::ScopeInfo(Scope* scope)
     : function_name_(FACTORY->empty_symbol()),
       calls_eval_(scope->calls_eval()),
       is_strict_mode_(scope->is_strict_mode()),
-      is_qml_mode_(scope->is_qml_mode()),
       type_(scope->type()),
       parameters_(scope->num_parameters()),
       stack_slots_(scope->num_stack_slots()),
@@ -154,8 +153,6 @@ ScopeInfo<Allocator>::ScopeInfo(Scope* scope)
 //
 // - is strict mode scope
 //
-// - is qml mode scope
-//
 // - scope type
 //
 // - number of variables in the context object (smi) (= function context
@@ -255,7 +252,6 @@ ScopeInfo<Allocator>::ScopeInfo(SerializedScopeInfo* data)
     p = ReadObject(p, &function_name_);
     p = ReadBool(p, &calls_eval_);
     p = ReadBool(p, &is_strict_mode_);
-    p = ReadBool(p, &is_qml_mode_);
     p = ReadInt(p, &type_);
     p = ReadList<Allocator>(p, &context_slots_, &context_modes_);
     p = ReadList<Allocator>(p, &parameters_);
@@ -311,9 +307,9 @@ static Object** WriteList(Object** p,
 
 template<class Allocator>
 Handle<SerializedScopeInfo> ScopeInfo<Allocator>::Serialize() {
-  // function name, calls eval, is_strict_mode, is_qml_mode, scope type,
+  // function name, calls eval, is_strict_mode, scope type,
   // length for 3 tables:
-  const int extra_slots = 1 + 1 + 1 + 1 + 1 + 3;
+  const int extra_slots = 1 + 1 + 1 + 1 + 3;
   int length = extra_slots +
                context_slots_.length() * 2 +
                parameters_.length() +
@@ -328,7 +324,6 @@ Handle<SerializedScopeInfo> ScopeInfo<Allocator>::Serialize() {
   p = WriteObject(p, function_name_);
   p = WriteBool(p, calls_eval_);
   p = WriteBool(p, is_strict_mode_);
-  p = WriteBool(p, is_qml_mode_);
   p = WriteInt(p, type_);
   p = WriteList(p, &context_slots_, &context_modes_);
   p = WriteList(p, &parameters_);
@@ -377,8 +372,8 @@ SerializedScopeInfo* SerializedScopeInfo::Empty() {
 
 Object** SerializedScopeInfo::ContextEntriesAddr() {
   ASSERT(length() > 0);
-  // +5 for function name, calls eval, strict mode, qml mode, scope type.
-  return data_start() + 5;
+  // +4 for function name, calls eval, strict mode, scope type.
+  return data_start() + 4;
 }
 
 
@@ -422,21 +417,10 @@ bool SerializedScopeInfo::IsStrictMode() {
 }
 
 
-bool SerializedScopeInfo::IsQmlMode() {
-  if (length() > 0) {
-    Object** p = data_start() + 3;  // +3 for function name, calls eval, strict mode.
-    bool qml_mode;
-    p = ReadBool(p, &qml_mode);
-    return qml_mode;
-  }
-  return false;
-}
-
-
 ScopeType SerializedScopeInfo::Type() {
   ASSERT(length() > 0);
-  // +4 for function name, calls eval, strict mode, qml mode.
-  Object** p = data_start() + 4;
+  // +3 for function name, calls eval, strict mode.
+  Object** p = data_start() + 3;
   ScopeType type;
   p = ReadInt(p, &type);
   return type;

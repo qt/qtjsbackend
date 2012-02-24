@@ -1343,7 +1343,7 @@ int JSObject::GetInternalFieldCount() {
   // Make sure to adjust for the number of in-object properties. These
   // properties do contribute to the size, but are not internal fields.
   return ((Size() - GetHeaderSize()) >> kPointerSizeLog2) -
-         map()->inobject_properties() - (map()->has_external_resource()?1:0);
+         map()->inobject_properties();
 }
 
 
@@ -1370,23 +1370,6 @@ void JSObject::SetInternalField(int index, Object* value) {
   int offset = GetHeaderSize() + (kPointerSize * index);
   WRITE_FIELD(this, offset, value);
   WRITE_BARRIER(GetHeap(), this, offset, value);
-}
-
-
-void JSObject::SetExternalResourceObject(Object *value) {
-  ASSERT(map()->has_external_resource());
-  int offset = GetHeaderSize() + kPointerSize * GetInternalFieldCount();
-  WRITE_FIELD(this, offset, value);
-  WRITE_BARRIER(GetHeap(), this, offset, value);
-}
-
-
-Object *JSObject::GetExternalResourceObject() { 
-  if (map()->has_external_resource()) {
-    return READ_FIELD(this, GetHeaderSize() + kPointerSize * GetInternalFieldCount());
-  } else {
-    return GetHeap()->undefined_value();
-  }
 }
 
 
@@ -1872,7 +1855,7 @@ Object* DescriptorArray::GetCallbacksObject(int descriptor_number) {
 AccessorDescriptor* DescriptorArray::GetCallbacks(int descriptor_number) {
   ASSERT(GetType(descriptor_number) == CALLBACKS);
   Foreign* p = Foreign::cast(GetCallbacksObject(descriptor_number));
-  return reinterpret_cast<AccessorDescriptor*>(p->address());
+  return reinterpret_cast<AccessorDescriptor*>(p->foreign_address());
 }
 
 
@@ -2099,7 +2082,6 @@ SMI_ACCESSORS(FixedArrayBase, length, kLengthOffset)
 SMI_ACCESSORS(FreeSpace, size, kSizeOffset)
 
 SMI_ACCESSORS(String, length, kLengthOffset)
-SMI_ACCESSORS(SeqString, symbol_id, kSymbolIdOffset)
 
 
 uint32_t String::hash_field() {
@@ -2749,14 +2731,14 @@ bool Map::is_extensible() {
 
 void Map::set_attached_to_shared_function_info(bool value) {
   if (value) {
-    set_bit_field3(bit_field3() | (1 << kAttachedToSharedFunctionInfo));
+    set_bit_field2(bit_field2() | (1 << kAttachedToSharedFunctionInfo));
   } else {
-    set_bit_field3(bit_field3() & ~(1 << kAttachedToSharedFunctionInfo));
+    set_bit_field2(bit_field2() & ~(1 << kAttachedToSharedFunctionInfo));
   }
 }
 
 bool Map::attached_to_shared_function_info() {
-  return ((1 << kAttachedToSharedFunctionInfo) & bit_field3()) != 0;
+  return ((1 << kAttachedToSharedFunctionInfo) & bit_field2()) != 0;
 }
 
 
@@ -2770,47 +2752,6 @@ void Map::set_is_shared(bool value) {
 
 bool Map::is_shared() {
   return ((1 << kIsShared) & bit_field3()) != 0;
-}
- 
-void Map::set_has_external_resource(bool value) {
-  if (value) {
-    set_bit_field(bit_field() | (1 << kHasExternalResource));
-  } else {
-    set_bit_field(bit_field() & ~(1 << kHasExternalResource));
-  }
-}
-
-bool Map::has_external_resource()
-{
-    return ((1 << kHasExternalResource) & bit_field()) != 0;
-}
- 
-
-void Map::set_use_user_object_comparison(bool value) {
-  if (value) {
-    set_bit_field2(bit_field2() | (1 << kUseUserObjectComparison));
-  } else {
-    set_bit_field2(bit_field2() & ~(1 << kUseUserObjectComparison));
-  }
-}
-
-bool Map::use_user_object_comparison() {
-    return ((1 << kUseUserObjectComparison) & bit_field2()) != 0;
-}
-
-
-void Map::set_named_interceptor_is_fallback(bool value)
-{
-  if (value) {
-    set_bit_field3(bit_field3() | (1 << kNamedInterceptorIsFallback));
-  } else {
-    set_bit_field3(bit_field3() & ~(1 << kNamedInterceptorIsFallback));
-  }
-}
-
-bool Map::named_interceptor_is_fallback()
-{
-  return ((1 << kNamedInterceptorIsFallback) & bit_field3()) != 0;
 }
 
 
@@ -3313,7 +3254,6 @@ ACCESSORS(InterceptorInfo, query, Object, kQueryOffset)
 ACCESSORS(InterceptorInfo, deleter, Object, kDeleterOffset)
 ACCESSORS(InterceptorInfo, enumerator, Object, kEnumeratorOffset)
 ACCESSORS(InterceptorInfo, data, Object, kDataOffset)
-ACCESSORS(InterceptorInfo, is_fallback, Smi, kFallbackOffset)
 
 ACCESSORS(CallHandlerInfo, callback, Object, kCallbackOffset)
 ACCESSORS(CallHandlerInfo, data, Object, kDataOffset)
@@ -3345,10 +3285,6 @@ ACCESSORS(FunctionTemplateInfo, flag, Smi, kFlagOffset)
 ACCESSORS(ObjectTemplateInfo, constructor, Object, kConstructorOffset)
 ACCESSORS(ObjectTemplateInfo, internal_field_count, Object,
           kInternalFieldCountOffset)
-ACCESSORS(ObjectTemplateInfo, has_external_resource, Object,
-          kHasExternalResourceOffset)
-ACCESSORS(ObjectTemplateInfo, use_user_object_comparison, Object, 
-          kUseUserObjectComparisonOffset)
 
 ACCESSORS(SignatureInfo, receiver, Object, kReceiverOffset)
 ACCESSORS(SignatureInfo, args, Object, kArgsOffset)
@@ -3550,8 +3486,6 @@ void SharedFunctionInfo::set_strict_mode_flag(StrictModeFlag strict_mode_flag) {
 
 BOOL_GETTER(SharedFunctionInfo, compiler_hints, strict_mode,
             kStrictModeFunction)
-BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, qml_mode,
-               kQmlModeFunction)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints, native, kNative)
 BOOL_ACCESSORS(SharedFunctionInfo, compiler_hints,
                name_should_print_as_anonymous,
@@ -3913,13 +3847,13 @@ ObjectHashTable* JSWeakMap::unchecked_table() {
 }
 
 
-Address Foreign::address() {
-  return AddressFrom<Address>(READ_INTPTR_FIELD(this, kAddressOffset));
+Address Foreign::foreign_address() {
+  return AddressFrom<Address>(READ_INTPTR_FIELD(this, kForeignAddressOffset));
 }
 
 
-void Foreign::set_address(Address value) {
-  WRITE_INTPTR_FIELD(this, kAddressOffset, OffsetFrom(value));
+void Foreign::set_foreign_address(Address value) {
+  WRITE_INTPTR_FIELD(this, kForeignAddressOffset, OffsetFrom(value));
 }
 
 
@@ -4602,14 +4536,14 @@ int JSObject::BodyDescriptor::SizeOf(Map* map, HeapObject* object) {
 
 void Foreign::ForeignIterateBody(ObjectVisitor* v) {
   v->VisitExternalReference(
-      reinterpret_cast<Address *>(FIELD_ADDR(this, kAddressOffset)));
+      reinterpret_cast<Address*>(FIELD_ADDR(this, kForeignAddressOffset)));
 }
 
 
 template<typename StaticVisitor>
 void Foreign::ForeignIterateBody() {
   StaticVisitor::VisitExternalReference(
-      reinterpret_cast<Address *>(FIELD_ADDR(this, kAddressOffset)));
+      reinterpret_cast<Address*>(FIELD_ADDR(this, kForeignAddressOffset)));
 }
 
 
