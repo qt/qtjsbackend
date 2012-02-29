@@ -59,6 +59,7 @@ private slots:
     void userobjectcompare();
     void externalteardown();
     void globalcall();
+    void getcallingqmlglobal();
 };
 
 void tst_v8::eval()
@@ -84,6 +85,11 @@ void tst_v8::externalteardown()
 void tst_v8::globalcall()
 {
     QVERIFY(v8test_globalcall());
+}
+
+void tst_v8::getcallingqmlglobal()
+{
+    QVERIFY(v8test_getcallingqmlglobal());
 }
 
 int main(int argc, char *argv[])

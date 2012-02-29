@@ -377,3 +377,60 @@ cleanup:
 
     ENDTEST();
 }
+
+#define VARNAME "tipli"
+#define VARVALUE 28
+
+Handle<Value> CheckQMLGlobal(const Arguments&)
+{
+  HandleScope handle_scope;
+
+  Local<String> key = String::New(VARNAME);
+  Local<Object> qmlglobal = Context::GetCallingQmlGlobal();
+
+  if (qmlglobal.IsEmpty()) return Integer::New(0);
+
+  int hash = qmlglobal->GetIdentityHash();
+  int value = qmlglobal->Get(key)->Int32Value();
+
+  return Integer::New(hash + value);
+}
+
+bool v8test_getcallingqmlglobal()
+{
+    BEGINTEST();
+
+    HandleScope handle_scope;
+
+    Local<ObjectTemplate> global = ObjectTemplate::New();
+    global->Set(String::New("checkQMLGlobal"), FunctionTemplate::New(CheckQMLGlobal));
+
+    Persistent<Context> context = Context::New(NULL, global);
+    Context::Scope global_scope(context);
+
+    Local<String> key = String::New(VARNAME);
+    Local<Object> qmlglobal = Object::New();
+
+    qmlglobal->Set(key, Integer::New(VARVALUE));
+    int hash1 = qmlglobal->GetIdentityHash();
+
+    Local<String> source = String::New("(function test() { return checkQMLGlobal(); })");
+    Local<Script> script = Script::Compile(source, NULL, NULL, v8::Handle<v8::String>(), v8::Script::QmlMode);
+    Local<Value> result = script->Run(qmlglobal);
+
+    Local<Function> v8function = Local<Function>::Cast(result);
+    int hash2 = v8function->Call(v8function, 0, 0)->Int32Value();
+    VERIFY(hash2);
+    VERIFY(hash1 == (hash2 - VARVALUE));
+
+    qmlglobal = Context::GetCallingQmlGlobal();
+    VERIFY(qmlglobal.IsEmpty());
+
+cleanup:
+    context.Dispose();
+
+    ENDTEST();
+}
+
+#undef VARNAME
+#undef VARVALUE
