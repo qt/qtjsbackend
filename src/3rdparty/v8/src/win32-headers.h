@@ -64,10 +64,10 @@
 #undef _WIN32_WINNT
 #define _WIN32_WINNT 0x501
 #endif  // __MINGW32__
-#ifndef __MINGW32__
+#if !defined(__MINGW32__) || defined(__MINGW64_VERSION_MAJOR)
 #include <dbghelp.h>  // For SymLoadModule64 and al.
 #include <errno.h>  // For STRUNCATE
-#endif  // __MINGW32__
+#endif  // !defined(__MINGW32__) || defined(__MINGW64_VERSION_MAJOR)
 #include <limits.h>  // For INT_MAX and al.
 #include <tlhelp32.h>  // For Module32First and al.
 
@@ -75,7 +75,9 @@
 // makes it impossible to have them elsewhere.
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#ifndef __MINGW32__
 #include <wspiapi.h>
+#endif  // __MINGW32__
 #include <process.h>  // for _beginthreadex()
 #include <stdlib.h>
 #endif  // V8_WIN32_HEADERS_FULL
