@@ -24,3 +24,8 @@
 %dependencies = (
         "qtbase" => "refs/heads/master",
 );
+
+# compile tests
+%configtests = (
+    "hardfloat" => {},
+);
