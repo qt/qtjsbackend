@@ -154,7 +154,9 @@ contains(config_test_hardfloat, yes) {
 } else {
     DEFINES += USE_EABI_HARDFLOAT=0
 }
-DEFINES += CAN_USE_VFP_INSTRUCTIONS
+# Disable VFP3 until we add an option to configure
+# QTBUG-24760
+false:DEFINES += CAN_USE_VFP_INSTRUCTIONS
 SOURCES += \
     $$V8SRC/arm/builtins-arm.cc \
     $$V8SRC/arm/code-stubs-arm.cc \
