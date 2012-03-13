@@ -11350,7 +11350,6 @@ class ScopeIterator {
       case ScopeIterator::ScopeTypeGlobal:
         return Handle<JSObject>(CurrentContext()->global());
       case ScopeIterator::ScopeTypeLocal: {
-        Handle<SerializedScopeInfo> scope_info = nested_scope_chain_.last();
         ASSERT(nested_scope_chain_.length() == 1);
         // Materialize the content of the local scope into a JSObject.
         return MaterializeLocalScope(isolate_, frame_, inlined_frame_index_);
@@ -11672,6 +11671,12 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_GetBreakLocations) {
   // Return array as JS array
   return *isolate->factory()->NewJSArrayWithElements(
       Handle<FixedArray>::cast(break_locations));
+}
+
+
+// Return the value of breakpoint_relocation flag
+RUNTIME_FUNCTION(MaybeObject*, Runtime_AllowBreakPointRelocation) {
+  return Smi::FromInt(FLAG_breakpoint_relocation);
 }
 
 
