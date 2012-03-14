@@ -452,7 +452,7 @@ ScriptBreakPoint.prototype.set = function (script) {
   // Check for any relocation and compare it with the breakpoint_relocation flag
   if (actual_location.line != line && !%AllowBreakPointRelocation()) {
     %ClearBreakPoint(break_point);
-    return break_point;
+    return;
   }
   break_point.actual_location = { line: actual_location.line,
                                   column: actual_location.column,
