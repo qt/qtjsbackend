@@ -432,5 +432,66 @@ cleanup:
     ENDTEST();
 }
 
+bool v8test_typeof()
+{
+    BEGINTEST();
+
+    HandleScope handle_scope;
+    Persistent<Context> context = Context::New();
+    Context::Scope context_scope(context);
+
+    Local<Object> qmlglobal = Object::New();
+    qmlglobal->Set(String::New("a"), Integer::New(123));
+
+    Local<Script> script = Script::Compile(String::New("["
+                                                       "typeof a === 'number', "
+                                                       "typeof b === 'undefined', "
+                                                       "(function() { return typeof c === 'undefined'; })()"
+                                                       "]"), NULL, NULL,
+                                           Handle<String>(), Script::QmlMode);
+
+    TryCatch tc;
+    Local<Value> result = script->Run(qmlglobal);
+
+    VERIFY(!tc.HasCaught());
+    VERIFY(result->IsArray());
+    VERIFY(v8::Array::Cast(*result)->Length() == 3);
+    VERIFY(v8::Array::Cast(*result)->Get(0)->IsTrue());
+    VERIFY(v8::Array::Cast(*result)->Get(1)->IsTrue());
+    VERIFY(v8::Array::Cast(*result)->Get(2)->IsTrue());
+
+cleanup:
+    context.Dispose();
+
+    ENDTEST();
+}
+
+bool v8test_referenceerror()
+{
+    BEGINTEST();
+
+    HandleScope handle_scope;
+    Persistent<Context> context = Context::New();
+    Context::Scope context_scope(context);
+
+    Local<Object> qmlglobal = Object::New();
+
+    Local<Script> script = Script::Compile(String::New("a"), NULL, NULL,
+                                           Handle<String>(), Script::QmlMode);
+
+    TryCatch tc;
+    Local<Value> result = script->Run(qmlglobal);
+
+    VERIFY(tc.HasCaught());
+    VERIFY(result.IsEmpty());
+    VERIFY(tc.Exception()->IsError());
+    VERIFY(tc.Exception()->ToString()->Equals(v8::String::New("ReferenceError: a is not defined")));
+
+cleanup:
+    context.Dispose();
+
+    ENDTEST();
+}
+
 #undef VARNAME
 #undef VARVALUE

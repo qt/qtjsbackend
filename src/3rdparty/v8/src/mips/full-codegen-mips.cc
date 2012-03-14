@@ -1191,7 +1191,7 @@ void FullCodeGenerator::EmitLoadGlobalCheckExtensions(Variable* var,
 
   __ lw(a0, var->is_qml_global() ? QmlGlobalObjectOperand():GlobalObjectOperand());
   __ li(a2, Operand(var->name()));
-  RelocInfo::Mode mode = (typeof_state == INSIDE_TYPEOF || var->is_qml_global())
+  RelocInfo::Mode mode = (typeof_state == INSIDE_TYPEOF)
       ? RelocInfo::CODE_TARGET
       : RelocInfo::CODE_TARGET_CONTEXT;
   Handle<Code> ic = isolate()->builtins()->LoadIC_Initialize();
@@ -1279,7 +1279,7 @@ void FullCodeGenerator::EmitVariableLoad(VariableProxy* proxy) {
       __ lw(a0, var->is_qml_global()?QmlGlobalObjectOperand():GlobalObjectOperand());
       __ li(a2, Operand(var->name()));
       Handle<Code> ic = isolate()->builtins()->LoadIC_Initialize();
-      __ Call(ic, var->is_qml_global()?RelocInfo::CODE_TARGET:RelocInfo::CODE_TARGET_CONTEXT);
+      __ Call(ic, RelocInfo::CODE_TARGET_CONTEXT);
       context()->Plug(v0);
       break;
     }
@@ -2296,7 +2296,7 @@ void FullCodeGenerator::VisitCall(Call* expr) {
     // Push global object as receiver for the call IC.
     __ lw(a0, proxy->var()->is_qml_global()?QmlGlobalObjectOperand():GlobalObjectOperand());
     __ push(a0);
-    EmitCallWithIC(expr, proxy->name(), proxy->var()->is_qml_global()?RelocInfo::CODE_TARGET:RelocInfo::CODE_TARGET_CONTEXT);
+    EmitCallWithIC(expr, proxy->name(), RelocInfo::CODE_TARGET_CONTEXT);
   } else if (proxy != NULL && proxy->var()->IsLookupSlot()) {
     // Call to a lookup slot (dynamically introduced variable).
     Label slow, done;

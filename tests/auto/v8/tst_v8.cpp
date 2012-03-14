@@ -60,6 +60,8 @@ private slots:
     void externalteardown();
     void globalcall();
     void getcallingqmlglobal();
+    void typeOf();
+    void referenceerror();
 };
 
 void tst_v8::eval()
@@ -90,6 +92,16 @@ void tst_v8::globalcall()
 void tst_v8::getcallingqmlglobal()
 {
     QVERIFY(v8test_getcallingqmlglobal());
+}
+
+void tst_v8::typeOf()
+{
+    QVERIFY(v8test_typeof());
+}
+
+void tst_v8::referenceerror()
+{
+    QVERIFY(v8test_referenceerror());
 }
 
 int main(int argc, char *argv[])

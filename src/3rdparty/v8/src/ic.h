@@ -107,10 +107,16 @@ class IC {
   // object that contains this IC site.
   RelocInfo::Mode ComputeMode();
 
+  bool IsQmlGlobal(Handle<Object> receiver) {
+    JSObject* qml_global = isolate_->context()->qml_global();
+    return !qml_global->IsUndefined() && qml_global == *receiver;
+  }
+
   // Returns if this IC is for contextual (no explicit receiver)
   // access to properties.
   bool IsContextual(Handle<Object> receiver) {
-    if (receiver->IsGlobalObject()) {
+    if (receiver->IsGlobalObject() ||
+        IsQmlGlobal(receiver)) {
       return SlowIsContextual();
     } else {
       ASSERT(!SlowIsContextual());

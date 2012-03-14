@@ -61,6 +61,9 @@ int main(int argc, char *argv[])
     RUN_TEST(userobjectcompare);
     RUN_TEST(externalteardown);
     RUN_TEST(globalcall);
+    RUN_TEST(getcallingqmlglobal);
+    RUN_TEST(typeof);
+    RUN_TEST(referenceerror);
 
     return -1;
 }

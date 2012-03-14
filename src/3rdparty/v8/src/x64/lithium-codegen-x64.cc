@@ -3050,7 +3050,7 @@ void LCodeGen::DoCallFunction(LCallFunction* instr) {
 void LCodeGen::DoCallGlobal(LCallGlobal* instr) {
   ASSERT(ToRegister(instr->result()).is(rax));
   int arity = instr->arity();
-  RelocInfo::Mode mode = instr->qml_global()?RelocInfo::CODE_TARGET:RelocInfo::CODE_TARGET_CONTEXT;
+  RelocInfo::Mode mode = RelocInfo::CODE_TARGET_CONTEXT;
   Handle<Code> ic =
       isolate()->stub_cache()->ComputeCallInitialize(arity, mode);
   __ Move(rcx, instr->name());

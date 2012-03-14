@@ -54,6 +54,8 @@ bool v8test_userobjectcompare();
 bool v8test_externalteardown();
 bool v8test_globalcall();
 bool v8test_getcallingqmlglobal();
+bool v8test_typeof();
+bool v8test_referenceerror();
 
 #endif // V8TEST_H
 
