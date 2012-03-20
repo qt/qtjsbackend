@@ -493,5 +493,41 @@ cleanup:
     ENDTEST();
 }
 
+bool v8test_qtbug_24871()
+{
+    BEGINTEST();
+
+    HandleScope handle_scope;
+    Persistent<Context> context = Context::New();
+    Context::Scope context_scope(context);
+
+    Local<Object> qmlglobal = Object::New();
+
+    Local<Script> script = Script::Compile(String::New(
+                                               // Create a bunch of properties to exceed kMaxFastProperties
+                                               "var a1, a2, a3, a4, a5, a6, a7, a8;\n"
+                                               "var b1, b2, b3, b4, b5, b6, b7, b8;\n"
+                                               "var c1, c2, c3, c4, c5, c6, c7, c8;\n"
+                                               "var d1, d2, d3, d4, d5, d6, d7, d8;\n"
+                                               "function index(a) { return a + 1; }\n"
+                                               "function init() {\n"
+                                               "  for (var i = 0; i < 300; ++i)\n"
+                                               "    index(i);\n"
+                                               "}\n"
+                                               "init();"), NULL, NULL,
+                                           Handle<String>(), Script::QmlMode);
+
+    TryCatch tc;
+    Local<Value> result = script->Run(qmlglobal);
+
+    VERIFY(!tc.HasCaught());
+    VERIFY(result->IsUndefined());
+
+cleanup:
+    context.Dispose();
+
+    ENDTEST();
+}
+
 #undef VARNAME
 #undef VARVALUE

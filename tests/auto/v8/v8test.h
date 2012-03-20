@@ -56,6 +56,7 @@ bool v8test_globalcall();
 bool v8test_getcallingqmlglobal();
 bool v8test_typeof();
 bool v8test_referenceerror();
+bool v8test_qtbug_24871();
 
 #endif // V8TEST_H
 

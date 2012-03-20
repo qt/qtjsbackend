@@ -62,6 +62,7 @@ private slots:
     void getcallingqmlglobal();
     void typeOf();
     void referenceerror();
+    void qtbug_24871();
 };
 
 void tst_v8::eval()
@@ -102,6 +103,11 @@ void tst_v8::typeOf()
 void tst_v8::referenceerror()
 {
     QVERIFY(v8test_referenceerror());
+}
+
+void tst_v8::qtbug_24871()
+{
+    QVERIFY(v8test_qtbug_24871());
 }
 
 int main(int argc, char *argv[])
