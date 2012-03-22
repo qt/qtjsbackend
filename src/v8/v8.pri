@@ -232,6 +232,9 @@ SOURCES += \
     $$V8SRC/mips/frames-mips.cc \
     $$V8SRC/mips/full-codegen-mips.cc \
     $$V8SRC/mips/ic-mips.cc \
+    $$V8SRC/mips/lithium-codegen-mips.cc \
+    $$V8SRC/mips/lithium-gap-resolver-mips.cc \
+    $$V8SRC/mips/lithium-mips.cc \
     $$V8SRC/mips/macro-assembler-mips.cc \
     $$V8SRC/mips/regexp-macro-assembler-mips.cc \
     $$V8SRC/mips/simulator-mips.cc \
