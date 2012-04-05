@@ -1,3 +1,6 @@
+load(configure)
+qtCompileTest(hardfloat)
+
 TEMPLATE = subdirs
 
 module_qtjsbackend_src.subdir = src
