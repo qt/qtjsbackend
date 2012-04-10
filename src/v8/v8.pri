@@ -67,6 +67,7 @@ SOURCES += \
     $$V8SRC/counters.cc \
     $$V8SRC/cpu-profiler.cc \
     $$V8SRC/data-flow.cc \
+    $$V8SRC/date.cc \
     $$V8SRC/dateparser.cc \
     $$V8SRC/debug-agent.cc \
     $$V8SRC/debug.cc \
@@ -86,7 +87,6 @@ SOURCES += \
     $$V8SRC/fast-dtoa.cc \
     $$V8SRC/fixed-dtoa.cc \
     $$V8SRC/handles.cc \
-    $$V8SRC/hashmap.cc \
     $$V8SRC/heap-profiler.cc \
     $$V8SRC/heap.cc \
     $$V8SRC/hydrogen.cc \
@@ -94,6 +94,7 @@ SOURCES += \
     $$V8SRC/ic.cc \
     $$V8SRC/incremental-marking.cc \
     $$V8SRC/inspector.cc \
+    $$V8SRC/interface.cc \
     $$V8SRC/interpreter-irregexp.cc \
     $$V8SRC/isolate.cc \
     $$V8SRC/jsregexp.cc \
@@ -108,6 +109,7 @@ SOURCES += \
     $$V8SRC/objects.cc \
     $$V8SRC/objects-printer.cc \
     $$V8SRC/objects-visiting.cc \
+    $$V8SRC/once.cc \
     $$V8SRC/parser.cc \
     $$V8SRC/preparser.cc \
     $$V8SRC/preparse-data.cc \
