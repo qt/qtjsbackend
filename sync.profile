@@ -7,10 +7,6 @@
 @allmoduleheadersprivate = (
     "QtV8"
 );
-%classnames = (
-    "qtv8version.h" => "QtV8Version",
-);
-%mastercontent = ();
 
 # Module dependencies.
 # Every module that is required to build this module should have one entry.

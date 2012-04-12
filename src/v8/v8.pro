@@ -1,10 +1,8 @@
-load(qt_module)
+load(qt_build_config)
 
 TARGET     = QtV8
-QPRO_PWD   = $$PWD
 QT         =
 
-CONFIG += module
 !contains(QT_CONFIG, static): MODULE_DEFINES += V8_SHARED USING_V8_SHARED
 
 win32-msvc*|win32-icc:QMAKE_LFLAGS += /BASE:0x66000000
@@ -19,8 +17,6 @@ CONFIG += warn_off
 INCLUDEPATH -= $$MODULE_PRIVATE_INCLUDES
 INCLUDEPATH -= $$MODULE_PRIVATE_INCLUDES/$$TARGET
 INCLUDEPATH -= $$MODULE_INCLUDES $$MODULE_INCLUDES/..
-
-HEADERS += qtv8version.h
 
 !contains(QT_CONFIG, static): DEFINES += V8_SHARED BUILDING_V8_SHARED
 

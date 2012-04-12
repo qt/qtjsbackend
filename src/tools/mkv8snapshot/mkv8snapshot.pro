@@ -7,8 +7,6 @@ CONFIG          += console
 CONFIG          += warn_off
 
 DESTDIR         = ../../../bin
-INCLUDEPATH     += .
-DEPENDPATH      += .
 LIBS            =
 OBJECTS_DIR     = .
 
