@@ -5,7 +5,7 @@ QPRO_PWD   = $$PWD
 QT         =
 
 CONFIG += module
-MODULE_PRI = ../modules/qt_v8.pri
+!contains(QT_CONFIG, static): MODULE_DEFINES += V8_SHARED USING_V8_SHARED
 
 win32-msvc*|win32-icc:QMAKE_LFLAGS += /BASE:0x66000000
 
