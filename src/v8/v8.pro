@@ -22,7 +22,7 @@ INCLUDEPATH -= $$MODULE_INCLUDES $$MODULE_INCLUDES/..
 
 include(v8.pri)
 
-!cross_compile:contains(QT_CONFIG, v8snapshot) {
+contains(QT_CONFIG, v8snapshot) {
     mkv8snapshot.commands = ../../bin/mkv8snapshot$$qtPlatformTargetSuffix() ${QMAKE_FILE_OUT}
     DUMMY_FILE = v8.pro
     mkv8snapshot.input = DUMMY_FILE
