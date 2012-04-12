@@ -64,6 +64,9 @@ int main(int argc, char *argv[])
     RUN_TEST(getcallingqmlglobal);
     RUN_TEST(typeof);
     RUN_TEST(referenceerror);
+    RUN_TEST(fallbackpropertyhandler_callbacks);
+    RUN_TEST(fallbackpropertyhandler_in_prototype);
+    RUN_TEST(fallbackpropertyhandler_nonempty);
 
     return -1;
 }

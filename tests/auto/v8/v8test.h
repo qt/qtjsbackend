@@ -57,6 +57,9 @@ bool v8test_getcallingqmlglobal();
 bool v8test_typeof();
 bool v8test_referenceerror();
 bool v8test_qtbug_24871();
+bool v8test_fallbackpropertyhandler_callbacks();
+bool v8test_fallbackpropertyhandler_in_prototype();
+bool v8test_fallbackpropertyhandler_nonempty();
 
 #endif // V8TEST_H
 

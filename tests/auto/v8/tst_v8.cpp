@@ -63,6 +63,9 @@ private slots:
     void typeOf();
     void referenceerror();
     void qtbug_24871();
+    void fallbackpropertyhandler_callbacks();
+    void fallbackpropertyhandler_in_prototype();
+    void fallbackpropertyhandler_nonempty();
 };
 
 void tst_v8::eval()
@@ -108,6 +111,21 @@ void tst_v8::referenceerror()
 void tst_v8::qtbug_24871()
 {
     QVERIFY(v8test_qtbug_24871());
+}
+
+void tst_v8::fallbackpropertyhandler_callbacks()
+{
+    QVERIFY(v8test_fallbackpropertyhandler_callbacks());
+}
+
+void tst_v8::fallbackpropertyhandler_in_prototype()
+{
+    QVERIFY(v8test_fallbackpropertyhandler_in_prototype());
+}
+
+void tst_v8::fallbackpropertyhandler_nonempty()
+{
+    QVERIFY(v8test_fallbackpropertyhandler_nonempty());
 }
 
 int main(int argc, char *argv[])

@@ -54,6 +54,11 @@ using namespace v8;
     }  \
 }
 
+static inline Local<Value> CompileRun(const char* source)
+{
+  return Script::Compile(String::New(source))->Run();
+}
+
 struct MyStringResource : public String::ExternalAsciiStringResource
 {
     static bool wasDestroyed;
@@ -432,6 +437,9 @@ cleanup:
     ENDTEST();
 }
 
+#undef VARNAME
+#undef VARVALUE
+
 bool v8test_typeof()
 {
     BEGINTEST();
@@ -529,5 +537,507 @@ cleanup:
     ENDTEST();
 }
 
-#undef VARNAME
-#undef VARVALUE
+#define DATA "fallbackpropertyhandler callbacks test"
+
+namespace CallbackType {
+    enum {
+        Error,
+        Getter,
+        Setter,
+        Query,
+        Deleter,
+        Enumerator
+    };
+}
+
+bool checkInterceptorCalled(Local<Object> obj, int index)
+{
+    if (obj->GetInternalField(index)->IsTrue()) {
+        obj->SetInternalField(index, False());
+        return true;
+    }
+
+    return false;
+}
+
+Handle<Value> EmptyInterceptorGetter(Local<String> name,
+                                     const AccessorInfo& info)
+{
+    Local<Object> self = info.This();
+    Local<String> data = String::New(DATA);
+
+    if (name->IsUndefined()) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Value>();
+    }
+
+    if (!data->Equals(info.Data())) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Value>();
+    }
+
+    self->SetInternalField(CallbackType::Getter, True());
+    return Handle<Value>();
+}
+
+Handle<Value> EmptyInterceptorSetter(Local<String> name,
+                                     Local<Value> value,
+                                     const AccessorInfo& info)
+{
+    Local<Object> self = info.This();
+    Local<String> data = String::New(DATA);
+
+    if (name->IsUndefined() || value->IsUndefined()) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Value>();
+    }
+
+    if (!data->Equals(info.Data())) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Value>();
+    }
+
+    self->SetInternalField(CallbackType::Setter, True());
+    return Handle<Value>();
+}
+
+Handle<Integer> EmptyInterceptorQuery(Local<String> name,
+                                      const AccessorInfo& info)
+{
+    Local<Object> self = info.This();
+    Local<String> data = String::New(DATA);
+
+    if (name->IsUndefined()) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Integer>();
+    }
+
+    if (!data->Equals(info.Data())) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Integer>();
+    }
+
+    self->SetInternalField(CallbackType::Query, True());
+    return Handle<Integer>();
+}
+
+Handle<Boolean> EmptyInterceptorDeleter(Local<String> name,
+                                        const AccessorInfo& info)
+{
+    Local<Object> self = info.This();
+    Local<String> data = String::New(DATA);
+
+    if (name->IsUndefined()) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Boolean>();
+    }
+
+    if (!data->Equals(info.Data())) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Boolean>();
+    }
+
+    self->SetInternalField(CallbackType::Deleter, True());
+    return Handle<Boolean>();
+}
+
+Handle<Array> EmptyInterceptorEnumerator(const AccessorInfo& info)
+{
+    Local<Object> self = info.This();
+    Local<String> data = String::New(DATA);
+
+    if (!data->Equals(info.Data())) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Array>();
+    }
+
+    self->SetInternalField(CallbackType::Enumerator, True());
+    return Handle<Array>();
+}
+
+// Check whether the callbacks of fallback-named-property interceptors
+// called adequately.
+bool v8test_fallbackpropertyhandler_callbacks()
+{
+    BEGINTEST();
+
+    HandleScope handle_scope;
+    Persistent<Context> context = Context::New();
+    Context::Scope context_scope(context);
+
+    Handle<ObjectTemplate> templ = ObjectTemplate::New();
+    templ->SetFallbackPropertyHandler(EmptyInterceptorGetter,
+                                      EmptyInterceptorSetter,
+                                      EmptyInterceptorQuery,
+                                      EmptyInterceptorDeleter,
+                                      EmptyInterceptorEnumerator,
+                                      String::New(DATA));
+    templ->SetInternalFieldCount(6);
+    Local<Object> obj = templ->NewInstance();
+    obj->SetInternalField(CallbackType::Error, False());
+    obj->SetInternalField(CallbackType::Getter, False());
+    obj->SetInternalField(CallbackType::Setter, False());
+    obj->SetInternalField(CallbackType::Query, False());
+    obj->SetInternalField(CallbackType::Deleter, False());
+    obj->SetInternalField(CallbackType::Enumerator, False());
+    Local<Value> result;
+
+    context->Global()->Set(String::New("obj"), obj);
+
+    // Check Getter/Setter callbacks
+    obj->Set(String::New("a"), Integer::New(28));
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Getter));
+    VERIFY(checkInterceptorCalled(obj, CallbackType::Setter));
+
+    result = obj->Get(String::New("a"));
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Getter));
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Setter));
+    VERIFY(28 == result->Int32Value());
+
+    obj->Set(String::New("a"), Integer::New(28));
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Getter));
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Setter));
+
+    result = obj->Get(String::New("b"));
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(checkInterceptorCalled(obj, CallbackType::Getter));
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Setter));
+    VERIFY(result->IsUndefined());
+
+    obj->ForceSet(String::New("b"), Integer::New(42));
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Getter));
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Setter));
+
+    result = obj->Get(String::New("b"));
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Getter));
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Setter));
+    VERIFY(42 == result->Int32Value());
+
+    result = CompileRun("obj.c = 47");
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Getter));
+    VERIFY(checkInterceptorCalled(obj, CallbackType::Setter));
+    VERIFY(47 == result->Int32Value());
+
+    result = CompileRun("obj.d");
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(checkInterceptorCalled(obj, CallbackType::Getter));
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Setter));
+    VERIFY(result->IsUndefined());
+
+    result = CompileRun("obj.a");
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Getter));
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Setter));
+    VERIFY(28 == result->Int32Value());
+
+    result = CompileRun("obj.b = 5");
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Getter));
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Setter));
+    VERIFY(5 == result->Int32Value());
+
+    // Check query callback
+    obj->HasOwnProperty(String::New("a"));
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Query));
+
+    result = CompileRun("'a' in obj");
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Query));
+
+    obj->HasOwnProperty(String::New("x"));
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(checkInterceptorCalled(obj, CallbackType::Query));
+
+    result = CompileRun("'x' in obj");
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(checkInterceptorCalled(obj, CallbackType::Query));
+
+    // Check deleter callback
+    obj->Delete(String::New("a"));
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Deleter));
+
+    result = CompileRun("delete obj.b");
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(!checkInterceptorCalled(obj, CallbackType::Deleter));
+
+    obj->Delete(String::New("x"));
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(checkInterceptorCalled(obj, CallbackType::Deleter));
+
+    result = CompileRun("delete obj.x");
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(checkInterceptorCalled(obj, CallbackType::Deleter));
+
+    // Check enumerator callback
+    result = CompileRun("for (var p in obj) ;");
+    VERIFY(obj->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(checkInterceptorCalled(obj, CallbackType::Enumerator));
+
+cleanup:
+    context.Dispose();
+
+    ENDTEST();
+}
+
+#undef DATA
+
+Handle<Object> bottom;
+Handle<Object> middle;
+Handle<Object> top;
+
+Handle<Value> CheckThisFallbackPropertyHandler(Local<String> name,
+                                               const AccessorInfo& info)
+{
+    Local<Object> self = info.This();
+    Local<Object> holder = info.Holder();
+
+    if (name->IsUndefined()) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Value>();
+    }
+
+    bool check = self->Equals(bottom);
+    bottom->SetInternalField(CallbackType::Error, Boolean::New(!check));
+
+    if (holder->Equals(bottom)) {
+        bottom->SetInternalField(1, String::New("bottom"));
+    } else if (holder->Equals(middle)) {
+        bottom->SetInternalField(1, String::New("middle"));
+    } else if (holder->Equals(top)) {
+        bottom->SetInternalField(1, String::New("top"));
+    } else {
+        bottom->SetInternalField(1, String::New(""));
+    }
+
+    return Handle<Value>();
+}
+
+Handle<Value> CheckThisFallbackPropertySetter(Local<String> name,
+                                              Local<Value> value,
+                                              const AccessorInfo& info)
+{
+    Local<Object> self = info.This();
+    Local<Object> holder = info.Holder();
+
+    if (name->IsUndefined() || value->IsUndefined()) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Value>();
+    }
+
+    bool check = self->Equals(bottom);
+    bottom->SetInternalField(CallbackType::Error, Boolean::New(!check));
+
+    if (holder->Equals(bottom)) {
+        bottom->SetInternalField(1, String::New("bottom"));
+    } else if (holder->Equals(middle)) {
+        bottom->SetInternalField(1, String::New("middle"));
+    } else if (holder->Equals(top)) {
+        bottom->SetInternalField(1, String::New("top"));
+    } else {
+        bottom->SetInternalField(1, String::New(""));
+    }
+
+    return Handle<Value>();
+}
+
+Handle<Integer> CheckThisFallbackPropertyQuery(Local<String> name,
+                                               const AccessorInfo& info)
+{
+    Local<Object> self = info.This();
+
+    if (name->IsUndefined()) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Integer>();
+    }
+
+    bool check = self->Equals(bottom);
+    bottom->SetInternalField(CallbackType::Error, Boolean::New(!check));
+
+    return Handle<Integer>();
+}
+
+Handle<Boolean> CheckThisFallbackPropertyDeleter(Local<String> name,
+                                                 const AccessorInfo& info)
+{
+    Local<Object> self = info.This();
+
+    if (name->IsUndefined()) {
+        self->SetInternalField(CallbackType::Error, True());
+        return Handle<Boolean>();
+    }
+
+    bool check = self->Equals(bottom);
+    bottom->SetInternalField(CallbackType::Error, Boolean::New(!check));
+
+    return Handle<Boolean>();
+}
+
+Handle<Array> CheckThisFallbackPropertyEnumerator(const AccessorInfo& info)
+{
+    bool check = info.This()->Equals(bottom);
+    // Use field index 1 here due to query fallback interceptor can be called
+    // by enumerator
+    bottom->SetInternalField(1, Boolean::New(!check));
+
+    return Handle<Array>();
+}
+
+bool v8test_fallbackpropertyhandler_in_prototype()
+{
+    BEGINTEST();
+
+    HandleScope handle_scope;
+    Persistent<Context> context = Context::New();
+    Context::Scope context_scope(context);
+
+    Local<String> bottom_name = String::New("bottom");
+    Local<String> middle_name = String::New("middle");
+    Local<String> top_name = String::New("top");
+
+    // Set up a prototype chain with three interceptors.
+    Handle<FunctionTemplate> templ = FunctionTemplate::New();
+    templ->InstanceTemplate()->SetInternalFieldCount(2);
+    templ->InstanceTemplate()->SetNamedPropertyHandler(
+            CheckThisFallbackPropertyHandler,
+            CheckThisFallbackPropertySetter,
+            CheckThisFallbackPropertyQuery,
+            CheckThisFallbackPropertyDeleter,
+            CheckThisFallbackPropertyEnumerator);
+
+    bottom = templ->GetFunction()->NewInstance();
+    top = templ->GetFunction()->NewInstance();
+    middle = templ->GetFunction()->NewInstance();
+
+    bottom->Set(bottom_name, Integer::New(0));
+    middle->Set(middle_name, Integer::New(0));
+    top->Set(top_name, Integer::New(0));
+
+    bottom->Set(String::New("__proto__"), middle);
+    middle->Set(String::New("__proto__"), top);
+    context->Global()->Set(String::New("obj"), bottom);
+
+    // Set Error field to true in every case to check whether the interceptor is called.
+    bottom->SetInternalField(CallbackType::Error, True());
+    CompileRun("obj.x");
+    VERIFY(bottom->GetInternalField(CallbackType::Error)->IsFalse());
+
+    bottom->SetInternalField(CallbackType::Error, True());
+    CompileRun("obj.y = 42");
+    VERIFY(bottom->GetInternalField(CallbackType::Error)->IsFalse());
+
+    bottom->SetInternalField(CallbackType::Error, True());
+    CompileRun("'x' in obj");
+    VERIFY(bottom->GetInternalField(CallbackType::Error)->IsFalse());
+
+    bottom->SetInternalField(CallbackType::Error, True());
+    CompileRun("delete obj.x");
+    VERIFY(bottom->GetInternalField(CallbackType::Error)->IsFalse());
+
+    bottom->SetInternalField(1, True());
+    CompileRun("for (var p in obj) ;");
+    // Check field index 1 here due to query fallback interceptor can be called
+    // by enumerator
+    VERIFY(bottom->GetInternalField(1)->IsFalse());
+
+    bottom->SetInternalField(1, String::New(""));
+    bottom->SetInternalField(CallbackType::Error, True());
+    CompileRun("obj.bottom");
+    VERIFY(bottom->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(bottom->GetInternalField(1)->ToString()->Equals(bottom_name));
+
+    bottom->SetInternalField(CallbackType::Error, True());
+    CompileRun("obj.middle");
+    VERIFY(bottom->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(bottom->GetInternalField(1)->ToString()->Equals(middle_name));
+
+    bottom->SetInternalField(CallbackType::Error, True());
+    CompileRun("obj.top");
+    VERIFY(bottom->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(bottom->GetInternalField(1)->ToString()->Equals(top_name));
+
+    bottom->SetInternalField(1, String::New(""));
+    bottom->SetInternalField(CallbackType::Error, True());
+    CompileRun("obj.bottom = 1");
+    VERIFY(bottom->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(bottom->GetInternalField(1)->ToString()->Equals(bottom_name));
+
+    bottom->SetInternalField(CallbackType::Error, True());
+    CompileRun("obj.cica = 1");
+    VERIFY(bottom->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(bottom->GetInternalField(1)->ToString()->Equals(bottom_name));
+
+    bottom->SetInternalField(CallbackType::Error, True());
+    CompileRun("obj.top = 1");
+    VERIFY(bottom->GetInternalField(CallbackType::Error)->IsFalse());
+    VERIFY(bottom->GetInternalField(1)->ToString()->Equals(bottom_name));
+
+cleanup:
+    context.Dispose();
+
+    ENDTEST();
+}
+
+Handle<Value> NonEmptyInterceptorGetter(Local<String> name,
+                                        const AccessorInfo& info)
+{
+    (void)info;
+
+    return name;
+}
+
+Handle<Value> NonEmptyInterceptorSetter(Local<String> name,
+                                        Local<Value> value,
+                                        const AccessorInfo& info)
+{
+    Local<Object> self = info.This();
+    self->ForceSet(name, String::Concat(name, value->ToString()));
+
+    return value;
+}
+
+bool v8test_fallbackpropertyhandler_nonempty()
+{
+    BEGINTEST();
+
+    HandleScope handle_scope;
+    Persistent<Context> context = Context::New();
+    Context::Scope context_scope(context);
+
+    Handle<ObjectTemplate> templ = ObjectTemplate::New();
+    templ->SetFallbackPropertyHandler(NonEmptyInterceptorGetter,
+                                      NonEmptyInterceptorSetter);
+    Local<Object> obj = templ->NewInstance();
+    Local<Value> result;
+
+    context->Global()->Set(String::New("obj"), obj);
+
+    result = obj->Get(String::New("a"));
+    VERIFY(result->IsString());
+    VERIFY(result->ToString()->Equals(String::New("a")));
+    result = CompileRun("obj.a");
+    VERIFY(result->IsString());
+    VERIFY(result->ToString()->Equals(String::New("a")));
+
+    obj->Set(String::New("a"), Integer::New(28));
+    result = obj->Get(String::New("a"));
+    VERIFY(result->IsString());
+    VERIFY(result->ToString()->Equals(String::New("a28")));
+
+    obj->Set(String::New("a"), Integer::New(42));
+    result = obj->Get(String::New("a"));
+    VERIFY(result->IsNumber());
+    VERIFY(42 == result->Int32Value());
+
+cleanup:
+    context.Dispose();
+
+    ENDTEST();
+}
