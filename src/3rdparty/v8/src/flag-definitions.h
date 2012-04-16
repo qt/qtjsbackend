@@ -464,7 +464,7 @@ DEFINE_bool(trace_exception, false,
 DEFINE_bool(preallocate_message_memory, false,
             "preallocate some memory to build stack traces.")
 DEFINE_bool(randomize_hashes,
-            true,
+            false,
             "randomize hashes to avoid predictable hash collisions "
             "(with snapshots this option cannot override the baked-in seed)")
 DEFINE_int(hash_seed,
