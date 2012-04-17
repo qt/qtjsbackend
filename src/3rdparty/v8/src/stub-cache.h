@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -69,9 +69,10 @@ class StubCache {
   struct Entry {
     String* key;
     Code* value;
+    Map* map;
   };
 
-  void Initialize(bool create_heap_objects);
+  void Initialize();
 
 
   // Computes the right stub matching. Inserts the result in the
@@ -92,7 +93,7 @@ class StubCache {
   Handle<Code> ComputeLoadConstant(Handle<String> name,
                                    Handle<JSObject> receiver,
                                    Handle<JSObject> holder,
-                                   Handle<Object> value);
+                                   Handle<JSFunction> value);
 
   Handle<Code> ComputeLoadInterceptor(Handle<String> name,
                                       Handle<JSObject> receiver,
@@ -121,7 +122,7 @@ class StubCache {
   Handle<Code> ComputeKeyedLoadConstant(Handle<String> name,
                                         Handle<JSObject> receiver,
                                         Handle<JSObject> holder,
-                                        Handle<Object> value);
+                                        Handle<JSFunction> value);
 
   Handle<Code> ComputeKeyedLoadInterceptor(Handle<String> name,
                                            Handle<JSObject> receiver,
@@ -218,8 +219,7 @@ class StubCache {
 
   Handle<Code> ComputeCallNormal(int argc,
                                  Code::Kind kind,
-                                 Code::ExtraICState state,
-                                 bool has_qml_global_receiver);
+                                 Code::ExtraICState state);
 
   Handle<Code> ComputeCallArguments(int argc, Code::Kind kind);
 
@@ -249,10 +249,11 @@ class StubCache {
   // Collect all maps that match the name and flags.
   void CollectMatchingMaps(SmallMapList* types,
                            String* name,
-                           Code::Flags flags);
+                           Code::Flags flags,
+                           Handle<Context> global_context);
 
   // Generate code for probing the stub cache table.
-  // Arguments extra and extra2 may be used to pass additional scratch
+  // Arguments extra, extra2 and extra3 may be used to pass additional scratch
   // registers. Set to no_reg if not needed.
   void GenerateProbe(MacroAssembler* masm,
                      Code::Flags flags,
@@ -260,7 +261,8 @@ class StubCache {
                      Register name,
                      Register scratch,
                      Register extra,
-                     Register extra2 = no_reg);
+                     Register extra2 = no_reg,
+                     Register extra3 = no_reg);
 
   enum Table {
     kPrimary,
@@ -271,6 +273,12 @@ class StubCache {
   SCTableReference key_reference(StubCache::Table table) {
     return SCTableReference(
         reinterpret_cast<Address>(&first_entry(table)->key));
+  }
+
+
+  SCTableReference map_reference(StubCache::Table table) {
+    return SCTableReference(
+        reinterpret_cast<Address>(&first_entry(table)->map));
   }
 
 
@@ -300,7 +308,16 @@ class StubCache {
                                      RelocInfo::Mode mode,
                                      Code::Kind kind);
 
-  // Computes the hashed offsets for primary and secondary caches.
+  // The stub cache has a primary and secondary level.  The two levels have
+  // different hashing algorithms in order to avoid simultaneous collisions
+  // in both caches.  Unlike a probing strategy (quadratic or otherwise) the
+  // update strategy on updates is fairly clear and simple:  Any existing entry
+  // in the primary cache is moved to the secondary cache, and secondary cache
+  // entries are overwritten.
+
+  // Hash algorithm for the primary table.  This algorithm is replicated in
+  // assembler for every architecture.  Returns an index into the table that
+  // is scaled by 1 << kHeapObjectTagSize.
   static int PrimaryOffset(String* name, Code::Flags flags, Map* map) {
     // This works well because the heap object tag size and the hash
     // shift are equal.  Shifting down the length field to get the
@@ -324,27 +341,36 @@ class StubCache {
     return key & ((kPrimaryTableSize - 1) << kHeapObjectTagSize);
   }
 
+  // Hash algorithm for the secondary table.  This algorithm is replicated in
+  // assembler for every architecture.  Returns an index into the table that
+  // is scaled by 1 << kHeapObjectTagSize.
   static int SecondaryOffset(String* name, Code::Flags flags, int seed) {
     // Use the seed from the primary cache in the secondary cache.
     uint32_t string_low32bits =
         static_cast<uint32_t>(reinterpret_cast<uintptr_t>(name));
-    uint32_t key = seed - string_low32bits + flags;
+    // We always set the in_loop bit to zero when generating the lookup code
+    // so do it here too so the hash codes match.
+    uint32_t iflags =
+        (static_cast<uint32_t>(flags) & ~Code::kFlagsNotUsedInLookup);
+    uint32_t key = (seed - string_low32bits) + iflags;
     return key & ((kSecondaryTableSize - 1) << kHeapObjectTagSize);
   }
 
   // Compute the entry for a given offset in exactly the same way as
   // we do in generated code.  We generate an hash code that already
-  // ends in String::kHashShift 0s.  Then we shift it so it is a multiple
+  // ends in String::kHashShift 0s.  Then we multiply it so it is a multiple
   // of sizeof(Entry).  This makes it easier to avoid making mistakes
   // in the hashed offset computations.
   static Entry* entry(Entry* table, int offset) {
-    const int shift_amount = kPointerSizeLog2 + 1 - String::kHashShift;
+    const int multiplier = sizeof(*table) >> String::kHashShift;
     return reinterpret_cast<Entry*>(
-        reinterpret_cast<Address>(table) + (offset << shift_amount));
+        reinterpret_cast<Address>(table) + offset * multiplier);
   }
 
-  static const int kPrimaryTableSize = 2048;
-  static const int kSecondaryTableSize = 512;
+  static const int kPrimaryTableBits = 11;
+  static const int kPrimaryTableSize = (1 << kPrimaryTableBits);
+  static const int kSecondaryTableBits = 9;
+  static const int kSecondaryTableSize = (1 << kSecondaryTableBits);
 
   Entry primary_[kPrimaryTableSize];
   Entry secondary_[kSecondaryTableSize];
@@ -384,7 +410,7 @@ class StubCompiler BASE_EMBEDDED {
   // is extracted from the code flags.
   Handle<Code> CompileCallInitialize(Code::Flags flags);
   Handle<Code> CompileCallPreMonomorphic(Code::Flags flags);
-  Handle<Code> CompileCallNormal(Code::Flags flags, bool has_qml_global_receiver);
+  Handle<Code> CompileCallNormal(Code::Flags flags);
   Handle<Code> CompileCallMegamorphic(Code::Flags flags);
   Handle<Code> CompileCallArguments(Code::Flags flags);
   Handle<Code> CompileCallMiss(Code::Flags flags);
@@ -519,7 +545,7 @@ class StubCompiler BASE_EMBEDDED {
                             Register scratch1,
                             Register scratch2,
                             Register scratch3,
-                            Handle<Object> value,
+                            Handle<JSFunction> value,
                             Handle<String> name,
                             Label* miss);
 
@@ -569,7 +595,7 @@ class LoadStubCompiler: public StubCompiler {
 
   Handle<Code> CompileLoadConstant(Handle<JSObject> object,
                                    Handle<JSObject> holder,
-                                   Handle<Object> value,
+                                   Handle<JSFunction> value,
                                    Handle<String> name);
 
   Handle<Code> CompileLoadInterceptor(Handle<JSObject> object,
@@ -604,7 +630,7 @@ class KeyedLoadStubCompiler: public StubCompiler {
   Handle<Code> CompileLoadConstant(Handle<String> name,
                                    Handle<JSObject> object,
                                    Handle<JSObject> holder,
-                                   Handle<Object> value);
+                                   Handle<JSFunction> value);
 
   Handle<Code> CompileLoadInterceptor(Handle<JSObject> object,
                                       Handle<JSObject> holder,
@@ -668,8 +694,12 @@ class StoreStubCompiler: public StubCompiler {
 
 class KeyedStoreStubCompiler: public StubCompiler {
  public:
-  KeyedStoreStubCompiler(Isolate* isolate, StrictModeFlag strict_mode)
-    : StubCompiler(isolate), strict_mode_(strict_mode) { }
+  KeyedStoreStubCompiler(Isolate* isolate,
+                         StrictModeFlag strict_mode,
+                         KeyedAccessGrowMode grow_mode)
+    : StubCompiler(isolate),
+      strict_mode_(strict_mode),
+      grow_mode_(grow_mode) { }
 
   Handle<Code> CompileStoreField(Handle<JSObject> object,
                                  int index,
@@ -684,10 +714,12 @@ class KeyedStoreStubCompiler: public StubCompiler {
 
   static void GenerateStoreFastElement(MacroAssembler* masm,
                                        bool is_js_array,
-                                       ElementsKind element_kind);
+                                       ElementsKind element_kind,
+                                       KeyedAccessGrowMode grow_mode);
 
   static void GenerateStoreFastDoubleElement(MacroAssembler* masm,
-                                             bool is_js_array);
+                                             bool is_js_array,
+                                             KeyedAccessGrowMode grow_mode);
 
   static void GenerateStoreExternalArray(MacroAssembler* masm,
                                          ElementsKind elements_kind);
@@ -700,6 +732,7 @@ class KeyedStoreStubCompiler: public StubCompiler {
                        InlineCacheState state = MONOMORPHIC);
 
   StrictModeFlag strict_mode_;
+  KeyedAccessGrowMode grow_mode_;
 };
 
 

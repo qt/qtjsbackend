@@ -46,6 +46,11 @@ class IncrementalMarking {
     COMPLETE
   };
 
+  enum CompletionAction {
+    GC_VIA_STACK_GUARD,
+    NO_GC_VIA_STACK_GUARD
+  };
+
   explicit IncrementalMarking(Heap* heap);
 
   void TearDown();
@@ -56,12 +61,15 @@ class IncrementalMarking {
   }
 
   bool should_hurry() { return should_hurry_; }
+  void set_should_hurry(bool val) { should_hurry_ = val; }
 
   inline bool IsStopped() { return state() == STOPPED; }
 
   INLINE(bool IsMarking()) { return state() >= MARKING; }
 
   inline bool IsMarkingIncomplete() { return state() == MARKING; }
+
+  inline bool IsComplete() { return state() == COMPLETE; }
 
   bool WorthActivating();
 
@@ -79,7 +87,7 @@ class IncrementalMarking {
 
   void Abort();
 
-  void MarkingComplete();
+  void MarkingComplete(CompletionAction action);
 
   // It's hard to know how much work the incremental marker should do to make
   // progress in the face of the mutator creating new work for it.  We start
@@ -96,12 +104,14 @@ class IncrementalMarking {
   static const intptr_t kAllocationMarkingFactorSpeedupInterval = 1024;
   // This is how much we increase the marking/allocating factor by.
   static const intptr_t kAllocationMarkingFactorSpeedup = 2;
-  static const intptr_t kMaxAllocationMarkingFactor = 1000000000;
+  static const intptr_t kMaxAllocationMarkingFactor = 1000;
 
   void OldSpaceStep(intptr_t allocated) {
-    Step(allocated * kFastMarking / kInitialAllocationMarkingFactor);
+    Step(allocated * kFastMarking / kInitialAllocationMarkingFactor,
+         GC_VIA_STACK_GUARD);
   }
-  void Step(intptr_t allocated);
+
+  void Step(intptr_t allocated, CompletionAction action);
 
   inline void RestartIfNotMarking() {
     if (state_ == COMPLETE) {
@@ -213,11 +223,9 @@ class IncrementalMarking {
     no_marking_scope_depth_--;
   }
 
- private:
-  void set_should_hurry(bool val) {
-    should_hurry_ = val;
-  }
+  void UncommitMarkingDeque();
 
+ private:
   int64_t SpaceLeftInOldSpace();
 
   void ResetStepCounters();
@@ -250,6 +258,7 @@ class IncrementalMarking {
   bool is_compacting_;
 
   VirtualMemory* marking_deque_memory_;
+  bool marking_deque_memory_committed_;
   MarkingDeque marking_deque_;
 
   int steps_count_;
@@ -262,6 +271,7 @@ class IncrementalMarking {
   int64_t bytes_rescanned_;
   bool should_hurry_;
   int allocation_marking_factor_;
+  intptr_t bytes_scanned_;
   intptr_t allocated_;
 
   int no_marking_scope_depth_;

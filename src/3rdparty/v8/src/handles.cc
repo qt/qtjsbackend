@@ -208,42 +208,6 @@ void SetExpectedNofPropertiesFromEstimate(Handle<SharedFunctionInfo> shared,
 }
 
 
-void NormalizeProperties(Handle<JSObject> object,
-                         PropertyNormalizationMode mode,
-                         int expected_additional_properties) {
-  CALL_HEAP_FUNCTION_VOID(object->GetIsolate(),
-                          object->NormalizeProperties(
-                              mode,
-                              expected_additional_properties));
-}
-
-
-Handle<NumberDictionary> NormalizeElements(Handle<JSObject> object) {
-  CALL_HEAP_FUNCTION(object->GetIsolate(),
-                     object->NormalizeElements(),
-                     NumberDictionary);
-}
-
-
-void TransformToFastProperties(Handle<JSObject> object,
-                               int unused_property_fields) {
-  CALL_HEAP_FUNCTION_VOID(
-      object->GetIsolate(),
-      object->TransformToFastProperties(unused_property_fields));
-}
-
-
-Handle<NumberDictionary> NumberDictionarySet(
-    Handle<NumberDictionary> dictionary,
-    uint32_t index,
-    Handle<Object> value,
-    PropertyDetails details) {
-  CALL_HEAP_FUNCTION(dictionary->GetIsolate(),
-                     dictionary->Set(index, *value, details),
-                     NumberDictionary);
-}
-
-
 void FlattenString(Handle<String> string) {
   CALL_HEAP_FUNCTION_VOID(string->GetIsolate(), string->TryFlatten());
 }
@@ -261,19 +225,6 @@ Handle<Object> SetPrototype(Handle<JSFunction> function,
                      Accessors::FunctionSetPrototype(*function,
                                                      *prototype,
                                                      NULL),
-                     Object);
-}
-
-
-Handle<Object> SetProperty(Handle<JSReceiver> object,
-                           Handle<String> key,
-                           Handle<Object> value,
-                           PropertyAttributes attributes,
-                           StrictModeFlag strict_mode,
-                           bool skip_fallback_interceptor) {
-  CALL_HEAP_FUNCTION(object->GetIsolate(),
-                     object->SetProperty(*key, *value, attributes, strict_mode, 
-                                         skip_fallback_interceptor),
                      Object);
 }
 
@@ -305,46 +256,12 @@ Handle<Object> ForceSetProperty(Handle<JSObject> object,
 }
 
 
-Handle<Object> SetNormalizedProperty(Handle<JSObject> object,
-                                     Handle<String> key,
-                                     Handle<Object> value,
-                                     PropertyDetails details) {
-  CALL_HEAP_FUNCTION(object->GetIsolate(),
-                     object->SetNormalizedProperty(*key, *value, details),
-                     Object);
-}
-
-
 Handle<Object> ForceDeleteProperty(Handle<JSObject> object,
                                    Handle<Object> key) {
   Isolate* isolate = object->GetIsolate();
   CALL_HEAP_FUNCTION(isolate,
                      Runtime::ForceDeleteObjectProperty(isolate, object, key),
                      Object);
-}
-
-
-Handle<Object> SetLocalPropertyIgnoreAttributes(
-    Handle<JSObject> object,
-    Handle<String> key,
-    Handle<Object> value,
-    PropertyAttributes attributes) {
-  CALL_HEAP_FUNCTION(
-    object->GetIsolate(),
-    object->SetLocalPropertyIgnoreAttributes(*key, *value, attributes),
-    Object);
-}
-
-
-void SetLocalPropertyNoThrow(Handle<JSObject> object,
-                             Handle<String> key,
-                             Handle<Object> value,
-                             PropertyAttributes attributes) {
-  Isolate* isolate = object->GetIsolate();
-  ASSERT(!isolate->has_pending_exception());
-  CHECK(!SetLocalPropertyIgnoreAttributes(
-        object, key, value, attributes).is_null());
-  CHECK(!isolate->has_pending_exception());
 }
 
 
@@ -391,54 +308,10 @@ Handle<Object> GetPropertyWithInterceptor(Handle<JSObject> receiver,
 }
 
 
-Handle<Object> GetPrototype(Handle<Object> obj) {
-  Handle<Object> result(obj->GetPrototype());
-  return result;
-}
-
-
 Handle<Object> SetPrototype(Handle<JSObject> obj, Handle<Object> value) {
   const bool skip_hidden_prototypes = false;
   CALL_HEAP_FUNCTION(obj->GetIsolate(),
                      obj->SetPrototype(*value, skip_hidden_prototypes), Object);
-}
-
-
-Handle<Object> PreventExtensions(Handle<JSObject> object) {
-  CALL_HEAP_FUNCTION(object->GetIsolate(), object->PreventExtensions(), Object);
-}
-
-
-Handle<Object> SetHiddenProperty(Handle<JSObject> obj,
-                                 Handle<String> key,
-                                 Handle<Object> value) {
-  CALL_HEAP_FUNCTION(obj->GetIsolate(),
-                     obj->SetHiddenProperty(*key, *value),
-                     Object);
-}
-
-
-int GetIdentityHash(Handle<JSReceiver> obj) {
-  CALL_AND_RETRY(obj->GetIsolate(),
-                 obj->GetIdentityHash(ALLOW_CREATION),
-                 return Smi::cast(__object__)->value(),
-                 return 0);
-}
-
-
-Handle<Object> DeleteElement(Handle<JSObject> obj,
-                             uint32_t index) {
-  CALL_HEAP_FUNCTION(obj->GetIsolate(),
-                     obj->DeleteElement(index, JSObject::NORMAL_DELETION),
-                     Object);
-}
-
-
-Handle<Object> DeleteProperty(Handle<JSObject> obj,
-                              Handle<String> prop) {
-  CALL_HEAP_FUNCTION(obj->GetIsolate(),
-                     obj->DeleteProperty(*prop, JSObject::NORMAL_DELETION),
-                     Object);
 }
 
 
@@ -456,43 +329,6 @@ Handle<String> SubString(Handle<String> str,
                          PretenureFlag pretenure) {
   CALL_HEAP_FUNCTION(str->GetIsolate(),
                      str->SubString(start, end, pretenure), String);
-}
-
-
-Handle<Object> SetElement(Handle<JSObject> object,
-                          uint32_t index,
-                          Handle<Object> value,
-                          StrictModeFlag strict_mode) {
-  if (object->HasExternalArrayElements()) {
-    if (!value->IsSmi() && !value->IsHeapNumber() && !value->IsUndefined()) {
-      bool has_exception;
-      Handle<Object> number = Execution::ToNumber(value, &has_exception);
-      if (has_exception) return Handle<Object>();
-      value = number;
-    }
-  }
-  CALL_HEAP_FUNCTION(object->GetIsolate(),
-                     object->SetElement(index, *value, strict_mode, true),
-                     Object);
-}
-
-
-Handle<Object> SetOwnElement(Handle<JSObject> object,
-                             uint32_t index,
-                             Handle<Object> value,
-                             StrictModeFlag strict_mode) {
-  ASSERT(!object->HasExternalArrayElements());
-  CALL_HEAP_FUNCTION(object->GetIsolate(),
-                     object->SetElement(index, *value, strict_mode, false),
-                     Object);
-}
-
-
-Handle<Object> TransitionElementsKind(Handle<JSObject> object,
-                                      ElementsKind to_kind) {
-  CALL_HEAP_FUNCTION(object->GetIsolate(),
-                     object->TransitionElementsKind(to_kind),
-                     Object);
 }
 
 
@@ -664,6 +500,19 @@ int GetScriptLineNumber(Handle<Script> script, int code_pos) {
   return right + script->line_offset()->value();
 }
 
+// Convert code position into column number.
+int GetScriptColumnNumber(Handle<Script> script, int code_pos) {
+  int line_number = GetScriptLineNumber(script, code_pos);
+  if (line_number == -1) return -1;
+
+  AssertNoAllocation no_allocation;
+  FixedArray* line_ends_array = FixedArray::cast(script->line_ends());
+  line_number = line_number - script->line_offset()->value();
+  if (line_number == 0) return code_pos + script->column_offset()->value();
+  int prev_line_end_pos =
+      Smi::cast(line_ends_array->get(line_number - 1))->value();
+  return code_pos - (prev_line_end_pos + 1);
+}
 
 int GetScriptLineNumberSafe(Handle<Script> script, int code_pos) {
   AssertNoAllocation no_allocation;
@@ -862,31 +711,62 @@ Handle<FixedArray> GetEnumPropertyKeys(Handle<JSObject> object,
                                 isolate);
     }
     isolate->counters()->enum_cache_misses()->Increment();
-    int num_enum = object->NumberOfEnumProperties();
+    Handle<Map> map(object->map());
+    int num_enum = object->NumberOfLocalProperties(DONT_ENUM);
+
     Handle<FixedArray> storage = isolate->factory()->NewFixedArray(num_enum);
     Handle<FixedArray> sort_array = isolate->factory()->NewFixedArray(num_enum);
+
+    Handle<FixedArray> indices;
+    Handle<FixedArray> sort_array2;
+
+    if (cache_result) {
+      indices = isolate->factory()->NewFixedArray(num_enum);
+      sort_array2 = isolate->factory()->NewFixedArray(num_enum);
+    }
+
     Handle<DescriptorArray> descs =
         Handle<DescriptorArray>(object->map()->instance_descriptors(), isolate);
+
     for (int i = 0; i < descs->number_of_descriptors(); i++) {
       if (descs->IsProperty(i) && !descs->IsDontEnum(i)) {
-        (*storage)->set(index, descs->GetKey(i));
+        storage->set(index, descs->GetKey(i));
         PropertyDetails details(descs->GetDetails(i));
-        (*sort_array)->set(index, Smi::FromInt(details.index()));
+        sort_array->set(index, Smi::FromInt(details.index()));
+        if (!indices.is_null()) {
+          if (details.type() != FIELD) {
+            indices = Handle<FixedArray>();
+            sort_array2 = Handle<FixedArray>();
+          } else {
+            int field_index = Descriptor::IndexFromValue(descs->GetValue(i));
+            if (field_index >= map->inobject_properties()) {
+              field_index = -(field_index - map->inobject_properties() + 1);
+            }
+            indices->set(index, Smi::FromInt(field_index));
+            sort_array2->set(index, Smi::FromInt(details.index()));
+          }
+        }
         index++;
       }
     }
-    (*storage)->SortPairs(*sort_array, sort_array->length());
+    storage->SortPairs(*sort_array, sort_array->length());
+    if (!indices.is_null()) {
+      indices->SortPairs(*sort_array2, sort_array2->length());
+    }
     if (cache_result) {
       Handle<FixedArray> bridge_storage =
           isolate->factory()->NewFixedArray(
               DescriptorArray::kEnumCacheBridgeLength);
       DescriptorArray* desc = object->map()->instance_descriptors();
-      desc->SetEnumCache(*bridge_storage, *storage);
+      desc->SetEnumCache(*bridge_storage,
+                         *storage,
+                         indices.is_null() ? Object::cast(Smi::FromInt(0))
+                                           : Object::cast(*indices));
     }
     ASSERT(storage->length() == index);
     return storage;
   } else {
-    int num_enum = object->NumberOfEnumProperties();
+    int num_enum = object->NumberOfLocalProperties(DONT_ENUM);
     Handle<FixedArray> storage = isolate->factory()->NewFixedArray(num_enum);
     Handle<FixedArray> sort_array = isolate->factory()->NewFixedArray(num_enum);
     object->property_dictionary()->CopyEnumKeysTo(*storage, *sort_array);
@@ -919,5 +799,163 @@ Handle<ObjectHashTable> PutIntoObjectHashTable(Handle<ObjectHashTable> table,
                      ObjectHashTable);
 }
 
+
+// This method determines the type of string involved and then gets the UTF8
+// length of the string.  It doesn't flatten the string and has log(n) recursion
+// for a string of length n.  If the failure flag gets set, then we have to
+// flatten the string and retry.  Failures are caused by surrogate pairs in deep
+// cons strings.
+
+// Single surrogate characters that are encountered in the UTF-16 character
+// sequence of the input string get counted as 3 UTF-8 bytes, because that
+// is the way that WriteUtf8 will encode them.  Surrogate pairs are counted and
+// encoded as one 4-byte UTF-8 sequence.
+
+// This function conceptually uses recursion on the two halves of cons strings.
+// However, in order to avoid the recursion going too deep it recurses on the
+// second string of the cons, but iterates on the first substring (by manually
+// eliminating it as a tail recursion).  This means it counts the UTF-8 length
+// from the end to the start, which makes no difference to the total.
+
+// Surrogate pairs are recognized even if they are split across two sides of a
+// cons, which complicates the implementation somewhat.  Therefore, too deep
+// recursion cannot always be avoided.  This case is detected, and the failure
+// flag is set, a signal to the caller that the string should be flattened and
+// the operation retried.
+int Utf8LengthHelper(String* input,
+                     int from,
+                     int to,
+                     bool followed_by_surrogate,
+                     int max_recursion,
+                     bool* failure,
+                     bool* starts_with_surrogate) {
+  if (from == to) return 0;
+  int total = 0;
+  bool dummy;
+  while (true) {
+    if (input->IsAsciiRepresentation()) {
+      *starts_with_surrogate = false;
+      return total + to - from;
+    }
+    switch (StringShape(input).representation_tag()) {
+      case kConsStringTag: {
+        ConsString* str = ConsString::cast(input);
+        String* first = str->first();
+        String* second = str->second();
+        int first_length = first->length();
+        if (first_length - from > to - first_length) {
+          if (first_length < to) {
+            // Right hand side is shorter.  No need to check the recursion depth
+            // since this can only happen log(n) times.
+            bool right_starts_with_surrogate = false;
+            total += Utf8LengthHelper(second,
+                                      0,
+                                      to - first_length,
+                                      followed_by_surrogate,
+                                      max_recursion - 1,
+                                      failure,
+                                      &right_starts_with_surrogate);
+            if (*failure) return 0;
+            followed_by_surrogate = right_starts_with_surrogate;
+            input = first;
+            to = first_length;
+          } else {
+            // We only need the left hand side.
+            input = first;
+          }
+        } else {
+          if (first_length > from) {
+            // Left hand side is shorter.
+            if (first->IsAsciiRepresentation()) {
+              total += first_length - from;
+              *starts_with_surrogate = false;
+              starts_with_surrogate = &dummy;
+              input = second;
+              from = 0;
+              to -= first_length;
+            } else if (second->IsAsciiRepresentation()) {
+              followed_by_surrogate = false;
+              total += to - first_length;
+              input = first;
+              to = first_length;
+            } else if (max_recursion > 0) {
+              bool right_starts_with_surrogate = false;
+              // Recursing on the long one.  This may fail.
+              total += Utf8LengthHelper(second,
+                                        0,
+                                        to - first_length,
+                                        followed_by_surrogate,
+                                        max_recursion - 1,
+                                        failure,
+                                        &right_starts_with_surrogate);
+              if (*failure) return 0;
+              input = first;
+              to = first_length;
+              followed_by_surrogate = right_starts_with_surrogate;
+            } else {
+              *failure = true;
+              return 0;
+            }
+          } else {
+            // We only need the right hand side.
+            input = second;
+            from = 0;
+            to -= first_length;
+          }
+        }
+        continue;
+      }
+      case kExternalStringTag:
+      case kSeqStringTag: {
+        Vector<const uc16> vector = input->GetFlatContent().ToUC16Vector();
+        const uc16* p = vector.start();
+        int previous = unibrow::Utf16::kNoPreviousCharacter;
+        for (int i = from; i < to; i++) {
+          uc16 c = p[i];
+          total += unibrow::Utf8::Length(c, previous);
+          previous = c;
+        }
+        if (to - from > 0) {
+          if (unibrow::Utf16::IsLeadSurrogate(previous) &&
+              followed_by_surrogate) {
+            total -= unibrow::Utf8::kBytesSavedByCombiningSurrogates;
+          }
+          if (unibrow::Utf16::IsTrailSurrogate(p[from])) {
+            *starts_with_surrogate = true;
+          }
+        }
+        return total;
+      }
+      case kSlicedStringTag: {
+        SlicedString* str = SlicedString::cast(input);
+        int offset = str->offset();
+        input = str->parent();
+        from += offset;
+        to += offset;
+        continue;
+      }
+      default:
+        break;
+    }
+    UNREACHABLE();
+    return 0;
+  }
+  return 0;
+}
+
+
+int Utf8Length(Handle<String> str) {
+  bool dummy;
+  bool failure;
+  int len;
+  const int kRecursionBudget = 100;
+  do {
+    failure = false;
+    len = Utf8LengthHelper(
+        *str, 0, str->length(), false, kRecursionBudget, &failure, &dummy);
+    if (failure) FlattenString(str);
+  } while (failure);
+  return len;
+}
 
 } }  // namespace v8::internal

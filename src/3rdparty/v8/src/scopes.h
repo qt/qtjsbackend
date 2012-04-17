@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -29,7 +29,7 @@
 #define V8_SCOPES_H_
 
 #include "ast.h"
-#include "hashmap.h"
+#include "zone.h"
 
 namespace v8 {
 namespace internal {
@@ -38,7 +38,7 @@ class CompilationInfo;
 
 
 // A hash map to support fast variable declaration and lookup.
-class VariableMap: public HashMap {
+class VariableMap: public ZoneHashMap {
  public:
   VariableMap();
 
@@ -48,7 +48,9 @@ class VariableMap: public HashMap {
                     Handle<String> name,
                     VariableMode mode,
                     bool is_valid_lhs,
-                    Variable::Kind kind);
+                    Variable::Kind kind,
+                    InitializationFlag initialization_flag,
+                    Interface* interface = Interface::NewValue());
 
   Variable* Lookup(Handle<String> name);
 };
@@ -92,8 +94,7 @@ class Scope: public ZoneObject {
   // doesn't re-allocate variables repeatedly.
   static bool Analyze(CompilationInfo* info);
 
-  static Scope* DeserializeScopeChain(CompilationInfo* info,
-                                      Scope* innermost_scope);
+  static Scope* DeserializeScopeChain(Context* context, Scope* global_scope);
 
   // The scope name is only used for printing/debugging.
   void SetScopeName(Handle<String> scope_name) { scope_name_ = scope_name; }
@@ -111,6 +112,13 @@ class Scope: public ZoneObject {
   // Lookup a variable in this scope. Returns the variable or NULL if not found.
   Variable* LocalLookup(Handle<String> name);
 
+  // This lookup corresponds to a lookup in the "intermediate" scope sitting
+  // between this scope and the outer scope. (ECMA-262, 3rd., requires that
+  // the name of named function literal is kept in an intermediate scope
+  // in between this scope and the next outer scope.)
+  Variable* LookupFunctionVar(Handle<String> name,
+                              AstNodeFactory<AstNullVisitor>* factory);
+
   // Lookup a variable in this scope or outer scopes.
   // Returns the variable or NULL if not found.
   Variable* Lookup(Handle<String> name);
@@ -118,7 +126,16 @@ class Scope: public ZoneObject {
   // Declare the function variable for a function literal. This variable
   // is in an intermediate scope between this function scope and the the
   // outer scope. Only possible for function scopes; at most one variable.
-  Variable* DeclareFunctionVar(Handle<String> name, VariableMode mode);
+  template<class Visitor>
+  Variable* DeclareFunctionVar(Handle<String> name,
+                               VariableMode mode,
+                               AstNodeFactory<Visitor>* factory) {
+    ASSERT(is_function_scope() && function_ == NULL);
+    Variable* function_var = new Variable(
+        this, name, mode, true, Variable::NORMAL, kCreatedInitialized);
+    function_ = factory->NewVariableProxy(function_var);
+    return function_var;
+  }
 
   // Declare a parameter in this scope.  When there are duplicated
   // parameters the rightmost one 'wins'.  However, the implementation
@@ -127,7 +144,10 @@ class Scope: public ZoneObject {
 
   // Declare a local variable in this scope. If the variable has been
   // declared before, the previously declared variable is returned.
-  Variable* DeclareLocal(Handle<String> name, VariableMode mode);
+  Variable* DeclareLocal(Handle<String> name,
+                         VariableMode mode,
+                         InitializationFlag init_flag,
+                         Interface* interface = Interface::NewValue());
 
   // Declare an implicit global variable in this scope which must be a
   // global scope.  The variable was introduced (possibly from an inner
@@ -136,8 +156,20 @@ class Scope: public ZoneObject {
   Variable* DeclareGlobal(Handle<String> name);
 
   // Create a new unresolved variable.
-  VariableProxy* NewUnresolved(Handle<String> name,
-                               int position = RelocInfo::kNoPosition);
+  template<class Visitor>
+  VariableProxy* NewUnresolved(AstNodeFactory<Visitor>* factory,
+                               Handle<String> name,
+                               int position = RelocInfo::kNoPosition,
+                               Interface* interface = Interface::NewValue()) {
+    // Note that we must not share the unresolved variables with
+    // the same name because they may be removed selectively via
+    // RemoveUnresolved().
+    ASSERT(!already_resolved());
+    VariableProxy* proxy =
+        factory->NewVariableProxy(name, false, position, interface);
+    unresolved_.Add(proxy);
+    return proxy;
+  }
 
   // Remove a unresolved variable. During parsing, an unresolved variable
   // may have been added optimistically, but then only the variable name
@@ -179,6 +211,11 @@ class Scope: public ZoneObject {
   // scope over a let binding of the same name.
   Declaration* CheckConflictingVarDeclarations();
 
+  // For harmony block scoping mode: Check if the scope has variable proxies
+  // that are used as lvalues and point to const variables. Assumes that scopes
+  // have been analyzed and variables been resolved.
+  VariableProxy* CheckAssignmentToConst();
+
   // ---------------------------------------------------------------------------
   // Scope-specific info.
 
@@ -189,8 +226,8 @@ class Scope: public ZoneObject {
   void RecordEvalCall() { if (!is_global_scope()) scope_calls_eval_ = true; }
 
   // Set the strict mode flag (unless disabled by a global flag).
-  void SetStrictModeFlag(StrictModeFlag strict_mode_flag) {
-    strict_mode_flag_ = FLAG_strict_mode ? strict_mode_flag : kNonStrictMode;
+  void SetLanguageMode(LanguageMode language_mode) {
+    language_mode_ = language_mode;
   }
 
   // Position in the source where this scope begins and ends.
@@ -224,17 +261,13 @@ class Scope: public ZoneObject {
     end_position_ = statement_pos;
   }
 
-  // Enable qml mode for this scope
-  void EnableQmlMode() {
-    qml_mode_ = true;
-  }
-
   // ---------------------------------------------------------------------------
   // Predicates.
 
   // Specific scope types.
   bool is_eval_scope() const { return type_ == EVAL_SCOPE; }
   bool is_function_scope() const { return type_ == FUNCTION_SCOPE; }
+  bool is_module_scope() const { return type_ == MODULE_SCOPE; }
   bool is_global_scope() const { return type_ == GLOBAL_SCOPE; }
   bool is_catch_scope() const { return type_ == CATCH_SCOPE; }
   bool is_block_scope() const { return type_ == BLOCK_SCOPE; }
@@ -242,16 +275,20 @@ class Scope: public ZoneObject {
   bool is_declaration_scope() const {
     return is_eval_scope() || is_function_scope() || is_global_scope();
   }
-  bool is_strict_mode() const { return strict_mode_flag() == kStrictMode; }
-  bool is_qml_mode() const { return qml_mode_; }
-  bool is_strict_mode_eval_scope() const {
-    return is_eval_scope() && is_strict_mode();
+  bool is_classic_mode() const {
+    return language_mode() == CLASSIC_MODE;
+  }
+  bool is_extended_mode() const {
+    return language_mode() == EXTENDED_MODE;
+  }
+  bool is_strict_or_extended_eval_scope() const {
+    return is_eval_scope() && !is_classic_mode();
   }
 
   // Information about which scopes calls eval.
   bool calls_eval() const { return scope_calls_eval_; }
   bool calls_non_strict_eval() {
-    return scope_calls_eval_ && !is_strict_mode();
+    return scope_calls_eval_ && is_classic_mode();
   }
   bool outer_scope_calls_non_strict_eval() const {
     return outer_scope_calls_non_strict_eval_;
@@ -262,17 +299,14 @@ class Scope: public ZoneObject {
   // Does this scope contain a with statement.
   bool contains_with() const { return scope_contains_with_; }
 
-  // The scope immediately surrounding this scope, or NULL.
-  Scope* outer_scope() const { return outer_scope_; }
-
   // ---------------------------------------------------------------------------
   // Accessors.
 
   // The type of this scope.
   ScopeType type() const { return type_; }
 
-  // The strict mode of this scope.
-  StrictModeFlag strict_mode_flag() const { return strict_mode_flag_; }
+  // The language mode of this scope.
+  LanguageMode language_mode() const { return language_mode_; }
 
   // The variable corresponding the 'this' value.
   Variable* receiver() { return receiver_; }
@@ -303,22 +337,20 @@ class Scope: public ZoneObject {
   // Inner scope list.
   ZoneList<Scope*>* inner_scopes() { return &inner_scopes_; }
 
+  // The scope immediately surrounding this scope, or NULL.
+  Scope* outer_scope() const { return outer_scope_; }
+
+  // The interface as inferred so far; only for module scopes.
+  Interface* interface() const { return interface_; }
+
   // ---------------------------------------------------------------------------
   // Variable allocation.
 
-  // Collect all used locals in this scope.
-  template<class Allocator>
-  void CollectUsedVariables(List<Variable*, Allocator>* locals);
-
-  // Resolve and fill in the allocation information for all variables
-  // in this scopes. Must be called *after* all scopes have been
-  // processed (parsed) to ensure that unresolved variables can be
-  // resolved properly.
-  //
-  // In the case of code compiled and run using 'eval', the context
-  // parameter is the context in which eval was called.  In all other
-  // cases the context parameter is an empty handle.
-  void AllocateVariables(Handle<Context> context);
+  // Collect stack and context allocated local variables in this scope. Note
+  // that the function variable - if present - is not collected and should be
+  // handled separately.
+  void CollectStackAndContextLocals(ZoneList<Variable*>* stack_locals,
+                                    ZoneList<Variable*>* context_locals);
 
   // Current number of var or const locals.
   int num_var_or_const() { return num_var_or_const_; }
@@ -327,11 +359,19 @@ class Scope: public ZoneObject {
   int num_stack_slots() const { return num_stack_slots_; }
   int num_heap_slots() const { return num_heap_slots_; }
 
+  int StackLocalCount() const;
+  int ContextLocalCount() const;
+
   // Make sure this scope and all outer scopes are eagerly compiled.
   void ForceEagerCompilation()  { force_eager_compilation_ = true; }
 
   // Determine if we can use lazy compilation for this scope.
   bool AllowsLazyCompilation() const;
+
+  // True if we can lazily recompile functions with this scope.
+  bool allows_lazy_recompilation() const {
+    return !force_eager_compilation_;
+  }
 
   // True if the outer context of this scope is always the global context.
   bool HasTrivialOuterContext() const;
@@ -343,13 +383,13 @@ class Scope: public ZoneObject {
   // where var declarations will be hoisted to in the implementation.
   Scope* DeclarationScope();
 
-  Handle<SerializedScopeInfo> GetSerializedScopeInfo();
+  Handle<ScopeInfo> GetScopeInfo();
 
   // Get the chain of nested scopes within this scope for the source statement
   // position. The scopes will be added to the list from the outermost scope to
   // the innermost scope. Only nested block, catch or with scopes are tracked
   // and will be returned, but no inner function scopes.
-  void GetNestedScopeChain(List<Handle<SerializedScopeInfo> >* chain,
+  void GetNestedScopeChain(List<Handle<ScopeInfo> >* chain,
                            int statement_position);
 
   // ---------------------------------------------------------------------------
@@ -409,6 +449,8 @@ class Scope: public ZoneObject {
   VariableProxy* function_;
   // Convenience variable; function scopes only.
   Variable* arguments_;
+  // Interface; module scopes only.
+  Interface* interface_;
 
   // Illegal redeclaration.
   Expression* illegal_redecl_;
@@ -422,13 +464,11 @@ class Scope: public ZoneObject {
   // This scope or a nested catch scope or with scope contain an 'eval' call. At
   // the 'eval' call site this scope is the declaration scope.
   bool scope_calls_eval_;
-  // This scope is a strict mode scope.
-  StrictModeFlag strict_mode_flag_;
+  // The language mode of this scope.
+  LanguageMode language_mode_;
   // Source positions.
   int start_position_;
   int end_position_;
-  // This scope is a qml mode scope.
-  bool qml_mode_;
 
   // Computed via PropagateScopeInfo.
   bool outer_scope_calls_non_strict_eval_;
@@ -446,8 +486,8 @@ class Scope: public ZoneObject {
   int num_stack_slots_;
   int num_heap_slots_;
 
-  // Serialized scopes support.
-  Handle<SerializedScopeInfo> scope_info_;
+  // Serialized scope info support.
+  Handle<ScopeInfo> scope_info_;
   bool already_resolved() { return already_resolved_; }
 
   // Create a non-local variable with a given name.
@@ -504,13 +544,15 @@ class Scope: public ZoneObject {
   // scope. If the code is executed because of a call to 'eval', the context
   // parameter should be set to the calling context of 'eval'.
   Variable* LookupRecursive(Handle<String> name,
-                            Handle<Context> context,
-                            BindingKind* binding_kind);
-  void ResolveVariable(Scope* global_scope,
-                       Handle<Context> context,
-                       VariableProxy* proxy);
-  void ResolveVariablesRecursively(Scope* global_scope,
-                                   Handle<Context> context);
+                            BindingKind* binding_kind,
+                            AstNodeFactory<AstNullVisitor>* factory);
+  MUST_USE_RESULT
+  bool ResolveVariable(CompilationInfo* info,
+                       VariableProxy* proxy,
+                       AstNodeFactory<AstNullVisitor>* factory);
+  MUST_USE_RESULT
+  bool ResolveVariablesRecursively(CompilationInfo* info,
+                                   AstNodeFactory<AstNullVisitor>* factory);
 
   // Scope analysis.
   bool PropagateScopeInfo(bool outer_scope_calls_non_strict_eval);
@@ -529,11 +571,21 @@ class Scope: public ZoneObject {
   void AllocateNonParameterLocals();
   void AllocateVariablesRecursively();
 
+  // Resolve and fill in the allocation information for all variables
+  // in this scopes. Must be called *after* all scopes have been
+  // processed (parsed) to ensure that unresolved variables can be
+  // resolved properly.
+  //
+  // In the case of code compiled and run using 'eval', the context
+  // parameter is the context in which eval was called.  In all other
+  // cases the context parameter is an empty handle.
+  MUST_USE_RESULT
+  bool AllocateVariables(CompilationInfo* info,
+                         AstNodeFactory<AstNullVisitor>* factory);
+
  private:
   // Construct a scope based on the scope info.
-  Scope(Scope* inner_scope,
-        ScopeType type,
-        Handle<SerializedScopeInfo> scope_info);
+  Scope(Scope* inner_scope, ScopeType type, Handle<ScopeInfo> scope_info);
 
   // Construct a catch scope with a binding for the name.
   Scope(Scope* inner_scope, Handle<String> catch_variable_name);
@@ -547,7 +599,7 @@ class Scope: public ZoneObject {
 
   void SetDefaults(ScopeType type,
                    Scope* outer_scope,
-                   Handle<SerializedScopeInfo> scope_info);
+                   Handle<ScopeInfo> scope_info);
 };
 
 } }  // namespace v8::internal

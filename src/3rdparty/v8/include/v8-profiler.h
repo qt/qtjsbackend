@@ -64,6 +64,7 @@
  */
 namespace v8 {
 
+typedef uint32_t SnapshotObjectId;
 
 /**
  * CpuProfileNode represents a node in a call graph.
@@ -219,8 +220,9 @@ class V8EXPORT HeapGraphEdge {
                            // (e.g. parts of a ConsString).
     kHidden = 4,           // A link that is needed for proper sizes
                            // calculation, but may be hidden from user.
-    kShortcut = 5          // A link that must not be followed during
+    kShortcut = 5,         // A link that must not be followed during
                            // sizes calculation.
+    kWeak = 6              // A weak reference (ignored by the GC).
   };
 
   /** Returns edge type (see HeapGraphEdge::Type). */
@@ -254,7 +256,9 @@ class V8EXPORT HeapGraphNode {
     kClosure = 5,     // Function closure.
     kRegExp = 6,      // RegExp.
     kHeapNumber = 7,  // Number stored in the heap.
-    kNative = 8       // Native object (not from V8 heap).
+    kNative = 8,      // Native object (not from V8 heap).
+    kSynthetic = 9    // Synthetic object, usualy used for grouping
+                      // snapshot items together.
   };
 
   /** Returns node type (see HeapGraphNode::Type). */
@@ -271,7 +275,7 @@ class V8EXPORT HeapGraphNode {
    * Returns node id. For the same heap object, the id remains the same
    * across all snapshots.
    */
-  uint64_t GetId() const;
+  SnapshotObjectId GetId() const;
 
   /** Returns node's own size, in bytes. */
   int GetSelfSize() const;
@@ -281,14 +285,8 @@ class V8EXPORT HeapGraphNode {
    * the objects that are reachable only from this object. In other
    * words, the size of memory that will be reclaimed having this node
    * collected.
-   *
-   * Exact retained size calculation has O(N) (number of nodes)
-   * computational complexity, while approximate has O(1). It is
-   * assumed that initially heap profiling tools provide approximate
-   * sizes for all nodes, and then exact sizes are calculated for the
-   * most 'interesting' nodes.
    */
-  int GetRetainedSize(bool exact) const;
+  int GetRetainedSize() const;
 
   /** Returns child nodes count of the node. */
   int GetChildrenCount() const;
@@ -341,13 +339,16 @@ class V8EXPORT HeapSnapshot {
   const HeapGraphNode* GetRoot() const;
 
   /** Returns a node by its id. */
-  const HeapGraphNode* GetNodeById(uint64_t id) const;
+  const HeapGraphNode* GetNodeById(SnapshotObjectId id) const;
 
   /** Returns total nodes count in the snapshot. */
   int GetNodesCount() const;
 
   /** Returns a node by index. */
   const HeapGraphNode* GetNode(int index) const;
+
+  /** Returns a max seen JS object Id. */
+  SnapshotObjectId GetMaxSnapshotJSObjectId() const;
 
   /**
    * Deletes the snapshot and removes it from HeapProfiler's list.
@@ -433,6 +434,9 @@ class V8EXPORT HeapProfiler {
    * handle.
    */
   static const uint16_t kPersistentHandleNoClassId = 0;
+
+  /** Returns the number of currently existing persistent handles. */
+  static int GetPersistentHandleCount();
 };
 
 
@@ -475,10 +479,21 @@ class V8EXPORT RetainedObjectInfo {  // NOLINT
   virtual intptr_t GetHash() = 0;
 
   /**
-   * Returns human-readable label. It must be a NUL-terminated UTF-8
+   * Returns human-readable label. It must be a null-terminated UTF-8
    * encoded string. V8 copies its contents during a call to GetLabel.
    */
   virtual const char* GetLabel() = 0;
+
+  /**
+   * Returns human-readable group label. It must be a null-terminated UTF-8
+   * encoded string. V8 copies its contents during a call to GetGroupLabel.
+   * Heap snapshot generator will collect all the group names, create
+   * top level entries with these names and attach the objects to the
+   * corresponding top level group objects. There is a default
+   * implementation which is required because embedders don't have their
+   * own implementation yet.
+   */
+  virtual const char* GetGroupLabel() { return GetLabel(); }
 
   /**
    * Returns element count in case if a global handle retains

@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -71,8 +71,7 @@ static Handle<Object> Invoke(bool is_construct,
                              Handle<Object> receiver,
                              int argc,
                              Handle<Object> args[],
-                             bool* has_pending_exception,
-                             Handle<Object> qml) {
+                             bool* has_pending_exception) {
   Isolate* isolate = function->GetIsolate();
 
   // Entering JavaScript.
@@ -103,12 +102,6 @@ static Handle<Object> Invoke(bool is_construct,
   // make the current one is indeed a global object.
   ASSERT(function->context()->global()->IsGlobalObject());
 
-  Handle<JSObject> oldqml;
-  if (!qml.is_null()) {
-    oldqml = Handle<JSObject>(function->context()->qml_global());
-    function->context()->set_qml_global(JSObject::cast(*qml));
-  }
-
   {
     // Save and restore context around invocation and block the
     // allocation of handles without explicit handle scopes.
@@ -124,9 +117,6 @@ static Handle<Object> Invoke(bool is_construct,
     value =
         CALL_GENERATED_CODE(stub_entry, function_entry, func, recv, argc, argv);
   }
-
-  if (!qml.is_null())
-    function->context()->set_qml_global(*oldqml);
 
 #ifdef DEBUG
   value->Verify();
@@ -156,18 +146,7 @@ Handle<Object> Execution::Call(Handle<Object> callable,
                                int argc,
                                Handle<Object> argv[],
                                bool* pending_exception,
-                               bool convert_receiver)
-{
-    return Call(callable, receiver, argc, argv, pending_exception, convert_receiver, Handle<Object>());
-}
-
-Handle<Object> Execution::Call(Handle<Object> callable,
-                               Handle<Object> receiver,
-                               int argc,
-                               Handle<Object> argv[],
-                               bool* pending_exception,
-                               bool convert_receiver,
-                               Handle<Object> qml) {
+                               bool convert_receiver) {
   *pending_exception = false;
 
   if (!callable->IsJSFunction()) {
@@ -178,7 +157,7 @@ Handle<Object> Execution::Call(Handle<Object> callable,
 
   // In non-strict mode, convert receiver.
   if (convert_receiver && !receiver->IsJSReceiver() &&
-      !func->shared()->native() && !func->shared()->strict_mode()) {
+      !func->shared()->native() && func->shared()->is_classic_mode()) {
     if (receiver->IsUndefined() || receiver->IsNull()) {
       Object* global = func->context()->global()->global_receiver();
       // Under some circumstances, 'global' can be the JSBuiltinsObject
@@ -191,7 +170,7 @@ Handle<Object> Execution::Call(Handle<Object> callable,
     if (*pending_exception) return callable;
   }
 
-  return Invoke(false, func, receiver, argc, argv, pending_exception, qml);
+  return Invoke(false, func, receiver, argc, argv, pending_exception);
 }
 
 
@@ -200,7 +179,7 @@ Handle<Object> Execution::New(Handle<JSFunction> func,
                               Handle<Object> argv[],
                               bool* pending_exception) {
   return Invoke(true, func, Isolate::Current()->global(), argc, argv,
-                pending_exception, Handle<Object>());
+                pending_exception);
 }
 
 
@@ -219,7 +198,7 @@ Handle<Object> Execution::TryCall(Handle<JSFunction> func,
   *caught_exception = false;
 
   Handle<Object> result = Invoke(false, func, receiver, argc, args,
-                                 caught_exception, Handle<Object>());
+                                 caught_exception);
 
   if (*caught_exception) {
     ASSERT(catcher.HasCaught());
@@ -377,7 +356,7 @@ void StackGuard::EnableInterrupts() {
 
 void StackGuard::SetStackLimit(uintptr_t limit) {
   ExecutionAccess access(isolate_);
-  // If the current limits are special (eg due to a pending interrupt) then
+  // If the current limits are special (e.g. due to a pending interrupt) then
   // leave them alone.
   uintptr_t jslimit = SimulatorStack::JsLimitFromCLimit(isolate_, limit);
   if (thread_local_.jslimit_ == thread_local_.real_jslimit_) {
@@ -394,6 +373,12 @@ void StackGuard::SetStackLimit(uintptr_t limit) {
 void StackGuard::DisableInterrupts() {
   ExecutionAccess access(isolate_);
   reset_limits(access);
+}
+
+
+bool StackGuard::ShouldPostponeInterrupts() {
+  ExecutionAccess access(isolate_);
+  return should_postpone_interrupts(access);
 }
 
 
@@ -841,6 +826,11 @@ Object* Execution::DebugBreakHelper() {
     return isolate->heap()->undefined_value();
   }
 
+  StackLimitCheck check(isolate);
+  if (check.HasOverflowed()) {
+    return isolate->heap()->undefined_value();
+  }
+
   {
     JavaScriptFrameIterator it(isolate);
     ASSERT(!it.done());
@@ -866,16 +856,21 @@ Object* Execution::DebugBreakHelper() {
   // Clear the debug break request flag.
   isolate->stack_guard()->Continue(DEBUGBREAK);
 
-  ProcessDebugMesssages(debug_command_only);
+  ProcessDebugMessages(debug_command_only);
 
   // Return to continue execution.
   return isolate->heap()->undefined_value();
 }
 
-void Execution::ProcessDebugMesssages(bool debug_command_only) {
+void Execution::ProcessDebugMessages(bool debug_command_only) {
   Isolate* isolate = Isolate::Current();
   // Clear the debug command request flag.
   isolate->stack_guard()->Continue(DEBUGCOMMAND);
+
+  StackLimitCheck check(isolate);
+  if (check.HasOverflowed()) {
+    return;
+  }
 
   HandleScope scope(isolate);
   // Enter the debugger. Just continue if we fail to enter the debugger.
@@ -893,17 +888,22 @@ void Execution::ProcessDebugMesssages(bool debug_command_only) {
 
 #endif
 
-MaybeObject* Execution::HandleStackGuardInterrupt() {
-  Isolate* isolate = Isolate::Current();
+MaybeObject* Execution::HandleStackGuardInterrupt(Isolate* isolate) {
   StackGuard* stack_guard = isolate->stack_guard();
+  if (stack_guard->ShouldPostponeInterrupts()) {
+    return isolate->heap()->undefined_value();
+  }
 
   if (stack_guard->IsGCRequest()) {
-    isolate->heap()->CollectAllGarbage(false);
+    isolate->heap()->CollectAllGarbage(Heap::kNoGCFlags,
+                                       "StackGuard GC request");
     stack_guard->Continue(GC_REQUEST);
   }
 
   isolate->counters()->stack_interrupts()->Increment();
-  if (stack_guard->IsRuntimeProfilerTick()) {
+  // If FLAG_count_based_interrupts, every interrupt is a profiler interrupt.
+  if (FLAG_count_based_interrupts ||
+      stack_guard->IsRuntimeProfilerTick()) {
     isolate->counters()->runtime_profiler_ticks()->Increment();
     stack_guard->Continue(RUNTIME_PROFILER_TICK);
     isolate->runtime_profiler()->OptimizeNow();
@@ -924,5 +924,6 @@ MaybeObject* Execution::HandleStackGuardInterrupt() {
   }
   return isolate->heap()->undefined_value();
 }
+
 
 } }  // namespace v8::internal

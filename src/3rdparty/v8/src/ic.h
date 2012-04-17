@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -91,10 +91,13 @@ class IC {
   // Construct the IC structure with the given number of extra
   // JavaScript frames on the stack.
   IC(FrameDepth depth, Isolate* isolate);
+  virtual ~IC() {}
 
   // Get the call-site target; used for determining the state.
-  Code* target() { return GetTargetAtAddress(address()); }
-  inline Address address();
+  Code* target() const { return GetTargetAtAddress(address()); }
+  inline Address address() const;
+
+  virtual bool IsGeneric() const { return false; }
 
   // Compute the current IC state based on the target stub, receiver and name.
   static State StateFrom(Code* target, Object* receiver, Object* name);
@@ -107,16 +110,10 @@ class IC {
   // object that contains this IC site.
   RelocInfo::Mode ComputeMode();
 
-  bool IsQmlGlobal(Handle<Object> receiver) {
-    JSObject* qml_global = isolate_->context()->qml_global();
-    return !qml_global->IsUndefined() && qml_global == *receiver;
-  }
-
   // Returns if this IC is for contextual (no explicit receiver)
   // access to properties.
   bool IsContextual(Handle<Object> receiver) {
-    if (receiver->IsGlobalObject() ||
-        IsQmlGlobal(receiver)) {
+    if (receiver->IsGlobalObject()) {
       return SlowIsContextual();
     } else {
       ASSERT(!SlowIsContextual());
@@ -145,13 +142,15 @@ class IC {
 #ifdef ENABLE_DEBUGGER_SUPPORT
   // Computes the address in the original code when the code running is
   // containing break points (calls to DebugBreakXXX builtins).
-  Address OriginalCodeAddress();
+  Address OriginalCodeAddress() const;
 #endif
 
   // Set the call-site target.
   void set_target(Code* code) { SetTargetAtAddress(address(), code); }
 
 #ifdef DEBUG
+  char TransitionMarkFromState(IC::State state);
+
   void TraceIC(const char* type,
                Handle<Object> name,
                State old_state,
@@ -166,6 +165,7 @@ class IC {
   // Access the target code for the given IC address.
   static inline Code* GetTargetAtAddress(Address address);
   static inline void SetTargetAtAddress(Address address, Code* target);
+  static void PostPatching(Address address, Code* target, Code* old_target);
 
  private:
   // Frame pointer for the frame that uses (calls) the IC.
@@ -377,14 +377,48 @@ class KeyedIC: public IC {
     STORE_NO_TRANSITION,
     STORE_TRANSITION_SMI_TO_OBJECT,
     STORE_TRANSITION_SMI_TO_DOUBLE,
-    STORE_TRANSITION_DOUBLE_TO_OBJECT
+    STORE_TRANSITION_DOUBLE_TO_OBJECT,
+    STORE_AND_GROW_NO_TRANSITION,
+    STORE_AND_GROW_TRANSITION_SMI_TO_OBJECT,
+    STORE_AND_GROW_TRANSITION_SMI_TO_DOUBLE,
+    STORE_AND_GROW_TRANSITION_DOUBLE_TO_OBJECT
   };
+
+  static const int kGrowICDelta = STORE_AND_GROW_NO_TRANSITION -
+      STORE_NO_TRANSITION;
+  STATIC_ASSERT(kGrowICDelta ==
+                STORE_AND_GROW_TRANSITION_SMI_TO_OBJECT -
+                STORE_TRANSITION_SMI_TO_OBJECT);
+  STATIC_ASSERT(kGrowICDelta ==
+                STORE_AND_GROW_TRANSITION_SMI_TO_DOUBLE -
+                STORE_TRANSITION_SMI_TO_DOUBLE);
+  STATIC_ASSERT(kGrowICDelta ==
+                STORE_AND_GROW_TRANSITION_DOUBLE_TO_OBJECT -
+                STORE_TRANSITION_DOUBLE_TO_OBJECT);
+
   explicit KeyedIC(Isolate* isolate) : IC(NO_EXTRA_FRAME, isolate) {}
   virtual ~KeyedIC() {}
 
+  static inline KeyedAccessGrowMode GetGrowModeFromStubKind(
+      StubKind stub_kind) {
+    return (stub_kind >= STORE_AND_GROW_NO_TRANSITION)
+        ? ALLOW_JSARRAY_GROWTH
+        : DO_NOT_ALLOW_JSARRAY_GROWTH;
+  }
+
+  static inline StubKind GetGrowStubKind(StubKind stub_kind) {
+    ASSERT(stub_kind != LOAD);
+    if (stub_kind < STORE_AND_GROW_NO_TRANSITION) {
+      stub_kind = static_cast<StubKind>(static_cast<int>(stub_kind) +
+                                        kGrowICDelta);
+    }
+    return stub_kind;
+  }
+
   virtual Handle<Code> GetElementStubWithoutMapCheck(
       bool is_js_array,
-      ElementsKind elements_kind) = 0;
+      ElementsKind elements_kind,
+      KeyedAccessGrowMode grow_mode) = 0;
 
  protected:
   virtual Handle<Code> string_stub() {
@@ -398,12 +432,15 @@ class KeyedIC: public IC {
                            StrictModeFlag strict_mode,
                            Handle<Code> default_stub);
 
-  virtual Handle<Code> ComputePolymorphicStub(MapHandleList* receiver_maps,
-                                              StrictModeFlag strict_mode) = 0;
+  virtual Handle<Code> ComputePolymorphicStub(
+      MapHandleList* receiver_maps,
+      StrictModeFlag strict_mode,
+      KeyedAccessGrowMode grow_mode) = 0;
 
   Handle<Code> ComputeMonomorphicStubWithoutMapCheck(
       Handle<Map> receiver_map,
-      StrictModeFlag strict_mode);
+      StrictModeFlag strict_mode,
+      KeyedAccessGrowMode grow_mode);
 
  private:
   void GetReceiverMapsForStub(Handle<Code> stub, MapHandleList* result);
@@ -417,7 +454,12 @@ class KeyedIC: public IC {
                                      StubKind stub_kind);
 
   static bool IsTransitionStubKind(StubKind stub_kind) {
-    return stub_kind > STORE_NO_TRANSITION;
+    return stub_kind > STORE_NO_TRANSITION &&
+        stub_kind != STORE_AND_GROW_NO_TRANSITION;
+  }
+
+  static bool IsGrowStubKind(StubKind stub_kind) {
+    return stub_kind >= STORE_AND_GROW_NO_TRANSITION;
   }
 };
 
@@ -456,13 +498,19 @@ class KeyedLoadIC: public KeyedIC {
 
   virtual Handle<Code> GetElementStubWithoutMapCheck(
       bool is_js_array,
-      ElementsKind elements_kind);
+      ElementsKind elements_kind,
+      KeyedAccessGrowMode grow_mode);
+
+  virtual bool IsGeneric() const {
+    return target() == *generic_stub();
+  }
 
  protected:
   virtual Code::Kind kind() const { return Code::KEYED_LOAD_IC; }
 
   virtual Handle<Code> ComputePolymorphicStub(MapHandleList* receiver_maps,
-                                              StrictModeFlag strict_mode);
+                                              StrictModeFlag strict_mode,
+                                              KeyedAccessGrowMode grow_mode);
 
   virtual Handle<Code> string_stub() {
     return isolate()->builtins()->KeyedLoadIC_String();
@@ -483,7 +531,7 @@ class KeyedLoadIC: public KeyedIC {
   Handle<Code> megamorphic_stub() {
     return isolate()->builtins()->KeyedLoadIC_Generic();
   }
-  Handle<Code> generic_stub() {
+  Handle<Code> generic_stub() const {
     return isolate()->builtins()->KeyedLoadIC_Generic();
   }
   Handle<Code> pre_monomorphic_stub() {
@@ -536,8 +584,8 @@ class StoreIC: public IC {
 
   void set_target(Code* code) {
     // Strict mode must be preserved across IC patching.
-    ASSERT((code->extra_ic_state() & kStrictMode) ==
-           (target()->extra_ic_state() & kStrictMode));
+    ASSERT(Code::GetStrictMode(code->extra_ic_state()) ==
+           Code::GetStrictMode(target()->extra_ic_state()));
     IC::set_target(code);
   }
 
@@ -599,13 +647,20 @@ class KeyedStoreIC: public KeyedIC {
 
   virtual Handle<Code> GetElementStubWithoutMapCheck(
       bool is_js_array,
-      ElementsKind elements_kind);
+      ElementsKind elements_kind,
+      KeyedAccessGrowMode grow_mode);
+
+  virtual bool IsGeneric() const {
+    return target() == *generic_stub() ||
+        target() == *generic_stub_strict();
+  }
 
  protected:
   virtual Code::Kind kind() const { return Code::KEYED_STORE_IC; }
 
   virtual Handle<Code> ComputePolymorphicStub(MapHandleList* receiver_maps,
-                                              StrictModeFlag strict_mode);
+                                              StrictModeFlag strict_mode,
+                                              KeyedAccessGrowMode grow_mode);
 
   private:
   // Update the inline cache.
@@ -618,8 +673,8 @@ class KeyedStoreIC: public KeyedIC {
 
   void set_target(Code* code) {
     // Strict mode must be preserved across IC patching.
-    ASSERT((code->extra_ic_state() & kStrictMode) ==
-           (target()->extra_ic_state() & kStrictMode));
+    ASSERT(Code::GetStrictMode(code->extra_ic_state()) ==
+           Code::GetStrictMode(target()->extra_ic_state()));
     IC::set_target(code);
   }
 
@@ -638,10 +693,10 @@ class KeyedStoreIC: public KeyedIC {
   Handle<Code> megamorphic_stub_strict() {
     return isolate()->builtins()->KeyedStoreIC_Generic_Strict();
   }
-  Handle<Code> generic_stub() {
+  Handle<Code> generic_stub() const {
     return isolate()->builtins()->KeyedStoreIC_Generic();
   }
-  Handle<Code> generic_stub_strict() {
+  Handle<Code> generic_stub_strict() const {
     return isolate()->builtins()->KeyedStoreIC_Generic_Strict();
   }
   Handle<Code> non_strict_arguments_stub() {
@@ -649,6 +704,10 @@ class KeyedStoreIC: public KeyedIC {
   }
 
   static void Clear(Address address, Code* target);
+
+  StubKind GetStubKind(Handle<JSObject> receiver,
+                       Handle<Object> key,
+                       Handle<Object> value);
 
   friend class IC;
 };
@@ -716,6 +775,7 @@ class CompareIC: public IC {
     SYMBOLS,
     STRINGS,
     OBJECTS,
+    KNOWN_OBJECTS,
     GENERIC
   };
 

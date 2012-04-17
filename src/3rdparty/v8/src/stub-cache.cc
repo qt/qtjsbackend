@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -45,26 +45,13 @@ namespace internal {
 
 StubCache::StubCache(Isolate* isolate) : isolate_(isolate) {
   ASSERT(isolate == Isolate::Current());
-  memset(primary_, 0, sizeof(primary_[0]) * StubCache::kPrimaryTableSize);
-  memset(secondary_, 0, sizeof(secondary_[0]) * StubCache::kSecondaryTableSize);
 }
 
 
-void StubCache::Initialize(bool create_heap_objects) {
+void StubCache::Initialize() {
   ASSERT(IsPowerOf2(kPrimaryTableSize));
   ASSERT(IsPowerOf2(kSecondaryTableSize));
-  if (create_heap_objects) {
-    HandleScope scope;
-    Code* empty = isolate_->builtins()->builtin(Builtins::kIllegal);
-    for (int i = 0; i < kPrimaryTableSize; i++) {
-      primary_[i].key = heap()->empty_string();
-      primary_[i].value = empty;
-    }
-    for (int j = 0; j < kSecondaryTableSize; j++) {
-      secondary_[j].key = heap()->empty_string();
-      secondary_[j].value = empty;
-    }
-  }
+  Clear();
 }
 
 
@@ -90,14 +77,15 @@ Code* StubCache::Set(String* name, Map* map, Code* code) {
   // Compute the primary entry.
   int primary_offset = PrimaryOffset(name, flags, map);
   Entry* primary = entry(primary_, primary_offset);
-  Code* hit = primary->value;
+  Code* old_code = primary->value;
 
   // If the primary entry has useful data in it, we retire it to the
   // secondary cache before overwriting it.
-  if (hit != isolate_->builtins()->builtin(Builtins::kIllegal)) {
-    Code::Flags primary_flags = Code::RemoveTypeFromFlags(hit->flags());
-    int secondary_offset =
-        SecondaryOffset(primary->key, primary_flags, primary_offset);
+  if (old_code != isolate_->builtins()->builtin(Builtins::kIllegal)) {
+    Map* old_map = primary->map;
+    Code::Flags old_flags = Code::RemoveTypeFromFlags(old_code->flags());
+    int seed = PrimaryOffset(primary->key, old_flags, old_map);
+    int secondary_offset = SecondaryOffset(primary->key, old_flags, seed);
     Entry* secondary = entry(secondary_, secondary_offset);
     *secondary = *primary;
   }
@@ -105,6 +93,8 @@ Code* StubCache::Set(String* name, Map* map, Code* code) {
   // Update primary cache.
   primary->key = name;
   primary->value = code;
+  primary->map = map;
+  isolate()->counters()->megamorphic_stub_cache_updates()->Increment();
   return code;
 }
 
@@ -184,7 +174,7 @@ Handle<Code> StubCache::ComputeLoadCallback(Handle<String> name,
 Handle<Code> StubCache::ComputeLoadConstant(Handle<String> name,
                                             Handle<JSObject> receiver,
                                             Handle<JSObject> holder,
-                                            Handle<Object> value) {
+                                            Handle<JSFunction> value) {
   ASSERT(IC::GetCodeCacheForObject(*receiver, *holder) == OWN_MAP);
   Code::Flags flags =
       Code::ComputeMonomorphicFlags(Code::LOAD_IC, CONSTANT_FUNCTION);
@@ -266,7 +256,7 @@ Handle<Code> StubCache::ComputeKeyedLoadField(Handle<String> name,
 Handle<Code> StubCache::ComputeKeyedLoadConstant(Handle<String> name,
                                                  Handle<JSObject> receiver,
                                                  Handle<JSObject> holder,
-                                                 Handle<Object> value) {
+                                                 Handle<JSFunction> value) {
   ASSERT(IC::GetCodeCacheForObject(*receiver, *holder) == OWN_MAP);
   Code::Flags flags =
       Code::ComputeMonomorphicFlags(Code::KEYED_LOAD_IC, CONSTANT_FUNCTION);
@@ -397,12 +387,16 @@ Handle<Code> StubCache::ComputeKeyedLoadOrStoreElement(
     Handle<JSObject> receiver,
     KeyedIC::StubKind stub_kind,
     StrictModeFlag strict_mode) {
+  KeyedAccessGrowMode grow_mode =
+      KeyedIC::GetGrowModeFromStubKind(stub_kind);
+  Code::ExtraICState extra_state =
+      Code::ComputeExtraICState(grow_mode, strict_mode);
   Code::Flags flags =
       Code::ComputeMonomorphicFlags(
           stub_kind == KeyedIC::LOAD ? Code::KEYED_LOAD_IC
                                      : Code::KEYED_STORE_IC,
           NORMAL,
-          strict_mode);
+          extra_state);
   Handle<String> name;
   switch (stub_kind) {
     case KeyedIC::LOAD:
@@ -410,6 +404,9 @@ Handle<Code> StubCache::ComputeKeyedLoadOrStoreElement(
       break;
     case KeyedIC::STORE_NO_TRANSITION:
       name = isolate()->factory()->KeyedStoreElementMonomorphic_symbol();
+      break;
+    case KeyedIC::STORE_AND_GROW_NO_TRANSITION:
+      name = isolate()->factory()->KeyedStoreAndGrowElementMonomorphic_symbol();
       break;
     default:
       UNREACHABLE();
@@ -426,8 +423,15 @@ Handle<Code> StubCache::ComputeKeyedLoadOrStoreElement(
       code = compiler.CompileLoadElement(receiver_map);
       break;
     }
+    case KeyedIC::STORE_AND_GROW_NO_TRANSITION: {
+      KeyedStoreStubCompiler compiler(isolate_, strict_mode,
+                                      ALLOW_JSARRAY_GROWTH);
+      code = compiler.CompileStoreElement(receiver_map);
+      break;
+    }
     case KeyedIC::STORE_NO_TRANSITION: {
-      KeyedStoreStubCompiler compiler(isolate_, strict_mode);
+      KeyedStoreStubCompiler compiler(isolate_, strict_mode,
+                                      DO_NOT_ALLOW_JSARRAY_GROWTH);
       code = compiler.CompileStoreElement(receiver_map);
       break;
     }
@@ -519,7 +523,8 @@ Handle<Code> StubCache::ComputeKeyedStoreField(Handle<String> name,
   Handle<Object> probe(receiver->map()->FindInCodeCache(*name, flags));
   if (probe->IsCode()) return Handle<Code>::cast(probe);
 
-  KeyedStoreStubCompiler compiler(isolate(), strict_mode);
+  KeyedStoreStubCompiler compiler(isolate(), strict_mode,
+                                  DO_NOT_ALLOW_JSARRAY_GROWTH);
   Handle<Code> code =
       compiler.CompileStoreField(receiver, field_index, transition, name);
   PROFILE(isolate_, CodeCreateEvent(Logger::KEYED_STORE_IC_TAG, *code, *name));
@@ -678,11 +683,10 @@ Handle<Code> StubCache::ComputeCallGlobal(int argc,
 
 
 static void FillCache(Isolate* isolate, Handle<Code> code) {
-  Handle<NumberDictionary> dictionary =
-      NumberDictionarySet(isolate->factory()->non_monomorphic_cache(),
-                          code->flags(),
-                          code,
-                          PropertyDetails(NONE, NORMAL));
+  Handle<UnseededNumberDictionary> dictionary =
+      UnseededNumberDictionary::Set(isolate->factory()->non_monomorphic_cache(),
+                                    code->flags(),
+                                    code);
   isolate->heap()->public_set_non_monomorphic_cache(*dictionary);
 }
 
@@ -697,7 +701,7 @@ Code* StubCache::FindCallInitialize(int argc,
       Code::ComputeFlags(kind, UNINITIALIZED, extra_state, NORMAL, argc);
 
   // Use raw_unchecked... so we don't get assert failures during GC.
-  NumberDictionary* dictionary =
+  UnseededNumberDictionary* dictionary =
       isolate()->heap()->raw_unchecked_non_monomorphic_cache();
   int entry = dictionary->FindEntry(isolate(), flags);
   ASSERT(entry != -1);
@@ -716,7 +720,8 @@ Handle<Code> StubCache::ComputeCallInitialize(int argc,
       CallICBase::Contextual::encode(mode == RelocInfo::CODE_TARGET_CONTEXT);
   Code::Flags flags =
       Code::ComputeFlags(kind, UNINITIALIZED, extra_state, NORMAL, argc);
-  Handle<NumberDictionary> cache = isolate_->factory()->non_monomorphic_cache();
+  Handle<UnseededNumberDictionary> cache =
+      isolate_->factory()->non_monomorphic_cache();
   int entry = cache->FindEntry(isolate_, flags);
   if (entry != -1) return Handle<Code>(Code::cast(cache->ValueAt(entry)));
 
@@ -744,7 +749,8 @@ Handle<Code> StubCache::ComputeCallPreMonomorphic(
     Code::ExtraICState extra_state) {
   Code::Flags flags =
       Code::ComputeFlags(kind, PREMONOMORPHIC, extra_state, NORMAL, argc);
-  Handle<NumberDictionary> cache = isolate_->factory()->non_monomorphic_cache();
+  Handle<UnseededNumberDictionary> cache =
+      isolate_->factory()->non_monomorphic_cache();
   int entry = cache->FindEntry(isolate_, flags);
   if (entry != -1) return Handle<Code>(Code::cast(cache->ValueAt(entry)));
 
@@ -757,16 +763,16 @@ Handle<Code> StubCache::ComputeCallPreMonomorphic(
 
 Handle<Code> StubCache::ComputeCallNormal(int argc,
                                           Code::Kind kind,
-                                          Code::ExtraICState extra_state,
-                                          bool has_qml_global_receiver) {
+                                          Code::ExtraICState extra_state) {
   Code::Flags flags =
       Code::ComputeFlags(kind, MONOMORPHIC, extra_state, NORMAL, argc);
-  Handle<NumberDictionary> cache = isolate_->factory()->non_monomorphic_cache();
+  Handle<UnseededNumberDictionary> cache =
+      isolate_->factory()->non_monomorphic_cache();
   int entry = cache->FindEntry(isolate_, flags);
   if (entry != -1) return Handle<Code>(Code::cast(cache->ValueAt(entry)));
 
   StubCompiler compiler(isolate_);
-  Handle<Code> code = compiler.CompileCallNormal(flags, has_qml_global_receiver);
+  Handle<Code> code = compiler.CompileCallNormal(flags);
   FillCache(isolate_, code);
   return code;
 }
@@ -777,7 +783,8 @@ Handle<Code> StubCache::ComputeCallArguments(int argc, Code::Kind kind) {
   Code::Flags flags =
       Code::ComputeFlags(kind, MEGAMORPHIC, Code::kNoExtraICState,
                          NORMAL, argc);
-  Handle<NumberDictionary> cache = isolate_->factory()->non_monomorphic_cache();
+  Handle<UnseededNumberDictionary> cache =
+      isolate_->factory()->non_monomorphic_cache();
   int entry = cache->FindEntry(isolate_, flags);
   if (entry != -1) return Handle<Code>(Code::cast(cache->ValueAt(entry)));
 
@@ -795,7 +802,8 @@ Handle<Code> StubCache::ComputeCallMegamorphic(
   Code::Flags flags =
       Code::ComputeFlags(kind, MEGAMORPHIC, extra_state,
                          NORMAL, argc);
-  Handle<NumberDictionary> cache = isolate_->factory()->non_monomorphic_cache();
+  Handle<UnseededNumberDictionary> cache =
+      isolate_->factory()->non_monomorphic_cache();
   int entry = cache->FindEntry(isolate_, flags);
   if (entry != -1) return Handle<Code>(Code::cast(cache->ValueAt(entry)));
 
@@ -814,7 +822,8 @@ Handle<Code> StubCache::ComputeCallMiss(int argc,
   Code::Flags flags =
       Code::ComputeFlags(kind, MONOMORPHIC_PROTOTYPE_FAILURE, extra_state,
                          NORMAL, argc, OWN_MAP);
-  Handle<NumberDictionary> cache = isolate_->factory()->non_monomorphic_cache();
+  Handle<UnseededNumberDictionary> cache =
+      isolate_->factory()->non_monomorphic_cache();
   int entry = cache->FindEntry(isolate_, flags);
   if (entry != -1) return Handle<Code>(Code::cast(cache->ValueAt(entry)));
 
@@ -833,7 +842,8 @@ Handle<Code> StubCache::ComputeCallDebugBreak(int argc,
   Code::Flags flags =
       Code::ComputeFlags(kind, DEBUG_BREAK, Code::kNoExtraICState,
                          NORMAL, argc);
-  Handle<NumberDictionary> cache = isolate_->factory()->non_monomorphic_cache();
+  Handle<UnseededNumberDictionary> cache =
+      isolate_->factory()->non_monomorphic_cache();
   int entry = cache->FindEntry(isolate_, flags);
   if (entry != -1) return Handle<Code>(Code::cast(cache->ValueAt(entry)));
 
@@ -851,7 +861,8 @@ Handle<Code> StubCache::ComputeCallDebugPrepareStepIn(int argc,
   Code::Flags flags =
       Code::ComputeFlags(kind, DEBUG_PREPARE_STEP_IN, Code::kNoExtraICState,
                          NORMAL, argc);
-  Handle<NumberDictionary> cache = isolate_->factory()->non_monomorphic_cache();
+  Handle<UnseededNumberDictionary> cache =
+      isolate_->factory()->non_monomorphic_cache();
   int entry = cache->FindEntry(isolate_, flags);
   if (entry != -1) return Handle<Code>(Code::cast(cache->ValueAt(entry)));
 
@@ -878,7 +889,8 @@ void StubCache::Clear() {
 
 void StubCache::CollectMatchingMaps(SmallMapList* types,
                                     String* name,
-                                    Code::Flags flags) {
+                                    Code::Flags flags,
+                                    Handle<Context> global_context) {
   for (int i = 0; i < kPrimaryTableSize; i++) {
     if (primary_[i].key == name) {
       Map* map = primary_[i].value->FindFirstMap();
@@ -887,7 +899,8 @@ void StubCache::CollectMatchingMaps(SmallMapList* types,
       if (map == NULL) continue;
 
       int offset = PrimaryOffset(name, flags, map);
-      if (entry(primary_, offset) == &primary_[i]) {
+      if (entry(primary_, offset) == &primary_[i] &&
+          !TypeFeedbackOracle::CanRetainOtherContext(map, *global_context)) {
         types->Add(Handle<Map>(map));
       }
     }
@@ -910,7 +923,8 @@ void StubCache::CollectMatchingMaps(SmallMapList* types,
 
       // Lookup in secondary table and add matches.
       int offset = SecondaryOffset(name, flags, primary_offset);
-      if (entry(secondary_, offset) == &secondary_[i]) {
+      if (entry(secondary_, offset) == &secondary_[i] &&
+          !TypeFeedbackOracle::CanRetainOtherContext(map, *global_context)) {
         types->Add(Handle<Map>(map));
       }
     }
@@ -1163,15 +1177,13 @@ Handle<Code> StubCompiler::CompileCallPreMonomorphic(Code::Flags flags) {
 }
 
 
-Handle<Code> StubCompiler::CompileCallNormal(Code::Flags flags, bool has_qml_global_receiver) {
+Handle<Code> StubCompiler::CompileCallNormal(Code::Flags flags) {
   int argc = Code::ExtractArgumentsCountFromFlags(flags);
   Code::Kind kind = Code::ExtractKindFromFlags(flags);
   if (kind == Code::CALL_IC) {
-    // Call normal is always with a explict receiver,
-    // or with an implicit qml global receiver.
+    // Call normal is always with a explict receiver.
     ASSERT(!CallIC::Contextual::decode(
-        Code::ExtractExtraICStateFromFlags(flags)) ||
-        has_qml_global_receiver);
+        Code::ExtractExtraICStateFromFlags(flags)));
     CallIC::GenerateNormal(masm(), argc);
   } else {
     KeyedCallIC::GenerateNormal(masm(), argc);
@@ -1342,8 +1354,10 @@ Handle<Code> StoreStubCompiler::GetCode(PropertyType type,
 Handle<Code> KeyedStoreStubCompiler::GetCode(PropertyType type,
                                              Handle<String> name,
                                              InlineCacheState state) {
+  Code::ExtraICState extra_state =
+      Code::ComputeExtraICState(grow_mode_, strict_mode_);
   Code::Flags flags =
-      Code::ComputeFlags(Code::KEYED_STORE_IC, state, strict_mode_, type);
+      Code::ComputeFlags(Code::KEYED_STORE_IC, state, extra_state, type);
   Handle<Code> code = GetCodeWithFlags(flags, name);
   PROFILE(isolate(), CodeCreateEvent(Logger::KEYED_STORE_IC_TAG, *code, *name));
   GDBJIT(AddCode(GDBJITInterface::KEYED_STORE_IC, *name, *code));
@@ -1445,13 +1459,13 @@ Handle<Code> ConstructStubCompiler::GetCode() {
 
 
 CallOptimization::CallOptimization(LookupResult* lookup) {
-  if (!lookup->IsProperty() ||
-      !lookup->IsCacheable() ||
-      lookup->type() != CONSTANT_FUNCTION) {
-    Initialize(Handle<JSFunction>::null());
-  } else {
+  if (lookup->IsFound() &&
+      lookup->IsCacheable() &&
+      lookup->type() == CONSTANT_FUNCTION) {
     // We only optimize constant function calls.
     Initialize(Handle<JSFunction>(lookup->GetConstantFunction()));
+  } else {
+    Initialize(Handle<JSFunction>::null());
   }
 }
 

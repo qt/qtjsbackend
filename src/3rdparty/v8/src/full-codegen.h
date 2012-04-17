@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -77,24 +77,27 @@ class FullCodeGenerator: public AstVisitor {
     TOS_REG
   };
 
-  explicit FullCodeGenerator(MacroAssembler* masm)
+  FullCodeGenerator(MacroAssembler* masm, CompilationInfo* info)
       : masm_(masm),
-        info_(NULL),
-        scope_(NULL),
+        info_(info),
+        scope_(info->scope()),
         nesting_stack_(NULL),
         loop_depth_(0),
+        global_count_(0),
         context_(NULL),
-        bailout_entries_(0),
-        stack_checks_(2) {  // There's always at least one.
-  }
+        bailout_entries_(info->HasDeoptimizationSupport()
+                         ? info->function()->ast_node_count() : 0),
+        stack_checks_(2),  // There's always at least one.
+        type_feedback_cells_(info->HasDeoptimizationSupport()
+                             ? info->function()->ast_node_count() : 0),
+        ic_total_count_(0) { }
 
   static bool MakeCode(CompilationInfo* info);
 
-  void Generate(CompilationInfo* info);
-  void PopulateDeoptimizationData(Handle<Code> code);
-
-  class StateField : public BitField<State, 0, 8> { };
-  class PcField    : public BitField<unsigned, 8, 32-8> { };
+  // Encode state and pc-offset as a BitField<type, start, size>.
+  // Only use 30 bits because we encode the result as a smi.
+  class StateField : public BitField<State, 0, 1> { };
+  class PcField    : public BitField<unsigned, 1, 30-1> { };
 
   static const char* State2String(State state) {
     switch (state) {
@@ -140,11 +143,13 @@ class FullCodeGenerator: public AstVisitor {
       return previous_;
     }
 
- protected:
+   protected:
     MacroAssembler* masm() { return codegen_->masm(); }
 
     FullCodeGenerator* codegen_;
     NestedStatement* previous_;
+
+   private:
     DISALLOW_COPY_AND_ASSIGN(NestedStatement);
   };
 
@@ -388,7 +393,11 @@ class FullCodeGenerator: public AstVisitor {
 
   // Bailout support.
   void PrepareForBailout(Expression* node, State state);
-  void PrepareForBailoutForId(int id, State state);
+  void PrepareForBailoutForId(unsigned id, State state);
+
+  // Cache cell support.  This associates AST ids with global property cells
+  // that will be cleared during GC and collected by the type-feedback oracle.
+  void RecordTypeFeedbackCell(unsigned id, Handle<JSGlobalPropertyCell> cell);
 
   // Record a call's return site offset, used to rebuild the frame if the
   // called function was inlined at the site.
@@ -406,19 +415,25 @@ class FullCodeGenerator: public AstVisitor {
 
   // Platform-specific code for a variable, constant, or function
   // declaration.  Functions have an initial value.
+  // Increments global_count_ for unallocated variables.
   void EmitDeclaration(VariableProxy* proxy,
                        VariableMode mode,
-                       FunctionLiteral* function,
-                       int* global_count);
+                       FunctionLiteral* function);
 
   // Platform-specific code for checking the stack limit at the back edge of
   // a loop.
-  void EmitStackCheck(IterationStatement* stmt);
+  // This is meant to be called at loop back edges, |back_edge_target| is
+  // the jump target of the back edge and is used to approximate the amount
+  // of code inside the loop.
+  void EmitStackCheck(IterationStatement* stmt, Label* back_edge_target);
   // Record the OSR AST id corresponding to a stack check in the code.
-  void RecordStackCheck(int osr_ast_id);
+  void RecordStackCheck(unsigned osr_ast_id);
   // Emit a table of stack check ids and pcs into the code stream.  Return
   // the offset of the start of the table.
   unsigned EmitStackCheckTable();
+
+  void EmitProfilingCounterDecrement(int delta);
+  void EmitProfilingCounterReset();
 
   // Platform-specific return sequence
   void EmitReturnSequence();
@@ -449,6 +464,8 @@ class FullCodeGenerator: public AstVisitor {
                                  Label* slow,
                                  Label* done);
   void EmitVariableLoad(VariableProxy* proxy);
+
+  void EmitAccessor(Expression* expression);
 
   // Expects the arguments and the function already pushed.
   void EmitResolvePossiblyDirectEval(int arg_count);
@@ -483,7 +500,7 @@ class FullCodeGenerator: public AstVisitor {
 
   // Assign to the given expression as if via '='. The right-hand-side value
   // is expected in the accumulator.
-  void EmitAssignment(Expression* expr, int bailout_ast_id);
+  void EmitAssignment(Expression* expr);
 
   // Complete a variable assignment.  The right-hand-side value is expected
   // in the accumulator.
@@ -498,6 +515,10 @@ class FullCodeGenerator: public AstVisitor {
   // expected on top of the stack and the right-hand-side value in the
   // accumulator.
   void EmitKeyedPropertyAssignment(Assignment* expr);
+
+  void CallIC(Handle<Code> code,
+              RelocInfo::Mode rmode = RelocInfo::CODE_TARGET,
+              unsigned ast_id = kNoASTId);
 
   void SetFunctionPosition(FunctionLiteral* fun);
   void SetReturnPosition(FunctionLiteral* fun);
@@ -527,13 +548,12 @@ class FullCodeGenerator: public AstVisitor {
   Handle<Script> script() { return info_->script(); }
   bool is_eval() { return info_->is_eval(); }
   bool is_native() { return info_->is_native(); }
-  bool is_strict_mode() {
-    return strict_mode_flag() == kStrictMode;
+  bool is_classic_mode() {
+    return language_mode() == CLASSIC_MODE;
   }
-  StrictModeFlag strict_mode_flag() {
-    return function()->strict_mode_flag();
+  LanguageMode language_mode() {
+    return function()->language_mode();
   }
-  bool is_qml_mode() { return function()->qml_mode(); }
   FunctionLiteral* function() { return info_->function(); }
   Scope* scope() { return scope_; }
 
@@ -565,9 +585,21 @@ class FullCodeGenerator: public AstVisitor {
 
   void VisitForTypeofValue(Expression* expr);
 
+  void Generate();
+  void PopulateDeoptimizationData(Handle<Code> code);
+  void PopulateTypeFeedbackInfo(Handle<Code> code);
+  void PopulateTypeFeedbackCells(Handle<Code> code);
+
+  Handle<FixedArray> handler_table() { return handler_table_; }
+
   struct BailoutEntry {
     unsigned id;
     unsigned pc_and_state;
+  };
+
+  struct TypeFeedbackCellEntry {
+    unsigned ast_id;
+    Handle<JSGlobalPropertyCell> cell;
   };
 
 
@@ -617,8 +649,8 @@ class FullCodeGenerator: public AstVisitor {
                              Label** if_false,
                              Label** fall_through) const = 0;
 
-    // Returns true if we are evaluating only for side effects (ie if the result
-    // will be discarded).
+    // Returns true if we are evaluating only for side effects (i.e. if the
+    // result will be discarded).
     virtual bool IsEffect() const { return false; }
 
     // Returns true if we are evaluating for the value (in accu/on stack).
@@ -753,13 +785,40 @@ class FullCodeGenerator: public AstVisitor {
   Label return_label_;
   NestedStatement* nesting_stack_;
   int loop_depth_;
+  int global_count_;
   const ExpressionContext* context_;
   ZoneList<BailoutEntry> bailout_entries_;
   ZoneList<BailoutEntry> stack_checks_;
+  ZoneList<TypeFeedbackCellEntry> type_feedback_cells_;
+  int ic_total_count_;
+  Handle<FixedArray> handler_table_;
+  Handle<JSGlobalPropertyCell> profiling_counter_;
 
   friend class NestedStatement;
 
   DISALLOW_COPY_AND_ASSIGN(FullCodeGenerator);
+};
+
+
+// A map from property names to getter/setter pairs allocated in the zone.
+class AccessorTable: public TemplateHashMap<Literal,
+                                            ObjectLiteral::Accessors,
+                                            ZoneListAllocationPolicy> {
+ public:
+  explicit AccessorTable(Zone* zone) :
+      TemplateHashMap<Literal,
+                      ObjectLiteral::Accessors,
+                      ZoneListAllocationPolicy>(Literal::Match),
+      zone_(zone) { }
+
+  Iterator lookup(Literal* literal) {
+    Iterator it = find(literal, true);
+    if (it->second == NULL) it->second = new(zone_) ObjectLiteral::Accessors();
+    return it;
+  }
+
+ private:
+  Zone* zone_;
 };
 
 

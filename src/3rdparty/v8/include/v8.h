@@ -587,12 +587,6 @@ class ScriptOrigin {
  */
 class V8EXPORT Script {
  public:
-  enum CompileFlags {
-      Default    = 0x00,
-      QmlMode    = 0x01,
-      NativeMode = 0x02
-  };
-
   /**
    * Compiles the specified script (context-independent).
    *
@@ -611,8 +605,7 @@ class V8EXPORT Script {
   static Local<Script> New(Handle<String> source,
                            ScriptOrigin* origin = NULL,
                            ScriptData* pre_data = NULL,
-                           Handle<String> script_data = Handle<String>(),
-                           CompileFlags = Default);
+                           Handle<String> script_data = Handle<String>());
 
   /**
    * Compiles the specified script using the specified file name
@@ -625,8 +618,7 @@ class V8EXPORT Script {
    *   will use the currently entered context).
    */
   static Local<Script> New(Handle<String> source,
-                           Handle<Value> file_name,
-                           CompileFlags = Default);
+                           Handle<Value> file_name);
 
   /**
    * Compiles the specified script (bound to current context).
@@ -647,8 +639,7 @@ class V8EXPORT Script {
   static Local<Script> Compile(Handle<String> source,
                                ScriptOrigin* origin = NULL,
                                ScriptData* pre_data = NULL,
-                               Handle<String> script_data = Handle<String>(),
-                               CompileFlags = Default);
+                               Handle<String> script_data = Handle<String>());
 
   /**
    * Compiles the specified script using the specified file name
@@ -665,8 +656,7 @@ class V8EXPORT Script {
    */
   static Local<Script> Compile(Handle<String> source,
                                Handle<Value> file_name,
-                               Handle<String> script_data = Handle<String>(),
-                               CompileFlags = Default);
+                               Handle<String> script_data = Handle<String>());
 
   /**
    * Runs the script returning the resulting value.  If the script is
@@ -676,7 +666,6 @@ class V8EXPORT Script {
    * compiled.
    */
   Local<Value> Run();
-  Local<Value> Run(Handle<Object> qml);
 
   /**
    * Returns the script id value.
@@ -967,11 +956,6 @@ class Value : public Data {
    */
   V8EXPORT bool IsRegExp() const;
 
-  /**
-   * Returns true if this value is an Error.
-   */
-  V8EXPORT bool IsError() const;
-
   V8EXPORT Local<Boolean> ToBoolean() const;
   V8EXPORT Local<Number> ToNumber() const;
   V8EXPORT Local<String> ToString() const;
@@ -1037,47 +1021,12 @@ class String : public Primitive {
   V8EXPORT int Utf8Length() const;
 
   /**
-   * Returns the hash of this string.
+   * A fast conservative check for non-ASCII characters.  May
+   * return true even for ASCII strings, but if it returns
+   * false you can be sure that all characters are in the range
+   * 0-127.
    */
-  V8EXPORT uint32_t Hash() const;
-
-  struct CompleteHashData {
-    CompleteHashData() : length(0), hash(0), symbol_id(0) {}
-    int length;
-    uint32_t hash;
-    uint32_t symbol_id;
-  };
-
-  /**
-   * Returns the "complete" hash of the string.  This is 
-   * all the information about the string needed to implement
-   * a very efficient hash keyed on the string.
-   *
-   * The members of CompleteHashData are:
-   *    length: The length of the string.  Equivalent to Length()
-   *    hash: The hash of the string.  Equivalent to Hash()
-   *    symbol_id: If the string is a sequential symbol, the symbol
-   *        id, otherwise 0.  If the symbol ids of two strings are 
-   *        the same (and non-zero) the two strings are identical.
-   *        If the symbol ids are different the strings may still be
-   *        identical, but an Equals() check must be performed.
-   */
-  V8EXPORT CompleteHashData CompleteHash() const;
-
-  /**
-   * Compute a hash value for the passed UTF16 string
-   * data.
-   */
-  V8EXPORT static uint32_t ComputeHash(uint16_t *string, int length);
-  V8EXPORT static uint32_t ComputeHash(char *string, int length);
-
-  /**
-   * Returns true if this string is equal to the external
-   * string data provided.
-   */
-  V8EXPORT bool Equals(uint16_t *string, int length);
-  V8EXPORT bool Equals(char *string, int length);
-  inline bool Equals(Handle<Value> that) const { return v8::Value::Equals(that); }
+  V8EXPORT bool MayContainNonAscii() const;
 
   /**
    * Write the contents of the string to an external buffer.
@@ -1109,8 +1058,6 @@ class String : public Primitive {
     HINT_MANY_WRITES_EXPECTED = 1,
     NO_NULL_TERMINATION = 2
   };
-
-  V8EXPORT uint16_t GetCharacter(int index);
 
   // 16-bit character codes.
   V8EXPORT int Write(uint16_t* buffer,
@@ -1259,7 +1206,7 @@ class String : public Primitive {
    * passed in as parameters.
    */
   V8EXPORT static Local<String> Concat(Handle<String> left,
-                                       Handle<String>right);
+                                       Handle<String> right);
 
   /**
    * Creates a new external string using the data defined in the given
@@ -1613,25 +1560,6 @@ class Object : public Value {
   /** Sets a native pointer in an internal field. */
   V8EXPORT void SetPointerInInternalField(int index, void* value);
 
-  class V8EXPORT ExternalResource { // NOLINT
-   public:
-    ExternalResource() {}
-    virtual ~ExternalResource() {}
-
-   protected:
-    virtual void Dispose() { delete this; }
-
-   private:
-    // Disallow copying and assigning.
-    ExternalResource(const ExternalResource&);
-    void operator=(const ExternalResource&);
-
-    friend class v8::internal::Heap;
-  };
-
-  V8EXPORT void SetExternalResource(ExternalResource *);
-  V8EXPORT ExternalResource *GetExternalResource();
-
   // Testers for local properties.
   V8EXPORT bool HasOwnProperty(Handle<String> key);
   V8EXPORT bool HasRealNamedProperty(Handle<String> key);
@@ -1812,13 +1740,28 @@ class Function : public Object {
   V8EXPORT Handle<Value> GetName() const;
 
   /**
+   * Name inferred from variable or property assignment of this function.
+   * Used to facilitate debugging and profiling of JavaScript code written
+   * in an OO style, where many functions are anonymous but are assigned
+   * to object properties.
+   */
+  V8EXPORT Handle<Value> GetInferredName() const;
+
+  /**
    * Returns zero based line number of function body and
    * kLineOffsetNotFound if no information available.
    */
   V8EXPORT int GetScriptLineNumber() const;
+  /**
+   * Returns zero based column number of function body and
+   * kLineOffsetNotFound if no information available.
+   */
+  V8EXPORT int GetScriptColumnNumber() const;
+  V8EXPORT Handle<Value> GetScriptId() const;
   V8EXPORT ScriptOrigin GetScriptOrigin() const;
   static inline Function* Cast(Value* obj);
   V8EXPORT static const int kLineOffsetNotFound;
+
  private:
   V8EXPORT Function();
   V8EXPORT static void CheckCast(Value* obj);
@@ -2340,7 +2283,6 @@ class V8EXPORT FunctionTemplate : public Template {
                                        NamedPropertyQuery query,
                                        NamedPropertyDeleter remover,
                                        NamedPropertyEnumerator enumerator,
-                                       bool is_fallback,
                                        Handle<Value> data);
   void SetIndexedInstancePropertyHandler(IndexedPropertyGetter getter,
                                          IndexedPropertySetter setter,
@@ -2424,12 +2366,6 @@ class V8EXPORT ObjectTemplate : public Template {
                                NamedPropertyDeleter deleter = 0,
                                NamedPropertyEnumerator enumerator = 0,
                                Handle<Value> data = Handle<Value>());
-  void SetFallbackPropertyHandler(NamedPropertyGetter getter,
-                                  NamedPropertySetter setter = 0,
-                                  NamedPropertyQuery query = 0,
-                                  NamedPropertyDeleter deleter = 0,
-                                  NamedPropertyEnumerator enumerator = 0,
-                                  Handle<Value> data = Handle<Value>());
 
   /**
    * Sets an indexed property handler on the object template.
@@ -2501,18 +2437,6 @@ class V8EXPORT ObjectTemplate : public Template {
    */
   void SetInternalFieldCount(int value);
 
-  /**
-   * Sets whether the object can store an "external resource" object.
-   */
-  bool HasExternalResource();
-  void SetHasExternalResource(bool value);
-
-  /**
-   * Mark object instances of the template as using the user object 
-   * comparison callback.
-   */
-  void MarkAsUseUserObjectComparison();
-
  private:
   ObjectTemplate();
   static Local<ObjectTemplate> New(Handle<FunctionTemplate> constructor);
@@ -2579,7 +2503,7 @@ class V8EXPORT Extension {  // NOLINT
             int source_length = -1);
   virtual ~Extension() { }
   virtual v8::Handle<v8::FunctionTemplate>
-      GetNativeFunction(v8::Handle<v8::String>) {
+      GetNativeFunction(v8::Handle<v8::String> name) {
     return v8::Handle<v8::FunctionTemplate>();
   }
 
@@ -2727,14 +2651,13 @@ typedef void (*MemoryAllocationCallback)(ObjectSpace space,
                                          AllocationAction action,
                                          int size);
 
+// --- Leave Script Callback ---
+typedef void (*CallCompletedCallback)();
+
 // --- Failed Access Check Callback ---
 typedef void (*FailedAccessCheckCallback)(Local<Object> target,
                                           AccessType type,
                                           Local<Value> data);
-
-// --- User Object Comparisoa nCallback ---
-typedef bool (*UserObjectComparisonCallback)(Local<Object> lhs, 
-                                             Local<Object> rhs);
 
 // --- AllowCodeGenerationFromStrings callbacks ---
 
@@ -2810,7 +2733,7 @@ class RetainedObjectInfo;
  * default isolate is implicitly created and entered.  The embedder
  * can create additional isolates and use them in parallel in multiple
  * threads.  An isolate can be entered by at most one thread at any
- * given time.  The Locker/Unlocker API can be used to synchronize.
+ * given time.  The Locker/Unlocker API must be used to synchronize.
  */
 class V8EXPORT Isolate {
  public:
@@ -2941,6 +2864,31 @@ class V8EXPORT StartupDataDecompressor {  // NOLINT
  */
 typedef bool (*EntropySource)(unsigned char* buffer, size_t length);
 
+
+/**
+ * ReturnAddressLocationResolver is used as a callback function when v8 is
+ * resolving the location of a return address on the stack. Profilers that
+ * change the return address on the stack can use this to resolve the stack
+ * location to whereever the profiler stashed the original return address.
+ * When invoked, return_addr_location will point to a location on stack where
+ * a machine return address resides, this function should return either the
+ * same pointer, or a pointer to the profiler's copy of the original return
+ * address.
+ */
+typedef uintptr_t (*ReturnAddressLocationResolver)(
+    uintptr_t return_addr_location);
+
+
+/**
+ * Interface for iterating though all external resources in the heap.
+ */
+class V8EXPORT ExternalResourceVisitor {  // NOLINT
+ public:
+  virtual ~ExternalResourceVisitor() {}
+  virtual void VisitExternalString(Handle<String> string) {}
+};
+
+
 /**
  * Container class for static utility functions.
  */
@@ -3062,9 +3010,6 @@ class V8EXPORT V8 {
   /** Callback function for reporting failed access checks.*/
   static void SetFailedAccessCheckCallbackFunction(FailedAccessCheckCallback);
 
-  /** Callback for user object comparisons */
-  static void SetUserObjectComparisonCallbackFunction(UserObjectComparisonCallback);
-
   /**
    * Enables the host application to receive a notification before a
    * garbage collection.  Allocations are not allowed in the
@@ -3132,10 +3077,23 @@ class V8EXPORT V8 {
                                           AllocationAction action);
 
   /**
-   * This function removes callback which was installed by
-   * AddMemoryAllocationCallback function.
+   * Removes callback that was installed by AddMemoryAllocationCallback.
    */
   static void RemoveMemoryAllocationCallback(MemoryAllocationCallback callback);
+
+  /**
+   * Adds a callback to notify the host application when a script finished
+   * running.  If a script re-enters the runtime during executing, the
+   * CallCompletedCallback is only invoked when the outer-most script
+   * execution ends.  Executing scripts inside the callback do not trigger
+   * further callbacks.
+   */
+  static void AddCallCompletedCallback(CallCompletedCallback callback);
+
+  /**
+   * Removes callback that was installed by AddCallCompletedCallback.
+   */
+  static void RemoveCallCompletedCallback(CallCompletedCallback callback);
 
   /**
    * Allows the host application to group objects together. If one
@@ -3173,6 +3131,13 @@ class V8EXPORT V8 {
    * as a source of entropy for random number generators.
    */
   static void SetEntropySource(EntropySource source);
+
+  /**
+   * Allows the host application to provide a callback that allows v8 to
+   * cooperate with a profiler that rewrites return addresses on stack.
+   */
+  static void SetReturnAddressLocationResolver(
+      ReturnAddressLocationResolver return_address_resolver);
 
   /**
    * Adjusts the amount of registered external memory.  Used to give
@@ -3287,14 +3252,25 @@ class V8EXPORT V8 {
   static void GetHeapStatistics(HeapStatistics* heap_statistics);
 
   /**
+   * Iterates through all external resources referenced from current isolate
+   * heap. This method is not expected to be used except for debugging purposes
+   * and may be quite slow.
+   */
+  static void VisitExternalResources(ExternalResourceVisitor* visitor);
+
+  /**
    * Optional notification that the embedder is idle.
    * V8 uses the notification to reduce memory footprint.
    * This call can be used repeatedly if the embedder remains idle.
    * Returns true if the embedder should stop calling IdleNotification
    * until real work has been done.  This indicates that V8 has done
    * as much cleanup as it will be able to do.
+   *
+   * The hint argument specifies the amount of work to be done in the function
+   * on scale from 1 to 1000. There is no guarantee that the actual work will
+   * match the hint.
    */
-  static bool IdleNotification();
+  static bool IdleNotification(int hint = 1000);
 
   /**
    * Optional notification that the system is running low on memory.
@@ -3535,8 +3511,6 @@ class V8EXPORT Context {
    * JavaScript frames an empty handle is returned.
    */
   static Local<Context> GetCalling();
-  static Local<Object> GetCallingQmlGlobal();
-  static Local<Value> GetCallingScriptData();
 
   /**
    * Sets the security token for the context.  To access an object in
@@ -3594,6 +3568,12 @@ class V8EXPORT Context {
   void AllowCodeGenerationFromStrings(bool allow);
 
   /**
+   * Returns true if code generation from strings is allowed for the context.
+   * For more details see AllowCodeGenerationFromStrings(bool) documentation.
+   */
+  bool IsCodeGenerationFromStringsAllowed();
+
+  /**
    * Stack-allocated class which sets the execution context for all
    * operations executed within a local scope.
    */
@@ -3622,7 +3602,9 @@ class V8EXPORT Context {
  * accessing handles or holding onto object pointers obtained
  * from V8 handles while in the particular V8 isolate.  It is up
  * to the user of V8 to ensure (perhaps with locking) that this
- * constraint is not violated.
+ * constraint is not violated.  In addition to any other synchronization
+ * mechanism that may be used, the v8::Locker and v8::Unlocker classes
+ * must be used to signal thead switches to V8.
  *
  * v8::Locker is a scoped lock object. While it's
  * active (i.e. between its construction and destruction) the current thread is
@@ -3805,8 +3787,8 @@ class V8EXPORT ActivityControl {  // NOLINT
 
 namespace internal {
 
-static const int kApiPointerSize = sizeof(void*);  // NOLINT
-static const int kApiIntSize = sizeof(int);  // NOLINT
+const int kApiPointerSize = sizeof(void*);  // NOLINT
+const int kApiIntSize = sizeof(int);  // NOLINT
 
 // Tag information for HeapObject.
 const int kHeapObjectTag = 1;
@@ -3897,7 +3879,7 @@ class Internals {
   static const int kFullStringRepresentationMask = 0x07;
   static const int kExternalTwoByteRepresentationTag = 0x02;
 
-  static const int kJSObjectType = 0xa6;
+  static const int kJSObjectType = 0xaa;
   static const int kFirstNonstringType = 0x80;
   static const int kForeignType = 0x85;
 
@@ -3946,13 +3928,13 @@ class Internals {
     return *reinterpret_cast<T*>(addr);
   }
 
-  static inline bool CanCastToHeapObject(void*) { return false; }
-  static inline bool CanCastToHeapObject(Context*) { return true; }
-  static inline bool CanCastToHeapObject(String*) { return true; }
-  static inline bool CanCastToHeapObject(Object*) { return true; }
-  static inline bool CanCastToHeapObject(Message*) { return true; }
-  static inline bool CanCastToHeapObject(StackTrace*) { return true; }
-  static inline bool CanCastToHeapObject(StackFrame*) { return true; }
+  static inline bool CanCastToHeapObject(void* o) { return false; }
+  static inline bool CanCastToHeapObject(Context* o) { return true; }
+  static inline bool CanCastToHeapObject(String* o) { return true; }
+  static inline bool CanCastToHeapObject(Object* o) { return true; }
+  static inline bool CanCastToHeapObject(Message* o) { return true; }
+  static inline bool CanCastToHeapObject(StackTrace* o) { return true; }
+  static inline bool CanCastToHeapObject(StackFrame* o) { return true; }
 };
 
 }  // namespace internal

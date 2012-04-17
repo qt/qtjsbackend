@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -36,6 +36,22 @@ namespace v8 {
 namespace internal {
 
 #define __ ACCESS_MASM(masm)
+
+UnaryMathFunction CreateTranscendentalFunction(TranscendentalCache::Type type) {
+  switch (type) {
+    case TranscendentalCache::SIN: return &sin;
+    case TranscendentalCache::COS: return &cos;
+    case TranscendentalCache::TAN: return &tan;
+    case TranscendentalCache::LOG: return &log;
+    default: UNIMPLEMENTED();
+  }
+  return NULL;
+}
+
+
+UnaryMathFunction CreateSqrtFunction() {
+  return &sqrt;
+}
 
 // -------------------------------------------------------------------------
 // Platform-specific RuntimeCallHelper functions.
@@ -90,11 +106,16 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
   //  -- r3    : target map, scratch for subsequent call
   //  -- r4    : scratch (elements)
   // -----------------------------------
-  Label loop, entry, convert_hole, gc_required;
+  Label loop, entry, convert_hole, gc_required, only_change_map, done;
   bool vfp3_supported = CpuFeatures::IsSupported(VFP3);
-  __ push(lr);
 
+  // Check for empty arrays, which only require a map transition and no changes
+  // to the backing store.
   __ ldr(r4, FieldMemOperand(r2, JSObject::kElementsOffset));
+  __ CompareRoot(r4, Heap::kEmptyFixedArrayRootIndex);
+  __ b(eq, &only_change_map);
+
+  __ push(lr);
   __ ldr(r5, FieldMemOperand(r4, FixedArray::kLengthOffset));
   // r4: source FixedArray
   // r5: number of elements (smi-tagged)
@@ -104,10 +125,10 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
   __ add(lr, lr, Operand(r5, LSL, 2));
   __ AllocateInNewSpace(lr, r6, r7, r9, &gc_required, NO_ALLOCATION_FLAGS);
   // r6: destination FixedDoubleArray, not tagged as heap object
+  // Set destination FixedDoubleArray's length and map.
   __ LoadRoot(r9, Heap::kFixedDoubleArrayMapRootIndex);
-  __ str(r9, MemOperand(r6, HeapObject::kMapOffset));
-  // Set destination FixedDoubleArray's length.
   __ str(r5, MemOperand(r6, FixedDoubleArray::kLengthOffset));
+  __ str(r9, MemOperand(r6, HeapObject::kMapOffset));
   // Update receiver's map.
 
   __ str(r3, FieldMemOperand(r2, HeapObject::kMapOffset));
@@ -117,7 +138,7 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
                       r9,
                       kLRHasBeenSaved,
                       kDontSaveFPRegs,
-                      EMIT_REMEMBERED_SET,
+                      OMIT_REMEMBERED_SET,
                       OMIT_SMI_CHECK);
   // Replace receiver's backing store with newly created FixedDoubleArray.
   __ add(r3, r6, Operand(kHeapObjectTag));
@@ -146,6 +167,18 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
 
   __ b(&entry);
 
+  __ bind(&only_change_map);
+  __ str(r3, FieldMemOperand(r2, HeapObject::kMapOffset));
+  __ RecordWriteField(r2,
+                      HeapObject::kMapOffset,
+                      r3,
+                      r9,
+                      kLRHasBeenSaved,
+                      kDontSaveFPRegs,
+                      OMIT_REMEMBERED_SET,
+                      OMIT_SMI_CHECK);
+  __ b(&done);
+
   // Call into runtime if GC is required.
   __ bind(&gc_required);
   __ pop(lr);
@@ -155,10 +188,9 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
   __ bind(&loop);
   __ ldr(r9, MemOperand(r3, 4, PostIndex));
   // r9: current element
-  __ JumpIfNotSmi(r9, &convert_hole);
+  __ UntagAndJumpIfNotSmi(r9, r9, &convert_hole);
 
   // Normal smi, convert to double and store.
-  __ SmiUntag(r9);
   if (vfp3_supported) {
     CpuFeatures::Scope scope(VFP3);
     __ vmov(s0, r9);
@@ -180,6 +212,13 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
 
   // Hole found, store the-hole NaN.
   __ bind(&convert_hole);
+  if (FLAG_debug_code) {
+    // Restore a "smi-untagged" heap object.
+    __ SmiTag(r9);
+    __ orr(r9, r9, Operand(1));
+    __ CompareRoot(r9, Heap::kTheHoleValueRootIndex);
+    __ Assert(eq, "object found in smi-only array");
+  }
   __ Strd(r4, r5, MemOperand(r7, 8, PostIndex));
 
   __ bind(&entry);
@@ -188,6 +227,7 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
 
   if (!vfp3_supported) __ Pop(r1, r0);
   __ pop(lr);
+  __ bind(&done);
 }
 
 
@@ -201,12 +241,16 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
   //  -- r3    : target map, scratch for subsequent call
   //  -- r4    : scratch (elements)
   // -----------------------------------
-  Label entry, loop, convert_hole, gc_required;
+  Label entry, loop, convert_hole, gc_required, only_change_map;
+
+  // Check for empty arrays, which only require a map transition and no changes
+  // to the backing store.
+  __ ldr(r4, FieldMemOperand(r2, JSObject::kElementsOffset));
+  __ CompareRoot(r4, Heap::kEmptyFixedArrayRootIndex);
+  __ b(eq, &only_change_map);
 
   __ push(lr);
   __ Push(r3, r2, r1, r0);
-
-  __ ldr(r4, FieldMemOperand(r2, JSObject::kElementsOffset));
   __ ldr(r5, FieldMemOperand(r4, FixedArray::kLengthOffset));
   // r4: source FixedDoubleArray
   // r5: number of elements (smi-tagged)
@@ -216,10 +260,10 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
   __ add(r0, r0, Operand(r5, LSL, 1));
   __ AllocateInNewSpace(r0, r6, r7, r9, &gc_required, NO_ALLOCATION_FLAGS);
   // r6: destination FixedArray, not tagged as heap object
+  // Set destination FixedDoubleArray's length and map.
   __ LoadRoot(r9, Heap::kFixedArrayMapRootIndex);
-  __ str(r9, MemOperand(r6, HeapObject::kMapOffset));
-  // Set destination FixedDoubleArray's length.
   __ str(r5, MemOperand(r6, FixedDoubleArray::kLengthOffset));
+  __ str(r9, MemOperand(r6, HeapObject::kMapOffset));
 
   // Prepare for conversion loop.
   __ add(r4, r4, Operand(FixedDoubleArray::kHeaderSize - kHeapObjectTag + 4));
@@ -275,16 +319,6 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
   __ b(lt, &loop);
 
   __ Pop(r3, r2, r1, r0);
-  // Update receiver's map.
-  __ str(r3, FieldMemOperand(r2, HeapObject::kMapOffset));
-  __ RecordWriteField(r2,
-                      HeapObject::kMapOffset,
-                      r3,
-                      r9,
-                      kLRHasBeenSaved,
-                      kDontSaveFPRegs,
-                      EMIT_REMEMBERED_SET,
-                      OMIT_SMI_CHECK);
   // Replace receiver's backing store with newly created and filled FixedArray.
   __ str(r6, FieldMemOperand(r2, JSObject::kElementsOffset));
   __ RecordWriteField(r2,
@@ -296,6 +330,105 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
                       EMIT_REMEMBERED_SET,
                       OMIT_SMI_CHECK);
   __ pop(lr);
+
+  __ bind(&only_change_map);
+  // Update receiver's map.
+  __ str(r3, FieldMemOperand(r2, HeapObject::kMapOffset));
+  __ RecordWriteField(r2,
+                      HeapObject::kMapOffset,
+                      r3,
+                      r9,
+                      kLRHasNotBeenSaved,
+                      kDontSaveFPRegs,
+                      OMIT_REMEMBERED_SET,
+                      OMIT_SMI_CHECK);
+}
+
+
+void StringCharLoadGenerator::Generate(MacroAssembler* masm,
+                                       Register string,
+                                       Register index,
+                                       Register result,
+                                       Label* call_runtime) {
+  // Fetch the instance type of the receiver into result register.
+  __ ldr(result, FieldMemOperand(string, HeapObject::kMapOffset));
+  __ ldrb(result, FieldMemOperand(result, Map::kInstanceTypeOffset));
+
+  // We need special handling for indirect strings.
+  Label check_sequential;
+  __ tst(result, Operand(kIsIndirectStringMask));
+  __ b(eq, &check_sequential);
+
+  // Dispatch on the indirect string shape: slice or cons.
+  Label cons_string;
+  __ tst(result, Operand(kSlicedNotConsMask));
+  __ b(eq, &cons_string);
+
+  // Handle slices.
+  Label indirect_string_loaded;
+  __ ldr(result, FieldMemOperand(string, SlicedString::kOffsetOffset));
+  __ ldr(string, FieldMemOperand(string, SlicedString::kParentOffset));
+  __ add(index, index, Operand(result, ASR, kSmiTagSize));
+  __ jmp(&indirect_string_loaded);
+
+  // Handle cons strings.
+  // Check whether the right hand side is the empty string (i.e. if
+  // this is really a flat string in a cons string). If that is not
+  // the case we would rather go to the runtime system now to flatten
+  // the string.
+  __ bind(&cons_string);
+  __ ldr(result, FieldMemOperand(string, ConsString::kSecondOffset));
+  __ CompareRoot(result, Heap::kEmptyStringRootIndex);
+  __ b(ne, call_runtime);
+  // Get the first of the two strings and load its instance type.
+  __ ldr(string, FieldMemOperand(string, ConsString::kFirstOffset));
+
+  __ bind(&indirect_string_loaded);
+  __ ldr(result, FieldMemOperand(string, HeapObject::kMapOffset));
+  __ ldrb(result, FieldMemOperand(result, Map::kInstanceTypeOffset));
+
+  // Distinguish sequential and external strings. Only these two string
+  // representations can reach here (slices and flat cons strings have been
+  // reduced to the underlying sequential or external string).
+  Label external_string, check_encoding;
+  __ bind(&check_sequential);
+  STATIC_ASSERT(kSeqStringTag == 0);
+  __ tst(result, Operand(kStringRepresentationMask));
+  __ b(ne, &external_string);
+
+  // Prepare sequential strings
+  STATIC_ASSERT(SeqTwoByteString::kHeaderSize == SeqAsciiString::kHeaderSize);
+  __ add(string,
+         string,
+         Operand(SeqTwoByteString::kHeaderSize - kHeapObjectTag));
+  __ jmp(&check_encoding);
+
+  // Handle external strings.
+  __ bind(&external_string);
+  if (FLAG_debug_code) {
+    // Assert that we do not have a cons or slice (indirect strings) here.
+    // Sequential strings have already been ruled out.
+    __ tst(result, Operand(kIsIndirectStringMask));
+    __ Assert(eq, "external string expected, but not found");
+  }
+  // Rule out short external strings.
+  STATIC_CHECK(kShortExternalStringTag != 0);
+  __ tst(result, Operand(kShortExternalStringMask));
+  __ b(ne, call_runtime);
+  __ ldr(string, FieldMemOperand(string, ExternalString::kResourceDataOffset));
+
+  Label ascii, done;
+  __ bind(&check_encoding);
+  STATIC_ASSERT(kTwoByteStringTag == 0);
+  __ tst(result, Operand(kStringEncodingMask));
+  __ b(ne, &ascii);
+  // Two-byte string.
+  __ ldrh(result, MemOperand(string, index, LSL, 1));
+  __ jmp(&done);
+  __ bind(&ascii);
+  // Ascii string.
+  __ ldrb(result, MemOperand(string, index));
+  __ bind(&done);
 }
 
 #undef __

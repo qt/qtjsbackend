@@ -164,12 +164,10 @@ Page* Page::Initialize(Heap* heap,
                        Executability executable,
                        PagedSpace* owner) {
   Page* page = reinterpret_cast<Page*>(chunk);
-  ASSERT(chunk->size() == static_cast<size_t>(kPageSize));
+  ASSERT(chunk->size() <= static_cast<size_t>(kPageSize));
   ASSERT(chunk->owner() == owner);
-  owner->IncreaseCapacity(Page::kObjectAreaSize);
-  owner->Free(page->ObjectAreaStart(),
-              static_cast<int>(page->ObjectAreaEnd() -
-                               page->ObjectAreaStart()));
+  owner->IncreaseCapacity(page->area_size());
+  owner->Free(page->area_start(), page->area_size());
 
   heap->incremental_marking()->SetOldSpacePageFlags(chunk);
 
@@ -248,7 +246,7 @@ void Page::set_prev_page(Page* page) {
 
 
 // Try linear allocation in the page of alloc_info's allocation top.  Does
-// not contain slow case logic (eg, move to the next page or try free list
+// not contain slow case logic (e.g. move to the next page or try free list
 // allocation) so it can be used by all the allocation functions and for all
 // the paged spaces.
 HeapObject* PagedSpace::AllocateLinearly(int size_in_bytes) {
@@ -293,30 +291,12 @@ MaybeObject* PagedSpace::AllocateRaw(int size_in_bytes) {
 
 // -----------------------------------------------------------------------------
 // NewSpace
-MaybeObject* NewSpace::AllocateRawInternal(int size_in_bytes) {
+
+
+MaybeObject* NewSpace::AllocateRaw(int size_in_bytes) {
   Address old_top = allocation_info_.top;
   if (allocation_info_.limit - old_top < size_in_bytes) {
-    Address new_top = old_top + size_in_bytes;
-    Address high = to_space_.page_high();
-    if (allocation_info_.limit < high) {
-      // Incremental marking has lowered the limit to get a
-      // chance to do a step.
-      allocation_info_.limit = Min(
-          allocation_info_.limit + inline_allocation_limit_step_,
-          high);
-      int bytes_allocated = static_cast<int>(new_top - top_on_previous_step_);
-      heap()->incremental_marking()->Step(bytes_allocated);
-      top_on_previous_step_ = new_top;
-      return AllocateRawInternal(size_in_bytes);
-    } else if (AddFreshPage()) {
-      // Switched to new page. Try allocating again.
-      int bytes_allocated = static_cast<int>(old_top - top_on_previous_step_);
-      heap()->incremental_marking()->Step(bytes_allocated);
-      top_on_previous_step_ = to_space_.page_low();
-      return AllocateRawInternal(size_in_bytes);
-    } else {
-      return Failure::RetryAfterGC();
-    }
+    return SlowAllocateRaw(size_in_bytes);
   }
 
   Object* obj = HeapObject::FromAddress(allocation_info_.top);
@@ -350,7 +330,7 @@ void NewSpace::ShrinkStringAtAllocationBoundary(String* string, int length) {
   string->set_length(length);
   if (Marking::IsBlack(Marking::MarkBitFrom(string))) {
     int delta = static_cast<int>(old_top - allocation_info_.top);
-    MemoryChunk::IncrementLiveBytes(string->address(), -delta);
+    MemoryChunk::IncrementLiveBytesFromMutator(string->address(), -delta);
   }
 }
 

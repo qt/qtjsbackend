@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -69,9 +69,6 @@ namespace internal {
   \
   F(GetPrototype, 1, 1) \
   F(IsInPrototypeChain, 2, 1) \
-  F(SetHiddenPrototype, 2, 1) \
-  \
-  F(IsConstructCall, 0, 1) \
   \
   F(GetOwnProperty, 2, 1) \
   \
@@ -80,6 +77,7 @@ namespace internal {
   \
   /* Utilities */ \
   F(CheckIsBootstrapping, 0, 1) \
+  F(Call, -1 /* >= 2 */, 1) \
   F(Apply, 5, 1) \
   F(GetFunctionDelegate, 1, 1) \
   F(GetConstructorDelegate, 1, 1) \
@@ -91,7 +89,7 @@ namespace internal {
   F(NotifyOSR, 0, 1) \
   F(DeoptimizeFunction, 1, 1) \
   F(RunningInSimulator, 0, 1) \
-  F(OptimizeFunctionOnNextCall, 1, 1) \
+  F(OptimizeFunctionOnNextCall, -1, 1) \
   F(GetOptimizationStatus, 1, 1) \
   F(GetOptimizationCount, 1, 1) \
   F(CompileForOnStackReplacement, 1, 1) \
@@ -143,7 +141,7 @@ namespace internal {
   F(StringAdd, 2, 1) \
   F(StringBuilderConcat, 3, 1) \
   F(StringBuilderJoin, 3, 1) \
-  F(SparseJoinWithSeparator, 3, 1)            \
+  F(SparseJoinWithSeparator, 3, 1) \
   \
   /* Bit operations */ \
   F(NumberOr, 2, 1) \
@@ -158,7 +156,6 @@ namespace internal {
   /* Comparisons */ \
   F(NumberEquals, 2, 1) \
   F(StringEquals, 2, 1) \
-  F(UserObjectEquals, 2, 1) \
   \
   F(NumberCompare, 3, 1) \
   F(SmiLexicographicCompare, 2, 1) \
@@ -198,6 +195,7 @@ namespace internal {
   F(StringLocaleCompare, 2, 1) \
   F(SubString, 3, 1) \
   F(StringReplaceRegExpWithString, 4, 1) \
+  F(StringReplaceOneCharWithString, 3, 1) \
   F(StringMatch, 3, 1) \
   F(StringTrim, 3, 1) \
   F(StringToArray, 2, 1) \
@@ -229,7 +227,7 @@ namespace internal {
   F(FunctionIsAPIFunction, 1, 1) \
   F(FunctionIsBuiltin, 1, 1) \
   F(GetScript, 1, 1) \
-  F(CollectStackTrace, 2, 1) \
+  F(CollectStackTrace, 3, 1) \
   F(GetV8Version, 0, 1) \
   \
   F(ClassOf, 1, 1) \
@@ -246,10 +244,9 @@ namespace internal {
   F(DateCurrentTime, 0, 1) \
   F(DateParseString, 2, 1) \
   F(DateLocalTimezone, 1, 1) \
-  F(DateLocalTimeOffset, 0, 1) \
-  F(DateDaylightSavingsOffset, 1, 1) \
+  F(DateToUTC, 1, 1) \
   F(DateMakeDay, 2, 1) \
-  F(DateYMDFromTime, 2, 1) \
+  F(DateSetValue, 3, 1) \
   \
   /* Numbers */ \
   \
@@ -274,14 +271,10 @@ namespace internal {
   F(SwapElements, 3, 1) \
   \
   /* Getters and Setters */ \
-  F(DefineAccessor, -1 /* 4 or 5 */, 1) \
   F(LookupAccessor, 3, 1) \
   \
   /* Literals */ \
   F(MaterializeRegExpLiteral, 4, 1)\
-  F(CreateArrayLiteralBoilerplate, 4, 1) \
-  F(CloneLiteralBoilerplate, 1, 1) \
-  F(CloneShallowLiteralBoilerplate, 1, 1) \
   F(CreateObjectLiteral, 4, 1) \
   F(CreateObjectLiteralShallow, 4, 1) \
   F(CreateArrayLiteral, 3, 1) \
@@ -322,6 +315,7 @@ namespace internal {
   F(ReThrow, 1, 1) \
   F(ThrowReferenceError, 1, 1) \
   F(StackGuard, 0, 1) \
+  F(Interrupt, 0, 1) \
   F(PromoteScheduledException, 0, 1) \
   \
   /* Contexts */ \
@@ -337,15 +331,14 @@ namespace internal {
   /* Declarations and initialization */ \
   F(DeclareGlobals, 3, 1) \
   F(DeclareContextSlot, 4, 1) \
-  F(InitializeVarGlobal, -1 /* 3 or 4 */, 1) \
-  F(InitializeConstGlobal, 3, 1) \
+  F(InitializeVarGlobal, -1 /* 2 or 3 */, 1) \
+  F(InitializeConstGlobal, 2, 1) \
   F(InitializeConstContextSlot, 3, 1) \
   F(OptimizeObjectForAddingMultipleProperties, 2, 1) \
   \
   /* Debugging */ \
   F(DebugPrint, 1, 1) \
   F(DebugTrace, 0, 1) \
-  F(TraceElementsKindTransition, 5, 1) \
   F(TraceEnter, 0, 1) \
   F(TraceExit, 1, 1) \
   F(Abort, 2, 1) \
@@ -412,7 +405,6 @@ namespace internal {
   F(GetThreadDetails, 2, 1) \
   F(SetDisableBreak, 1, 1) \
   F(GetBreakLocations, 1, 1) \
-  F(AllowBreakPointRelocation, 0, 1) \
   F(SetFunctionBreakPoint, 3, 1) \
   F(SetScriptBreakPoint, 3, 1) \
   F(ClearBreakPoint, 1, 1) \
@@ -426,6 +418,7 @@ namespace internal {
   F(DebugReferencedBy, 3, 1) \
   F(DebugConstructedBy, 2, 1) \
   F(DebugGetPrototype, 1, 1) \
+  F(DebugSetScriptSource, 2, 1) \
   F(SystemBreak, 0, 1) \
   F(DebugDisassembleFunction, 1, 1) \
   F(DebugDisassembleConstructor, 1, 1) \
@@ -493,11 +486,13 @@ namespace internal {
   F(IsNonNegativeSmi, 1, 1)                                                  \
   F(IsArray, 1, 1)                                                           \
   F(IsRegExp, 1, 1)                                                          \
+  F(IsConstructCall, 0, 1)                                                   \
   F(CallFunction, -1 /* receiver + n args + function */, 1)                  \
   F(ArgumentsLength, 0, 1)                                                   \
   F(Arguments, 1, 1)                                                         \
   F(ValueOf, 1, 1)                                                           \
   F(SetValueOf, 2, 1)                                                        \
+  F(DateField, 2 /* date object, field index */, 1)                          \
   F(StringCharFromCode, 1, 1)                                                \
   F(StringCharAt, 2, 1)                                                      \
   F(ObjectEquals, 2, 1)                                                      \
@@ -510,6 +505,7 @@ namespace internal {
   F(MathPow, 2, 1)                                                           \
   F(MathSin, 1, 1)                                                           \
   F(MathCos, 1, 1)                                                           \
+  F(MathTan, 1, 1)                                                           \
   F(MathSqrt, 1, 1)                                                          \
   F(MathLog, 1, 1)                                                           \
   F(IsRegExpEquivalent, 2, 1)                                                \
@@ -524,7 +520,6 @@ namespace internal {
 // a corresponding runtime function, that is called for slow cases.
 // Entries have the form F(name, number of arguments, number of return values).
 #define INLINE_RUNTIME_FUNCTION_LIST(F) \
-  F(IsConstructCall, 0, 1)                                                   \
   F(ClassOf, 1, 1)                                                           \
   F(StringCharCodeAt, 2, 1)                                                  \
   F(Log, 3, 1)                                                               \
@@ -634,6 +629,13 @@ class Runtime : public AllStatic {
   // Get the intrinsic function with the given FunctionId.
   static const Function* FunctionForId(FunctionId id);
 
+  static Handle<String> StringReplaceOneCharWithString(Isolate* isolate,
+                                                       Handle<String> subject,
+                                                       Handle<String> search,
+                                                       Handle<String> replace,
+                                                       bool* found,
+                                                       int recursion_limit);
+
   // General-purpose helper functions for runtime system.
   static int StringMatch(Isolate* isolate,
                          Handle<String> sub,
@@ -683,15 +685,21 @@ class Runtime : public AllStatic {
 
   // Helper functions used stubs.
   static void PerformGC(Object* result);
+
+  // Used in runtime.cc and hydrogen's VisitArrayLiteral.
+  static Handle<Object> CreateArrayLiteralBoilerplate(
+      Isolate* isolate,
+      Handle<FixedArray> literals,
+      Handle<FixedArray> elements);
 };
 
 
 //---------------------------------------------------------------------------
 // Constants used by interface to runtime functions.
 
-class DeclareGlobalsEvalFlag:       public BitField<bool,           0, 1> {};
-class DeclareGlobalsStrictModeFlag: public BitField<StrictModeFlag, 1, 1> {};
-class DeclareGlobalsNativeFlag:     public BitField<bool,           2, 1> {};
+class DeclareGlobalsEvalFlag:     public BitField<bool,         0, 1> {};
+class DeclareGlobalsNativeFlag:   public BitField<bool,         1, 1> {};
+class DeclareGlobalsLanguageMode: public BitField<LanguageMode, 2, 2> {};
 
 } }  // namespace v8::internal
 

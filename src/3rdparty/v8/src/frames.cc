@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -31,6 +31,7 @@
 #include "deoptimizer.h"
 #include "frames-inl.h"
 #include "full-codegen.h"
+#include "lazy-instance.h"
 #include "mark-compact.h"
 #include "safepoint-table.h"
 #include "scopeinfo.h"
@@ -40,6 +41,22 @@
 
 namespace v8 {
 namespace internal {
+
+
+static ReturnAddressLocationResolver return_address_location_resolver = NULL;
+
+
+// Resolves pc_address through the resolution address function if one is set.
+static inline Address* ResolveReturnAddressLocation(Address* pc_address) {
+  if (return_address_location_resolver == NULL) {
+    return pc_address;
+  } else {
+    return reinterpret_cast<Address*>(
+        return_address_location_resolver(
+            reinterpret_cast<uintptr_t>(pc_address)));
+  }
+}
+
 
 // Iterator that supports traversing the stack handlers of a
 // particular frame. Needs to know the top of the handler chain.
@@ -155,8 +172,8 @@ void StackFrameIterator::Reset() {
     ASSERT(fp_ != NULL);
     state.fp = fp_;
     state.sp = sp_;
-    state.pc_address =
-        reinterpret_cast<Address*>(StandardFrame::ComputePCAddress(fp_));
+    state.pc_address = ResolveReturnAddressLocation(
+        reinterpret_cast<Address*>(StandardFrame::ComputePCAddress(fp_)));
     type = StackFrame::ComputeType(isolate(), &state);
   }
   if (SingletonFor(type) == NULL) return;
@@ -414,6 +431,13 @@ void StackFrame::IteratePc(ObjectVisitor* v,
 }
 
 
+void StackFrame::SetReturnAddressLocationResolver(
+    ReturnAddressLocationResolver resolver) {
+  ASSERT(return_address_location_resolver == NULL);
+  return_address_location_resolver = resolver;
+}
+
+
 StackFrame::Type StackFrame::ComputeType(Isolate* isolate, State* state) {
   ASSERT(state->fp != NULL);
   if (StandardFrame::IsArgumentsAdaptorFrame(state->fp)) {
@@ -485,11 +509,11 @@ Code* ExitFrame::unchecked_code() const {
 
 
 void ExitFrame::ComputeCallerState(State* state) const {
-  // Setup the caller state.
+  // Set up the caller state.
   state->sp = caller_sp();
   state->fp = Memory::Address_at(fp() + ExitFrameConstants::kCallerFPOffset);
-  state->pc_address
-      = reinterpret_cast<Address*>(fp() + ExitFrameConstants::kCallerPCOffset);
+  state->pc_address = ResolveReturnAddressLocation(
+      reinterpret_cast<Address*>(fp() + ExitFrameConstants::kCallerPCOffset));
 }
 
 
@@ -523,7 +547,8 @@ StackFrame::Type ExitFrame::GetStateForFramePointer(Address fp, State* state) {
 void ExitFrame::FillState(Address fp, Address sp, State* state) {
   state->sp = sp;
   state->fp = fp;
-  state->pc_address = reinterpret_cast<Address*>(sp - 1 * kPointerSize);
+  state->pc_address = ResolveReturnAddressLocation(
+      reinterpret_cast<Address*>(sp - 1 * kPointerSize));
 }
 
 
@@ -558,7 +583,8 @@ int StandardFrame::ComputeExpressionsCount() const {
 void StandardFrame::ComputeCallerState(State* state) const {
   state->sp = caller_sp();
   state->fp = caller_fp();
-  state->pc_address = reinterpret_cast<Address*>(ComputePCAddress(fp()));
+  state->pc_address = ResolveReturnAddressLocation(
+      reinterpret_cast<Address*>(ComputePCAddress(fp())));
 }
 
 
@@ -723,12 +749,17 @@ void JavaScriptFrame::PrintTop(FILE* file,
       JavaScriptFrame* frame = it.frame();
       if (frame->IsConstructor()) PrintF(file, "new ");
       // function name
-      Object* fun = frame->function();
-      if (fun->IsJSFunction()) {
-        SharedFunctionInfo* shared = JSFunction::cast(fun)->shared();
-        shared->DebugName()->ShortPrint(file);
+      Object* maybe_fun = frame->function();
+      if (maybe_fun->IsJSFunction()) {
+        JSFunction* fun = JSFunction::cast(maybe_fun);
+        fun->PrintName();
+        Code* js_code = frame->unchecked_code();
+        Address pc = frame->pc();
+        int code_offset =
+            static_cast<int>(pc - js_code->instruction_start());
+        PrintF("+%d", code_offset);
+        SharedFunctionInfo* shared = fun->shared();
         if (print_line_number) {
-          Address pc = frame->pc();
           Code* code = Code::cast(
               v8::internal::Isolate::Current()->heap()->FindCodeObject(pc));
           int source_pos = code->SourcePosition(pc);
@@ -751,7 +782,7 @@ void JavaScriptFrame::PrintTop(FILE* file,
           }
         }
       } else {
-        fun->ShortPrint(file);
+        PrintF("<unknown>");
       }
 
       if (print_args) {
@@ -808,18 +839,16 @@ void OptimizedFrame::Summarize(List<FrameSummary>* frames) {
                          data->TranslationIndex(deopt_index)->value());
   Translation::Opcode opcode = static_cast<Translation::Opcode>(it.Next());
   ASSERT(opcode == Translation::BEGIN);
-  int frame_count = it.Next();
+  it.Next();  // Drop frame count.
+  int jsframe_count = it.Next();
 
   // We create the summary in reverse order because the frames
   // in the deoptimization translation are ordered bottom-to-top.
-  int i = frame_count;
+  bool is_constructor = IsConstructor();
+  int i = jsframe_count;
   while (i > 0) {
     opcode = static_cast<Translation::Opcode>(it.Next());
-    if (opcode == Translation::FRAME) {
-      // We don't inline constructor calls, so only the first, outermost
-      // frame can be a constructor frame in case of inlining.
-      bool is_constructor = (i == frame_count) && IsConstructor();
-
+    if (opcode == Translation::JS_FRAME) {
       i--;
       int ast_id = it.Next();
       int function_id = it.Next();
@@ -869,11 +898,18 @@ void OptimizedFrame::Summarize(List<FrameSummary>* frames) {
 
       FrameSummary summary(receiver, function, code, pc_offset, is_constructor);
       frames->Add(summary);
+      is_constructor = false;
+    } else if (opcode == Translation::CONSTRUCT_STUB_FRAME) {
+      // The next encountered JS_FRAME will be marked as a constructor call.
+      it.Skip(Translation::NumberOfOperandsFor(opcode));
+      ASSERT(!is_constructor);
+      is_constructor = true;
     } else {
       // Skip over operands to advance to the next opcode.
       it.Skip(Translation::NumberOfOperandsFor(opcode));
     }
   }
+  ASSERT(!is_constructor);
 }
 
 
@@ -913,8 +949,9 @@ int OptimizedFrame::GetInlineCount() {
   Translation::Opcode opcode = static_cast<Translation::Opcode>(it.Next());
   ASSERT(opcode == Translation::BEGIN);
   USE(opcode);
-  int frame_count = it.Next();
-  return frame_count;
+  it.Next();  // Drop frame count.
+  int jsframe_count = it.Next();
+  return jsframe_count;
 }
 
 
@@ -929,14 +966,15 @@ void OptimizedFrame::GetFunctions(List<JSFunction*>* functions) {
                          data->TranslationIndex(deopt_index)->value());
   Translation::Opcode opcode = static_cast<Translation::Opcode>(it.Next());
   ASSERT(opcode == Translation::BEGIN);
-  int frame_count = it.Next();
+  it.Next();  // Drop frame count.
+  int jsframe_count = it.Next();
 
   // We insert the frames in reverse order because the frames
   // in the deoptimization translation are ordered bottom-to-top.
-  while (frame_count > 0) {
+  while (jsframe_count > 0) {
     opcode = static_cast<Translation::Opcode>(it.Next());
-    if (opcode == Translation::FRAME) {
-      frame_count--;
+    if (opcode == Translation::JS_FRAME) {
+      jsframe_count--;
       it.Next();  // Skip ast id.
       int function_id = it.Next();
       it.Next();  // Skip height.
@@ -1002,11 +1040,15 @@ void JavaScriptFrame::Print(StringStream* accumulator,
   if (IsConstructor()) accumulator->Add("new ");
   accumulator->PrintFunction(function, receiver, &code);
 
-  Handle<SerializedScopeInfo> scope_info(SerializedScopeInfo::Empty());
+  // Get scope information for nicer output, if possible. If code is NULL, or
+  // doesn't contain scope info, scope_info will return 0 for the number of
+  // parameters, stack local variables, context local variables, stack slots,
+  // or context slots.
+  Handle<ScopeInfo> scope_info(ScopeInfo::Empty());
 
   if (function->IsJSFunction()) {
     Handle<SharedFunctionInfo> shared(JSFunction::cast(function)->shared());
-    scope_info = Handle<SerializedScopeInfo>(shared->scope_info());
+    scope_info = Handle<ScopeInfo>(shared->scope_info());
     Object* script_obj = shared->script();
     if (script_obj->IsScript()) {
       Handle<Script> script(Script::cast(script_obj));
@@ -1031,11 +1073,6 @@ void JavaScriptFrame::Print(StringStream* accumulator,
 
   accumulator->Add("(this=%o", receiver);
 
-  // Get scope information for nicer output, if possible. If code is
-  // NULL, or doesn't contain scope info, info will return 0 for the
-  // number of parameters, stack slots, or context slots.
-  ScopeInfo<PreallocatedStorage> info(*scope_info);
-
   // Print the parameters.
   int parameters_count = ComputeParametersCount();
   for (int i = 0; i < parameters_count; i++) {
@@ -1043,8 +1080,8 @@ void JavaScriptFrame::Print(StringStream* accumulator,
     // If we have a name for the parameter we print it. Nameless
     // parameters are either because we have more actual parameters
     // than formal parameters or because we have no scope information.
-    if (i < info.number_of_parameters()) {
-      accumulator->PrintName(*info.parameter_name(i));
+    if (i < scope_info->ParameterCount()) {
+      accumulator->PrintName(scope_info->ParameterName(i));
       accumulator->Add("=");
     }
     accumulator->Add("%o", GetParameter(i));
@@ -1062,8 +1099,8 @@ void JavaScriptFrame::Print(StringStream* accumulator,
   accumulator->Add(" {\n");
 
   // Compute the number of locals and expression stack elements.
-  int stack_locals_count = info.number_of_stack_slots();
-  int heap_locals_count = info.number_of_context_slots();
+  int stack_locals_count = scope_info->StackLocalCount();
+  int heap_locals_count = scope_info->ContextLocalCount();
   int expressions_count = ComputeExpressionsCount();
 
   // Print stack-allocated local variables.
@@ -1072,7 +1109,7 @@ void JavaScriptFrame::Print(StringStream* accumulator,
   }
   for (int i = 0; i < stack_locals_count; i++) {
     accumulator->Add("  var ");
-    accumulator->PrintName(*info.stack_slot_name(i));
+    accumulator->PrintName(scope_info->StackLocalName(i));
     accumulator->Add(" = ");
     if (i < expressions_count) {
       accumulator->Add("%o", GetExpression(i));
@@ -1089,16 +1126,16 @@ void JavaScriptFrame::Print(StringStream* accumulator,
   }
 
   // Print heap-allocated local variables.
-  if (heap_locals_count > Context::MIN_CONTEXT_SLOTS) {
+  if (heap_locals_count > 0) {
     accumulator->Add("  // heap-allocated locals\n");
   }
-  for (int i = Context::MIN_CONTEXT_SLOTS; i < heap_locals_count; i++) {
+  for (int i = 0; i < heap_locals_count; i++) {
     accumulator->Add("  var ");
-    accumulator->PrintName(*info.context_slot_name(i));
+    accumulator->PrintName(scope_info->ContextLocalName(i));
     accumulator->Add(" = ");
     if (context != NULL) {
       if (i < context->length()) {
-        accumulator->Add("%o", context->get(i));
+        accumulator->Add("%o", context->get(Context::MIN_CONTEXT_SLOTS + i));
       } else {
         accumulator->Add(
             "// warning: missing context slot - inconsistent frame?");
@@ -1167,7 +1204,7 @@ void EntryFrame::Iterate(ObjectVisitor* v) const {
   StackHandlerIterator it(this, top_handler());
   ASSERT(!it.done());
   StackHandler* handler = it.handler();
-  ASSERT(handler->is_entry());
+  ASSERT(handler->is_js_entry());
   handler->Iterate(v, LookupCode());
 #ifdef DEBUG
   // Make sure that the entry frame does not contain more than one
@@ -1265,7 +1302,7 @@ Code* InnerPointerToCodeCache::GcSafeFindCodeForInnerPointer(
     Address inner_pointer) {
   Heap* heap = isolate_->heap();
   // Check if the inner pointer points into a large object chunk.
-  LargePage* large_page = heap->lo_space()->FindPageContainingPc(inner_pointer);
+  LargePage* large_page = heap->lo_space()->FindPage(inner_pointer);
   if (large_page != NULL) {
     return GcSafeCastToCode(large_page->GetObject(), inner_pointer);
   }
@@ -1299,7 +1336,8 @@ InnerPointerToCodeCache::InnerPointerToCodeCacheEntry*
   isolate_->counters()->pc_to_code()->Increment();
   ASSERT(IsPowerOf2(kInnerPointerToCodeCacheSize));
   uint32_t hash = ComputeIntegerHash(
-      static_cast<uint32_t>(reinterpret_cast<uintptr_t>(inner_pointer)));
+      static_cast<uint32_t>(reinterpret_cast<uintptr_t>(inner_pointer)),
+      v8::internal::kZeroHashSeed);
   uint32_t index = hash & (kInnerPointerToCodeCacheSize - 1);
   InnerPointerToCodeCacheEntry* entry = cache(index);
   if (entry->inner_pointer == inner_pointer) {
@@ -1331,24 +1369,23 @@ int NumRegs(RegList reglist) {
 
 
 struct JSCallerSavedCodeData {
-  JSCallerSavedCodeData() {
-    int i = 0;
-    for (int r = 0; r < kNumRegs; r++)
-      if ((kJSCallerSaved & (1 << r)) != 0)
-        reg_code[i++] = r;
-
-    ASSERT(i == kNumJSCallerSaved);
-  }
   int reg_code[kNumJSCallerSaved];
 };
 
+JSCallerSavedCodeData caller_saved_code_data;
 
-static const JSCallerSavedCodeData kCallerSavedCodeData;
+void SetUpJSCallerSavedCodeData() {
+  int i = 0;
+  for (int r = 0; r < kNumRegs; r++)
+    if ((kJSCallerSaved & (1 << r)) != 0)
+      caller_saved_code_data.reg_code[i++] = r;
 
+  ASSERT(i == kNumJSCallerSaved);
+}
 
 int JSCallerSavedCode(int n) {
   ASSERT(0 <= n && n < kNumJSCallerSaved);
-  return kCallerSavedCodeData.reg_code[n];
+  return caller_saved_code_data.reg_code[n];
 }
 
 

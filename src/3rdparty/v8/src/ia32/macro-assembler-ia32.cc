@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -357,6 +357,14 @@ void MacroAssembler::CompareRoot(Register with, Heap::RootListIndex index) {
 }
 
 
+void MacroAssembler::CompareRoot(const Operand& with,
+                                 Heap::RootListIndex index) {
+  // see ROOT_ACCESSOR macro in factory.h
+  Handle<Object> value(&isolate()->heap()->roots_array_start()[index]);
+  cmp(with, value);
+}
+
+
 void MacroAssembler::CmpObjectType(Register heap_object,
                                    InstanceType type,
                                    Register map) {
@@ -479,15 +487,48 @@ void MacroAssembler::StoreNumberToDoubleElements(
 }
 
 
+void MacroAssembler::CompareMap(Register obj,
+                                Handle<Map> map,
+                                Label* early_success,
+                                CompareMapMode mode) {
+  cmp(FieldOperand(obj, HeapObject::kMapOffset), map);
+  if (mode == ALLOW_ELEMENT_TRANSITION_MAPS) {
+    Map* transitioned_fast_element_map(
+        map->LookupElementsTransitionMap(FAST_ELEMENTS, NULL));
+    ASSERT(transitioned_fast_element_map == NULL ||
+           map->elements_kind() != FAST_ELEMENTS);
+    if (transitioned_fast_element_map != NULL) {
+      j(equal, early_success, Label::kNear);
+      cmp(FieldOperand(obj, HeapObject::kMapOffset),
+          Handle<Map>(transitioned_fast_element_map));
+    }
+
+    Map* transitioned_double_map(
+        map->LookupElementsTransitionMap(FAST_DOUBLE_ELEMENTS, NULL));
+    ASSERT(transitioned_double_map == NULL ||
+           map->elements_kind() == FAST_SMI_ONLY_ELEMENTS);
+    if (transitioned_double_map != NULL) {
+      j(equal, early_success, Label::kNear);
+      cmp(FieldOperand(obj, HeapObject::kMapOffset),
+          Handle<Map>(transitioned_double_map));
+    }
+  }
+}
+
+
 void MacroAssembler::CheckMap(Register obj,
                               Handle<Map> map,
                               Label* fail,
-                              SmiCheckType smi_check_type) {
+                              SmiCheckType smi_check_type,
+                              CompareMapMode mode) {
   if (smi_check_type == DO_SMI_CHECK) {
     JumpIfSmi(obj, fail);
   }
-  cmp(FieldOperand(obj, HeapObject::kMapOffset), Immediate(map));
+
+  Label success;
+  CompareMap(obj, map, &success, mode);
   j(not_equal, fail);
+  bind(&success);
 }
 
 
@@ -540,8 +581,7 @@ void MacroAssembler::IsInstanceJSObjectType(Register map,
 void MacroAssembler::FCmp() {
   if (CpuFeatures::IsSupported(CMOV)) {
     fucomip();
-    ffree(0);
-    fincstp();
+    fstp(0);
   } else {
     fucompp();
     push(eax);
@@ -609,7 +649,7 @@ void MacroAssembler::LeaveFrame(StackFrame::Type type) {
 
 
 void MacroAssembler::EnterExitFramePrologue() {
-  // Setup the frame structure on the stack.
+  // Set up the frame structure on the stack.
   ASSERT(ExitFrameConstants::kCallerSPDisplacement == +2 * kPointerSize);
   ASSERT(ExitFrameConstants::kCallerPCOffset == +1 * kPointerSize);
   ASSERT(ExitFrameConstants::kCallerFPOffset ==  0 * kPointerSize);
@@ -661,7 +701,7 @@ void MacroAssembler::EnterExitFrameEpilogue(int argc, bool save_doubles) {
 void MacroAssembler::EnterExitFrame(bool save_doubles) {
   EnterExitFramePrologue();
 
-  // Setup argc and argv in callee-saved registers.
+  // Set up argc and argv in callee-saved registers.
   int offset = StandardFrameConstants::kCallerSPOffset - kPointerSize;
   mov(edi, eax);
   lea(esi, Operand(ebp, eax, times_4, offset));
@@ -724,48 +764,61 @@ void MacroAssembler::LeaveApiExitFrame() {
 }
 
 
-void MacroAssembler::PushTryHandler(CodeLocation try_location,
-                                    HandlerType type) {
+void MacroAssembler::PushTryHandler(StackHandler::Kind kind,
+                                    int handler_index) {
   // Adjust this code if not the case.
   STATIC_ASSERT(StackHandlerConstants::kSize == 5 * kPointerSize);
   STATIC_ASSERT(StackHandlerConstants::kNextOffset == 0);
-  STATIC_ASSERT(StackHandlerConstants::kContextOffset == 1 * kPointerSize);
-  STATIC_ASSERT(StackHandlerConstants::kFPOffset == 2 * kPointerSize);
-  STATIC_ASSERT(StackHandlerConstants::kStateOffset == 3 * kPointerSize);
-  STATIC_ASSERT(StackHandlerConstants::kPCOffset == 4 * kPointerSize);
-  // The pc (return address) is already on TOS.
-  if (try_location == IN_JAVASCRIPT) {
-    if (type == TRY_CATCH_HANDLER) {
-      push(Immediate(StackHandler::TRY_CATCH));
-    } else {
-      push(Immediate(StackHandler::TRY_FINALLY));
-    }
-    push(ebp);
-    push(esi);
-  } else {
-    ASSERT(try_location == IN_JS_ENTRY);
-    // The frame pointer does not point to a JS frame so we save NULL
-    // for ebp. We expect the code throwing an exception to check ebp
-    // before dereferencing it to restore the context.
-    push(Immediate(StackHandler::ENTRY));
+  STATIC_ASSERT(StackHandlerConstants::kCodeOffset == 1 * kPointerSize);
+  STATIC_ASSERT(StackHandlerConstants::kStateOffset == 2 * kPointerSize);
+  STATIC_ASSERT(StackHandlerConstants::kContextOffset == 3 * kPointerSize);
+  STATIC_ASSERT(StackHandlerConstants::kFPOffset == 4 * kPointerSize);
+
+  // We will build up the handler from the bottom by pushing on the stack.
+  // First push the frame pointer and context.
+  if (kind == StackHandler::JS_ENTRY) {
+    // The frame pointer does not point to a JS frame so we save NULL for
+    // ebp. We expect the code throwing an exception to check ebp before
+    // dereferencing it to restore the context.
     push(Immediate(0));  // NULL frame pointer.
     push(Immediate(Smi::FromInt(0)));  // No context.
+  } else {
+    push(ebp);
+    push(esi);
   }
-  // Save the current handler as the next handler.
-  push(Operand::StaticVariable(ExternalReference(Isolate::kHandlerAddress,
-                                                 isolate())));
-  // Link this handler as the new current one.
-  mov(Operand::StaticVariable(ExternalReference(Isolate::kHandlerAddress,
-                                                isolate())),
-      esp);
+  // Push the state and the code object.
+  unsigned state =
+      StackHandler::IndexField::encode(handler_index) |
+      StackHandler::KindField::encode(kind);
+  push(Immediate(state));
+  Push(CodeObject());
+
+  // Link the current handler as the next handler.
+  ExternalReference handler_address(Isolate::kHandlerAddress, isolate());
+  push(Operand::StaticVariable(handler_address));
+  // Set this new handler as the current one.
+  mov(Operand::StaticVariable(handler_address), esp);
 }
 
 
 void MacroAssembler::PopTryHandler() {
   STATIC_ASSERT(StackHandlerConstants::kNextOffset == 0);
-  pop(Operand::StaticVariable(ExternalReference(Isolate::kHandlerAddress,
-                                                isolate())));
+  ExternalReference handler_address(Isolate::kHandlerAddress, isolate());
+  pop(Operand::StaticVariable(handler_address));
   add(esp, Immediate(StackHandlerConstants::kSize - kPointerSize));
+}
+
+
+void MacroAssembler::JumpToHandlerEntry() {
+  // Compute the handler entry address and jump to it.  The handler table is
+  // a fixed array of (smi-tagged) code offsets.
+  // eax = exception, edi = code object, edx = state.
+  mov(ebx, FieldOperand(edi, Code::kHandlerTableOffset));
+  shr(edx, StackHandler::kKindWidth);
+  mov(edx, FieldOperand(ebx, edx, times_4, FixedArray::kHeaderSize));
+  SmiUntag(edx);
+  lea(edi, FieldOperand(edi, edx, times_1, Code::kHeaderSize));
+  jmp(edi);
 }
 
 
@@ -773,99 +826,83 @@ void MacroAssembler::Throw(Register value) {
   // Adjust this code if not the case.
   STATIC_ASSERT(StackHandlerConstants::kSize == 5 * kPointerSize);
   STATIC_ASSERT(StackHandlerConstants::kNextOffset == 0);
-  STATIC_ASSERT(StackHandlerConstants::kContextOffset == 1 * kPointerSize);
-  STATIC_ASSERT(StackHandlerConstants::kFPOffset == 2 * kPointerSize);
-  STATIC_ASSERT(StackHandlerConstants::kStateOffset == 3 * kPointerSize);
-  STATIC_ASSERT(StackHandlerConstants::kPCOffset == 4 * kPointerSize);
-  // eax must hold the exception.
+  STATIC_ASSERT(StackHandlerConstants::kCodeOffset == 1 * kPointerSize);
+  STATIC_ASSERT(StackHandlerConstants::kStateOffset == 2 * kPointerSize);
+  STATIC_ASSERT(StackHandlerConstants::kContextOffset == 3 * kPointerSize);
+  STATIC_ASSERT(StackHandlerConstants::kFPOffset == 4 * kPointerSize);
+
+  // The exception is expected in eax.
   if (!value.is(eax)) {
     mov(eax, value);
   }
-
-  // Drop the sp to the top of the handler.
-  ExternalReference handler_address(Isolate::kHandlerAddress,
-                                    isolate());
+  // Drop the stack pointer to the top of the top handler.
+  ExternalReference handler_address(Isolate::kHandlerAddress, isolate());
   mov(esp, Operand::StaticVariable(handler_address));
-
-  // Restore next handler, context, and frame pointer; discard handler state.
+  // Restore the next handler.
   pop(Operand::StaticVariable(handler_address));
+
+  // Remove the code object and state, compute the handler address in edi.
+  pop(edi);  // Code object.
+  pop(edx);  // Index and state.
+
+  // Restore the context and frame pointer.
   pop(esi);  // Context.
   pop(ebp);  // Frame pointer.
-  pop(edx);  // State.
 
   // If the handler is a JS frame, restore the context to the frame.
-  // (edx == ENTRY) == (ebp == 0) == (esi == 0), so we could test any
-  // of them.
+  // (kind == ENTRY) == (ebp == 0) == (esi == 0), so we could test either
+  // ebp or esi.
   Label skip;
-  cmp(edx, Immediate(StackHandler::ENTRY));
-  j(equal, &skip, Label::kNear);
+  test(esi, esi);
+  j(zero, &skip, Label::kNear);
   mov(Operand(ebp, StandardFrameConstants::kContextOffset), esi);
   bind(&skip);
 
-  ret(0);
+  JumpToHandlerEntry();
 }
 
 
-void MacroAssembler::ThrowUncatchable(UncatchableExceptionType type,
-                                      Register value) {
+void MacroAssembler::ThrowUncatchable(Register value) {
   // Adjust this code if not the case.
   STATIC_ASSERT(StackHandlerConstants::kSize == 5 * kPointerSize);
   STATIC_ASSERT(StackHandlerConstants::kNextOffset == 0);
-  STATIC_ASSERT(StackHandlerConstants::kContextOffset == 1 * kPointerSize);
-  STATIC_ASSERT(StackHandlerConstants::kFPOffset == 2 * kPointerSize);
-  STATIC_ASSERT(StackHandlerConstants::kStateOffset == 3 * kPointerSize);
-  STATIC_ASSERT(StackHandlerConstants::kPCOffset == 4 * kPointerSize);
+  STATIC_ASSERT(StackHandlerConstants::kCodeOffset == 1 * kPointerSize);
+  STATIC_ASSERT(StackHandlerConstants::kStateOffset == 2 * kPointerSize);
+  STATIC_ASSERT(StackHandlerConstants::kContextOffset == 3 * kPointerSize);
+  STATIC_ASSERT(StackHandlerConstants::kFPOffset == 4 * kPointerSize);
 
-  // eax must hold the exception.
+  // The exception is expected in eax.
   if (!value.is(eax)) {
     mov(eax, value);
   }
-
-  // Drop sp to the top stack handler.
-  ExternalReference handler_address(Isolate::kHandlerAddress,
-                                    isolate());
+  // Drop the stack pointer to the top of the top stack handler.
+  ExternalReference handler_address(Isolate::kHandlerAddress, isolate());
   mov(esp, Operand::StaticVariable(handler_address));
 
-  // Unwind the handlers until the ENTRY handler is found.
-  Label loop, done;
-  bind(&loop);
-  // Load the type of the current stack handler.
-  const int kStateOffset = StackHandlerConstants::kStateOffset;
-  cmp(Operand(esp, kStateOffset), Immediate(StackHandler::ENTRY));
-  j(equal, &done, Label::kNear);
-  // Fetch the next handler in the list.
-  const int kNextOffset = StackHandlerConstants::kNextOffset;
-  mov(esp, Operand(esp, kNextOffset));
-  jmp(&loop);
-  bind(&done);
+  // Unwind the handlers until the top ENTRY handler is found.
+  Label fetch_next, check_kind;
+  jmp(&check_kind, Label::kNear);
+  bind(&fetch_next);
+  mov(esp, Operand(esp, StackHandlerConstants::kNextOffset));
 
-  // Set the top handler address to next handler past the current ENTRY handler.
+  bind(&check_kind);
+  STATIC_ASSERT(StackHandler::JS_ENTRY == 0);
+  test(Operand(esp, StackHandlerConstants::kStateOffset),
+       Immediate(StackHandler::KindField::kMask));
+  j(not_zero, &fetch_next);
+
+  // Set the top handler address to next handler past the top ENTRY handler.
   pop(Operand::StaticVariable(handler_address));
 
-  if (type == OUT_OF_MEMORY) {
-    // Set external caught exception to false.
-    ExternalReference external_caught(
-        Isolate::kExternalCaughtExceptionAddress,
-        isolate());
-    mov(eax, false);
-    mov(Operand::StaticVariable(external_caught), eax);
+  // Remove the code object and state, compute the handler address in edi.
+  pop(edi);  // Code object.
+  pop(edx);  // Index and state.
 
-    // Set pending exception and eax to out of memory exception.
-    ExternalReference pending_exception(Isolate::kPendingExceptionAddress,
-                                        isolate());
-    mov(eax, reinterpret_cast<int32_t>(Failure::OutOfMemoryException()));
-    mov(Operand::StaticVariable(pending_exception), eax);
-  }
-
-  // Discard the context saved in the handler and clear the context pointer.
-  pop(edx);
-  Set(esi, Immediate(0));
-
-  // Restore fp from handler and discard handler state.
+  // Clear the context pointer and frame pointer (0 was saved in the handler).
+  pop(esi);
   pop(ebp);
-  pop(edx);  // State.
 
-  ret(0);
+  JumpToHandlerEntry();
 }
 
 
@@ -937,6 +974,50 @@ void MacroAssembler::CheckAccessGlobalProxy(Register holder_reg,
 }
 
 
+// Compute the hash code from the untagged key.  This must be kept in sync
+// with ComputeIntegerHash in utils.h.
+//
+// Note: r0 will contain hash code
+void MacroAssembler::GetNumberHash(Register r0, Register scratch) {
+  // Xor original key with a seed.
+  if (Serializer::enabled()) {
+    ExternalReference roots_array_start =
+        ExternalReference::roots_array_start(isolate());
+    mov(scratch, Immediate(Heap::kHashSeedRootIndex));
+    mov(scratch,
+        Operand::StaticArray(scratch, times_pointer_size, roots_array_start));
+    SmiUntag(scratch);
+    xor_(r0, scratch);
+  } else {
+    int32_t seed = isolate()->heap()->HashSeed();
+    xor_(r0, Immediate(seed));
+  }
+
+  // hash = ~hash + (hash << 15);
+  mov(scratch, r0);
+  not_(r0);
+  shl(scratch, 15);
+  add(r0, scratch);
+  // hash = hash ^ (hash >> 12);
+  mov(scratch, r0);
+  shr(scratch, 12);
+  xor_(r0, scratch);
+  // hash = hash + (hash << 2);
+  lea(r0, Operand(r0, r0, times_4, 0));
+  // hash = hash ^ (hash >> 4);
+  mov(scratch, r0);
+  shr(scratch, 4);
+  xor_(r0, scratch);
+  // hash = hash * 2057;
+  imul(r0, r0, 2057);
+  // hash = hash ^ (hash >> 16);
+  mov(scratch, r0);
+  shr(scratch, 16);
+  xor_(r0, scratch);
+}
+
+
+
 void MacroAssembler::LoadFromNumberDictionary(Label* miss,
                                               Register elements,
                                               Register key,
@@ -962,33 +1043,10 @@ void MacroAssembler::LoadFromNumberDictionary(Label* miss,
 
   Label done;
 
-  // Compute the hash code from the untagged key.  This must be kept in sync
-  // with ComputeIntegerHash in utils.h.
-  //
-  // hash = ~hash + (hash << 15);
-  mov(r1, r0);
-  not_(r0);
-  shl(r1, 15);
-  add(r0, r1);
-  // hash = hash ^ (hash >> 12);
-  mov(r1, r0);
-  shr(r1, 12);
-  xor_(r0, r1);
-  // hash = hash + (hash << 2);
-  lea(r0, Operand(r0, r0, times_4, 0));
-  // hash = hash ^ (hash >> 4);
-  mov(r1, r0);
-  shr(r1, 4);
-  xor_(r0, r1);
-  // hash = hash * 2057;
-  imul(r0, r0, 2057);
-  // hash = hash ^ (hash >> 16);
-  mov(r1, r0);
-  shr(r1, 16);
-  xor_(r0, r1);
+  GetNumberHash(r0, r1);
 
   // Compute capacity mask.
-  mov(r1, FieldOperand(elements, NumberDictionary::kCapacityOffset));
+  mov(r1, FieldOperand(elements, SeededNumberDictionary::kCapacityOffset));
   shr(r1, kSmiTagSize);  // convert smi to int
   dec(r1);
 
@@ -999,19 +1057,19 @@ void MacroAssembler::LoadFromNumberDictionary(Label* miss,
     mov(r2, r0);
     // Compute the masked index: (hash + i + i * i) & mask.
     if (i > 0) {
-      add(r2, Immediate(NumberDictionary::GetProbeOffset(i)));
+      add(r2, Immediate(SeededNumberDictionary::GetProbeOffset(i)));
     }
     and_(r2, r1);
 
     // Scale the index by multiplying by the entry size.
-    ASSERT(NumberDictionary::kEntrySize == 3);
+    ASSERT(SeededNumberDictionary::kEntrySize == 3);
     lea(r2, Operand(r2, r2, times_2, 0));  // r2 = r2 * 3
 
     // Check if the key matches.
     cmp(key, FieldOperand(elements,
                           r2,
                           times_pointer_size,
-                          NumberDictionary::kElementsStartOffset));
+                          SeededNumberDictionary::kElementsStartOffset));
     if (i != (kProbes - 1)) {
       j(equal, &done);
     } else {
@@ -1022,7 +1080,7 @@ void MacroAssembler::LoadFromNumberDictionary(Label* miss,
   bind(&done);
   // Check that the value is a normal propety.
   const int kDetailsOffset =
-      NumberDictionary::kElementsStartOffset + 2 * kPointerSize;
+      SeededNumberDictionary::kElementsStartOffset + 2 * kPointerSize;
   ASSERT_EQ(NORMAL, 0);
   test(FieldOperand(elements, r2, times_pointer_size, kDetailsOffset),
        Immediate(PropertyDetails::TypeField::kMask << kSmiTagSize));
@@ -1030,7 +1088,7 @@ void MacroAssembler::LoadFromNumberDictionary(Label* miss,
 
   // Get the value at the masked, scaled index.
   const int kValueOffset =
-      NumberDictionary::kElementsStartOffset + kPointerSize;
+      SeededNumberDictionary::kElementsStartOffset + kPointerSize;
   mov(result, FieldOperand(elements, r2, times_pointer_size, kValueOffset));
 }
 
@@ -1311,7 +1369,7 @@ void MacroAssembler::AllocateAsciiString(Register result,
   add(scratch1, Immediate(kObjectAlignmentMask));
   and_(scratch1, Immediate(~kObjectAlignmentMask));
 
-  // Allocate ascii string in new space.
+  // Allocate ASCII string in new space.
   AllocateInNewSpace(SeqAsciiString::kHeaderSize,
                      times_1,
                      scratch1,
@@ -1339,7 +1397,7 @@ void MacroAssembler::AllocateAsciiString(Register result,
                                          Label* gc_required) {
   ASSERT(length > 0);
 
-  // Allocate ascii string in new space.
+  // Allocate ASCII string in new space.
   AllocateInNewSpace(SeqAsciiString::SizeFor(length),
                      result,
                      scratch1,
@@ -1857,11 +1915,13 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
                                     Handle<Code> code_constant,
                                     const Operand& code_operand,
                                     Label* done,
+                                    bool* definitely_mismatches,
                                     InvokeFlag flag,
                                     Label::Distance done_near,
                                     const CallWrapper& call_wrapper,
                                     CallKind call_kind) {
   bool definitely_matches = false;
+  *definitely_mismatches = false;
   Label invoke;
   if (expected.is_immediate()) {
     ASSERT(actual.is_immediate());
@@ -1877,6 +1937,7 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
         // arguments.
         definitely_matches = true;
       } else {
+        *definitely_mismatches = true;
         mov(ebx, expected.immediate());
       }
     }
@@ -1914,7 +1975,9 @@ void MacroAssembler::InvokePrologue(const ParameterCount& expected,
       SetCallKind(ecx, call_kind);
       call(adaptor, RelocInfo::CODE_TARGET);
       call_wrapper.AfterCall();
-      jmp(done, done_near);
+      if (!*definitely_mismatches) {
+        jmp(done, done_near);
+      }
     } else {
       SetCallKind(ecx, call_kind);
       jmp(adaptor, RelocInfo::CODE_TARGET);
@@ -1934,20 +1997,23 @@ void MacroAssembler::InvokeCode(const Operand& code,
   ASSERT(flag == JUMP_FUNCTION || has_frame());
 
   Label done;
+  bool definitely_mismatches = false;
   InvokePrologue(expected, actual, Handle<Code>::null(), code,
-                 &done, flag, Label::kNear, call_wrapper,
-                 call_kind);
-  if (flag == CALL_FUNCTION) {
-    call_wrapper.BeforeCall(CallSize(code));
-    SetCallKind(ecx, call_kind);
-    call(code);
-    call_wrapper.AfterCall();
-  } else {
-    ASSERT(flag == JUMP_FUNCTION);
-    SetCallKind(ecx, call_kind);
-    jmp(code);
+                 &done, &definitely_mismatches, flag, Label::kNear,
+                 call_wrapper, call_kind);
+  if (!definitely_mismatches) {
+    if (flag == CALL_FUNCTION) {
+      call_wrapper.BeforeCall(CallSize(code));
+      SetCallKind(ecx, call_kind);
+      call(code);
+      call_wrapper.AfterCall();
+    } else {
+      ASSERT(flag == JUMP_FUNCTION);
+      SetCallKind(ecx, call_kind);
+      jmp(code);
+    }
+    bind(&done);
   }
-  bind(&done);
 }
 
 
@@ -1963,19 +2029,22 @@ void MacroAssembler::InvokeCode(Handle<Code> code,
 
   Label done;
   Operand dummy(eax, 0);
-  InvokePrologue(expected, actual, code, dummy, &done, flag, Label::kNear,
-                 call_wrapper, call_kind);
-  if (flag == CALL_FUNCTION) {
-    call_wrapper.BeforeCall(CallSize(code, rmode));
-    SetCallKind(ecx, call_kind);
-    call(code, rmode);
-    call_wrapper.AfterCall();
-  } else {
-    ASSERT(flag == JUMP_FUNCTION);
-    SetCallKind(ecx, call_kind);
-    jmp(code, rmode);
+  bool definitely_mismatches = false;
+  InvokePrologue(expected, actual, code, dummy, &done, &definitely_mismatches,
+                 flag, Label::kNear, call_wrapper, call_kind);
+  if (!definitely_mismatches) {
+    if (flag == CALL_FUNCTION) {
+      call_wrapper.BeforeCall(CallSize(code, rmode));
+      SetCallKind(ecx, call_kind);
+      call(code, rmode);
+      call_wrapper.AfterCall();
+    } else {
+      ASSERT(flag == JUMP_FUNCTION);
+      SetCallKind(ecx, call_kind);
+      jmp(code, rmode);
+    }
+    bind(&done);
   }
-  bind(&done);
 }
 
 
@@ -2008,7 +2077,7 @@ void MacroAssembler::InvokeFunction(Handle<JSFunction> function,
   ASSERT(flag == JUMP_FUNCTION || has_frame());
 
   // Get the function and setup the context.
-  mov(edi, Immediate(function));
+  LoadHeapObject(edi, function);
   mov(esi, FieldOperand(edi, JSFunction::kContextOffset));
 
   ParameterCount expected(function->shared()->formal_parameter_count());
@@ -2081,6 +2150,46 @@ void MacroAssembler::LoadContext(Register dst, int context_chain_length) {
 }
 
 
+void MacroAssembler::LoadTransitionedArrayMapConditional(
+    ElementsKind expected_kind,
+    ElementsKind transitioned_kind,
+    Register map_in_out,
+    Register scratch,
+    Label* no_map_match) {
+  // Load the global or builtins object from the current context.
+  mov(scratch, Operand(esi, Context::SlotOffset(Context::GLOBAL_INDEX)));
+  mov(scratch, FieldOperand(scratch, GlobalObject::kGlobalContextOffset));
+
+  // Check that the function's map is the same as the expected cached map.
+  int expected_index =
+      Context::GetContextMapIndexFromElementsKind(expected_kind);
+  cmp(map_in_out, Operand(scratch, Context::SlotOffset(expected_index)));
+  j(not_equal, no_map_match);
+
+  // Use the transitioned cached map.
+  int trans_index =
+      Context::GetContextMapIndexFromElementsKind(transitioned_kind);
+  mov(map_in_out, Operand(scratch, Context::SlotOffset(trans_index)));
+}
+
+
+void MacroAssembler::LoadInitialArrayMap(
+    Register function_in, Register scratch, Register map_out) {
+  ASSERT(!function_in.is(map_out));
+  Label done;
+  mov(map_out, FieldOperand(function_in,
+                            JSFunction::kPrototypeOrInitialMapOffset));
+  if (!FLAG_smi_only_arrays) {
+    LoadTransitionedArrayMapConditional(FAST_SMI_ONLY_ELEMENTS,
+                                        FAST_ELEMENTS,
+                                        map_out,
+                                        scratch,
+                                        &done);
+  }
+  bind(&done);
+}
+
+
 void MacroAssembler::LoadGlobalFunction(int index, Register function) {
   // Load the global or builtins object from the current context.
   mov(function, Operand(esi, Context::SlotOffset(Context::GLOBAL_INDEX)));
@@ -2137,6 +2246,29 @@ int MacroAssembler::SafepointRegisterStackIndex(int reg_code) {
 }
 
 
+void MacroAssembler::LoadHeapObject(Register result,
+                                    Handle<HeapObject> object) {
+  if (isolate()->heap()->InNewSpace(*object)) {
+    Handle<JSGlobalPropertyCell> cell =
+        isolate()->factory()->NewJSGlobalPropertyCell(object);
+    mov(result, Operand::Cell(cell));
+  } else {
+    mov(result, object);
+  }
+}
+
+
+void MacroAssembler::PushHeapObject(Handle<HeapObject> object) {
+  if (isolate()->heap()->InNewSpace(*object)) {
+    Handle<JSGlobalPropertyCell> cell =
+        isolate()->factory()->NewJSGlobalPropertyCell(object);
+    push(Operand::Cell(cell));
+  } else {
+    Push(object);
+  }
+}
+
+
 void MacroAssembler::Ret() {
   ret(0);
 }
@@ -2154,8 +2286,6 @@ void MacroAssembler::Ret(int bytes_dropped, Register scratch) {
 }
 
 
-
-
 void MacroAssembler::Drop(int stack_elements) {
   if (stack_elements > 0) {
     add(esp, Immediate(stack_elements * kPointerSize));
@@ -2167,11 +2297,6 @@ void MacroAssembler::Move(Register dst, Register src) {
   if (!dst.is(src)) {
     mov(dst, src);
   }
-}
-
-
-void MacroAssembler::Move(Register dst, Handle<Object> value) {
-  mov(dst, value);
 }
 
 
@@ -2372,7 +2497,7 @@ void MacroAssembler::JumpIfNotBothSequentialAsciiStrings(Register object1,
   movzx_b(scratch1, FieldOperand(scratch1, Map::kInstanceTypeOffset));
   movzx_b(scratch2, FieldOperand(scratch2, Map::kInstanceTypeOffset));
 
-  // Check that both are flat ascii strings.
+  // Check that both are flat ASCII strings.
   const int kFlatAsciiStringMask =
       kIsNotStringMask | kStringRepresentationMask | kStringEncodingMask;
   const int kFlatAsciiStringTag = ASCII_STRING_TYPE;
@@ -2649,6 +2774,46 @@ void MacroAssembler::EnsureNotWhite(
   }
 
   bind(&done);
+}
+
+
+void MacroAssembler::CheckEnumCache(Label* call_runtime) {
+  Label next;
+  mov(ecx, eax);
+  bind(&next);
+
+  // Check that there are no elements.  Register ecx contains the
+  // current JS object we've reached through the prototype chain.
+  cmp(FieldOperand(ecx, JSObject::kElementsOffset),
+      isolate()->factory()->empty_fixed_array());
+  j(not_equal, call_runtime);
+
+  // Check that instance descriptors are not empty so that we can
+  // check for an enum cache.  Leave the map in ebx for the subsequent
+  // prototype load.
+  mov(ebx, FieldOperand(ecx, HeapObject::kMapOffset));
+  mov(edx, FieldOperand(ebx, Map::kInstanceDescriptorsOrBitField3Offset));
+  JumpIfSmi(edx, call_runtime);
+
+  // Check that there is an enum cache in the non-empty instance
+  // descriptors (edx).  This is the case if the next enumeration
+  // index field does not contain a smi.
+  mov(edx, FieldOperand(edx, DescriptorArray::kEnumerationIndexOffset));
+  JumpIfSmi(edx, call_runtime);
+
+  // For all objects but the receiver, check that the cache is empty.
+  Label check_prototype;
+  cmp(ecx, eax);
+  j(equal, &check_prototype, Label::kNear);
+  mov(edx, FieldOperand(edx, DescriptorArray::kEnumCacheBridgeCacheOffset));
+  cmp(edx, isolate()->factory()->empty_fixed_array());
+  j(not_equal, call_runtime);
+
+  // Load the prototype from the map and loop if non-null.
+  bind(&check_prototype);
+  mov(ecx, FieldOperand(ebx, Map::kPrototypeOffset));
+  cmp(ecx, isolate()->factory()->null_value());
+  j(not_equal, &next);
 }
 
 } }  // namespace v8::internal

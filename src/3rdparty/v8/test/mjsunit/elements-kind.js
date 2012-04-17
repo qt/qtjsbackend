@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -34,7 +34,7 @@
 // in this test case.  Depending on whether smi-only arrays are actually
 // enabled, this test takes the appropriate code path to check smi-only arrays.
 
-support_smi_only_arrays = %HasFastSmiOnlyElements([]);
+support_smi_only_arrays = %HasFastSmiOnlyElements(new Array(1,2,3,4,5,6,7,8));
 
 if (support_smi_only_arrays) {
   print("Tests include smi-only arrays.");
@@ -108,11 +108,13 @@ me.dance = 0xD15C0;
 me.drink = 0xC0C0A;
 assertKind(elements_kind.fast, me);
 
-var too = [1,2,3];
-assertKind(elements_kind.fast_smi_only, too);
-too.dance = 0xD15C0;
-too.drink = 0xC0C0A;
-assertKind(elements_kind.fast_smi_only, too);
+if (support_smi_only_arrays) {
+  var too = [1,2,3];
+  assertKind(elements_kind.fast_smi_only, too);
+  too.dance = 0xD15C0;
+  too.drink = 0xC0C0A;
+  assertKind(elements_kind.fast_smi_only, too);
+}
 
 // Make sure the element kind transitions from smionly when a non-smi is stored.
 var you = new Array();
@@ -145,6 +147,7 @@ assertKind(elements_kind.external_pixel,          new PixelArray(512));
 
 // Crankshaft support for smi-only array elements.
 function monomorphic(array) {
+  assertKind(elements_kind.fast_smi_only, array);
   for (var i = 0; i < 3; i++) {
     array[i] = i + 10;
   }
@@ -154,7 +157,8 @@ function monomorphic(array) {
     assertEquals(i + 10, a);
   }
 }
-var smi_only = [1, 2, 3];
+var smi_only = new Array(1, 2, 3);
+assertKind(elements_kind.fast_smi_only, smi_only);
 for (var i = 0; i < 3; i++) monomorphic(smi_only);
 %OptimizeFunctionOnNextCall(monomorphic);
 monomorphic(smi_only);
@@ -232,15 +236,17 @@ if (support_smi_only_arrays) {
 function get(foo) { return foo; }  // Used to generate dynamic values.
 
 function crankshaft_test() {
-  var a = [get(1), get(2), get(3)];
-  assertKind(elements_kind.fast_smi_only, a);
+  if (support_smi_only_arrays) {
+    var a1 = [get(1), get(2), get(3)];
+    assertKind(elements_kind.fast_smi_only, a1);
+  }
+  var a2 = new Array(get(1), get(2), get(3));
+  assertKind(elements_kind.fast_smi_only, a2);
   var b = [get(1), get(2), get("three")];
   assertKind(elements_kind.fast, b);
   var c = [get(1), get(2), get(3.5)];
   if (support_smi_only_arrays) {
     assertKind(elements_kind.fast_double, c);
-  } else {
-    assertKind(elements_kind.fast, c);
   }
 }
 for (var i = 0; i < 3; i++) {
@@ -303,6 +309,37 @@ if (support_smi_only_arrays) {
   f[0] = "bar";
   assertKind(elements_kind.fast, f);
   assertTrue(%HaveSameMap(e, f));
+}
+
+// Test if Array.concat() works correctly with DOUBLE elements.
+if (support_smi_only_arrays) {
+  var a = [1, 2];
+  assertKind(elements_kind.fast_smi_only, a);
+  var b = [4.5, 5.5];
+  assertKind(elements_kind.fast_double, b);
+  var c = a.concat(b);
+  assertEquals([1, 2, 4.5, 5.5], c);
+  // TODO(1810): Change implementation so that we get DOUBLE elements here?
+  assertKind(elements_kind.fast, c);
+}
+
+// Test that Array.push() correctly handles SMI elements.
+if (support_smi_only_arrays) {
+  var a = [1, 2];
+  assertKind(elements_kind.fast_smi_only, a);
+  a.push(3, 4, 5);
+  assertKind(elements_kind.fast_smi_only, a);
+  assertEquals([1, 2, 3, 4, 5], a);
+}
+
+// Test that Array.splice() and Array.slice() return correct ElementsKinds.
+if (support_smi_only_arrays) {
+  var a = ["foo", "bar"];
+  assertKind(elements_kind.fast, a);
+  var b = a.splice(0, 1);
+  assertKind(elements_kind.fast, b);
+  var c = a.slice(0, 1);
+  assertKind(elements_kind.fast, c);
 }
 
 // Throw away type information in the ICs for next stress run.

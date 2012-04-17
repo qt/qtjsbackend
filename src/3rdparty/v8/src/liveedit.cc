@@ -53,8 +53,8 @@ void SetElementNonStrict(Handle<JSObject> object,
   // Ignore return value from SetElement. It can only be a failure if there
   // are element setters causing exceptions and the debugger context has none
   // of these.
-  Handle<Object> no_failure;
-  no_failure = SetElement(object, index, value, kNonStrictMode);
+  Handle<Object> no_failure =
+      JSObject::SetElement(object, index, value, NONE, kNonStrictMode);
   ASSERT(!no_failure.is_null());
   USE(no_failure);
 }
@@ -602,7 +602,8 @@ static void CompileScriptForTracker(Isolate* isolate, Handle<Script> script) {
   // Build AST.
   CompilationInfo info(script);
   info.MarkAsGlobal();
-  if (ParserApi::Parse(&info)) {
+  // Parse and don't allow skipping lazy functions.
+  if (ParserApi::Parse(&info, kNoParsingFlags)) {
     // Compile the code.
     LiveEditFunctionTracker tracker(info.isolate(), info.function());
     if (Compiler::MakeCodeForLiveEdit(&info)) {
@@ -797,7 +798,7 @@ class FunctionInfoListener {
     HandleScope scope;
     FunctionInfoWrapper info = FunctionInfoWrapper::Create();
     info.SetInitialProperties(fun->name(), fun->start_position(),
-                              fun->end_position(), fun->num_parameters(),
+                              fun->end_position(), fun->parameter_count(),
                               current_parent_index_);
     current_parent_index_ = len_;
     SetElementNonStrict(result_, len_, info.GetJSArray());
@@ -855,38 +856,20 @@ class FunctionInfoListener {
       return HEAP->undefined_value();
     }
     do {
-      ZoneList<Variable*> list(10);
-      outer_scope->CollectUsedVariables(&list);
-      int j = 0;
-      for (int i = 0; i < list.length(); i++) {
-        Variable* var1 = list[i];
-        if (var1->IsContextSlot()) {
-          if (j != i) {
-            list[j] = var1;
-          }
-          j++;
-        }
-      }
+      ZoneList<Variable*> stack_list(outer_scope->StackLocalCount());
+      ZoneList<Variable*> context_list(outer_scope->ContextLocalCount());
+      outer_scope->CollectStackAndContextLocals(&stack_list, &context_list);
+      context_list.Sort(&Variable::CompareIndex);
 
-      // Sort it.
-      for (int k = 1; k < j; k++) {
-        int l = k;
-        for (int m = k + 1; m < j; m++) {
-          if (list[l]->index() > list[m]->index()) {
-            l = m;
-          }
-        }
-        list[k] = list[l];
-      }
-      for (int i = 0; i < j; i++) {
+      for (int i = 0; i < context_list.length(); i++) {
         SetElementNonStrict(scope_info_list,
                             scope_info_length,
-                            list[i]->name());
+                            context_list[i]->name());
         scope_info_length++;
         SetElementNonStrict(
             scope_info_list,
             scope_info_length,
-            Handle<Smi>(Smi::FromInt(list[i]->index())));
+            Handle<Smi>(Smi::FromInt(context_list[i]->index())));
         scope_info_length++;
       }
       SetElementNonStrict(scope_info_list,
@@ -1108,7 +1091,7 @@ MaybeObject* LiveEdit::ReplaceFunctionCode(
     ReplaceCodeObject(shared_info->code(), *code);
     Handle<Object> code_scope_info =  compile_info_wrapper.GetCodeScopeInfo();
     if (code_scope_info->IsFixedArray()) {
-      shared_info->set_scope_info(SerializedScopeInfo::cast(*code_scope_info));
+      shared_info->set_scope_info(ScopeInfo::cast(*code_scope_info));
     }
   }
 
@@ -1245,7 +1228,7 @@ class RelocInfoBuffer {
       V8::FatalProcessOutOfMemory("RelocInfoBuffer::GrowBuffer");
     }
 
-    // Setup new buffer.
+    // Set up new buffer.
     byte* new_buffer = NewArray<byte>(new_buffer_size);
 
     // Copy the data.

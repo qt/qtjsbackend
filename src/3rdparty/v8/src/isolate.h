@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -36,8 +36,10 @@
 #include "contexts.h"
 #include "execution.h"
 #include "frames.h"
+#include "date.h"
 #include "global-handles.h"
 #include "handles.h"
+#include "hashmap.h"
 #include "heap.h"
 #include "regexp-stack.h"
 #include "runtime-profiler.h"
@@ -106,15 +108,28 @@ class Simulator;
 // of handles to the actual constants.
 typedef ZoneList<Handle<Object> > ZoneObjectList;
 
-#define RETURN_IF_SCHEDULED_EXCEPTION(isolate)    \
-  if (isolate->has_scheduled_exception())         \
-      return isolate->PromoteScheduledException()
+#define RETURN_IF_SCHEDULED_EXCEPTION(isolate)            \
+  do {                                                    \
+    Isolate* __isolate__ = (isolate);                     \
+    if (__isolate__->has_scheduled_exception()) {         \
+      return __isolate__->PromoteScheduledException();    \
+    }                                                     \
+  } while (false)
 
 #define RETURN_IF_EMPTY_HANDLE_VALUE(isolate, call, value) \
-  if (call.is_null()) {                                    \
-    ASSERT(isolate->has_pending_exception());              \
-    return value;                                          \
-  }
+  do {                                                     \
+    if ((call).is_null()) {                                \
+      ASSERT((isolate)->has_pending_exception());          \
+      return (value);                                      \
+    }                                                      \
+  } while (false)
+
+#define CHECK_NOT_EMPTY_HANDLE(isolate, call)     \
+  do {                                            \
+    ASSERT(!(isolate)->has_pending_exception());  \
+    CHECK(!(call).is_null());                     \
+    CHECK(!(isolate)->has_pending_exception());   \
+  } while (false)
 
 #define RETURN_IF_EMPTY_HANDLE(isolate, call)                       \
   RETURN_IF_EMPTY_HANDLE_VALUE(isolate, call, Failure::Exception())
@@ -245,7 +260,7 @@ class ThreadLocalTop BASE_EMBEDDED {
 #endif
 #endif  // USE_SIMULATOR
 
-  Address js_entry_sp_;  // the stack pointer of the bottom js entry frame
+  Address js_entry_sp_;  // the stack pointer of the bottom JS entry frame
   Address external_callback_;  // the external callback we're currently in
   StateTag current_vm_state_;
 
@@ -258,9 +273,6 @@ class ThreadLocalTop BASE_EMBEDDED {
   // Head of the list of live LookupResults.
   LookupResult* top_lookup_result_;
 
-  // Call back function for user object comparisons
-  v8::UserObjectComparisonCallback user_object_comparison_callback_;
-
   // Whether out of memory exceptions should be ignored.
   bool ignore_out_of_memory_;
 
@@ -270,23 +282,6 @@ class ThreadLocalTop BASE_EMBEDDED {
   Address try_catch_handler_address_;
 };
 
-#if defined(V8_TARGET_ARCH_ARM) || defined(V8_TARGET_ARCH_MIPS)
-
-#define ISOLATE_PLATFORM_INIT_LIST(V)                                          \
-  /* VirtualFrame::SpilledScope state */                                       \
-  V(bool, is_virtual_frame_in_spilled_scope, false)                            \
-  /* CodeGenerator::EmitNamedStore state */                                    \
-  V(int, inlined_write_barrier_size, -1)
-
-#if !defined(__arm__) && !defined(__mips__)
-class HashMap;
-#endif
-
-#else
-
-#define ISOLATE_PLATFORM_INIT_LIST(V)
-
-#endif
 
 #ifdef ENABLE_DEBUGGER_SUPPORT
 
@@ -323,8 +318,6 @@ class HashMap;
 typedef List<HeapObject*, PreallocatedStorage> DebugObjectCache;
 
 #define ISOLATE_INIT_LIST(V)                                                   \
-  /* AssertNoZoneAllocation state. */                                          \
-  V(bool, zone_allow_allocation, true)                                         \
   /* SerializerDeserializer state. */                                          \
   V(int, serialize_partial_snapshot_cache_length, 0)                           \
   /* Assembler state. */                                                       \
@@ -352,14 +345,13 @@ typedef List<HeapObject*, PreallocatedStorage> DebugObjectCache;
   /* Serializer state. */                                                      \
   V(ExternalReferenceTable*, external_reference_table, NULL)                   \
   /* AstNode state. */                                                         \
-  V(unsigned, ast_node_id, 0)                                                  \
+  V(int, ast_node_id, 0)                                                       \
   V(unsigned, ast_node_count, 0)                                               \
   /* SafeStackFrameIterator activations count. */                              \
   V(int, safe_stack_iterator_counter, 0)                                       \
   V(uint64_t, enabled_cpu_features, 0)                                         \
   V(CpuProfiler*, cpu_profiler, NULL)                                          \
   V(HeapProfiler*, heap_profiler, NULL)                                        \
-  ISOLATE_PLATFORM_INIT_LIST(V)                                                \
   ISOLATE_DEBUGGER_INIT_LIST(V)
 
 class Isolate {
@@ -475,7 +467,7 @@ class Isolate {
   bool IsDefaultIsolate() const { return this == default_isolate_; }
 
   // Ensures that process-wide resources and the default isolate have been
-  // allocated. It is only necessary to call this method in rare casses, for
+  // allocated. It is only necessary to call this method in rare cases, for
   // example if you are using V8 from within the body of a static initializer.
   // Safe to call multiple times.
   static void EnsureDefaultIsolate();
@@ -505,6 +497,8 @@ class Isolate {
   static Thread::LocalStorageKey thread_id_key() {
     return thread_id_key_;
   }
+
+  static Thread::LocalStorageKey per_isolate_thread_data_key();
 
   // If a client attempts to create a Locker without specifying an isolate,
   // we assume that the client is using legacy behavior. Set up the current
@@ -625,7 +619,7 @@ class Isolate {
   void* formal_count_address() { return &thread_local_top_.formal_count_; }
 
   // Returns the global object of the current context. It could be
-  // a builtin object, or a js global object.
+  // a builtin object, or a JS global object.
   Handle<GlobalObject> global() {
     return Handle<GlobalObject>(context()->global());
   }
@@ -693,6 +687,8 @@ class Isolate {
       int frame_limit,
       StackTrace::StackTraceOptions options);
 
+  void CaptureAndSetCurrentStackTraceFor(Handle<JSObject> error_object);
+
   // Returns if the top context may access the given global object. If
   // the result is false, the pending exception is guaranteed to be
   // set.
@@ -705,11 +701,6 @@ class Isolate {
 
   void SetFailedAccessCheckCallback(v8::FailedAccessCheckCallback callback);
   void ReportFailedAccessCheck(JSObject* receiver, v8::AccessType type);
-
-  void SetUserObjectComparisonCallback(v8::UserObjectComparisonCallback callback);
-  inline v8::UserObjectComparisonCallback UserObjectComparisonCallback() { 
-      return thread_local_top()->user_object_comparison_callback_;
-  }
 
   // Exception throwing support. The caller should use the result
   // of Throw() as its return value.
@@ -724,7 +715,7 @@ class Isolate {
 
   // Promote a scheduled exception to pending. Asserts has_scheduled_exception.
   Failure* PromoteScheduledException();
-  void DoThrow(MaybeObject* exception, MessageLocation* location);
+  void DoThrow(Object* exception, MessageLocation* location);
   // Checks if exception should be reported and finds out if it's
   // caught externally.
   bool ShouldReportException(bool* can_be_caught_externally,
@@ -903,6 +894,12 @@ class Isolate {
 
   Builtins* builtins() { return &builtins_; }
 
+  void NotifyExtensionInstalled() {
+    has_installed_extensions_ = true;
+  }
+
+  bool has_installed_extensions() { return has_installed_extensions_; }
+
   unibrow::Mapping<unibrow::Ecma262Canonicalize>*
       regexp_macro_assembler_canonicalize() {
     return &regexp_macro_assembler_canonicalize_;
@@ -930,6 +927,7 @@ class Isolate {
   }
 #endif
 
+  inline bool IsDebuggerActive();
   inline bool DebuggerHasBreakPoints();
 
 #ifdef DEBUG
@@ -1012,8 +1010,33 @@ class Isolate {
     thread_local_top_.top_lookup_result_ = top;
   }
 
+  bool context_exit_happened() {
+    return context_exit_happened_;
+  }
+  void set_context_exit_happened(bool context_exit_happened) {
+    context_exit_happened_ = context_exit_happened;
+  }
+
+  double time_millis_since_init() {
+    return OS::TimeCurrentMillis() - time_millis_at_init_;
+  }
+
+  DateCache* date_cache() {
+    return date_cache_;
+  }
+
+  void set_date_cache(DateCache* date_cache) {
+    if (date_cache != date_cache_) {
+      delete date_cache_;
+    }
+    date_cache_ = date_cache;
+  }
+
  private:
   Isolate();
+
+  friend struct GlobalState;
+  friend struct InitializeGlobalState;
 
   // The per-process lock should be acquired before the ThreadDataTable is
   // modified.
@@ -1053,6 +1076,7 @@ class Isolate {
     Isolate* previous_isolate;
     EntryStackItem* previous_item;
 
+   private:
     DISALLOW_COPY_AND_ASSIGN(EntryStackItem);
   };
 
@@ -1087,7 +1111,7 @@ class Isolate {
   // If one does not yet exist, allocate a new one.
   PerIsolateThreadData* FindOrAllocatePerThreadDataForThisThread();
 
-// PreInits and returns a default isolate. Needed when a new thread tries
+  // PreInits and returns a default isolate. Needed when a new thread tries
   // to create a Locker for the first time (the lock itself is in the isolate).
   static Isolate* GetDefaultIsolateForLocking();
 
@@ -1117,6 +1141,10 @@ class Isolate {
   void PropagatePendingExceptionToExternalTryCatch();
 
   void InitializeDebugger();
+
+  // Traverse prototype chain to find out whether the object is derived from
+  // the Error object.
+  bool IsErrorObject(Handle<Object> obj);
 
   int stack_trace_nesting_level_;
   StringStream* incomplete_message_;
@@ -1164,6 +1192,7 @@ class Isolate {
   bool fp_stubs_generated_;
   StaticResource<SafeStringInputBuffer> compiler_safe_string_input_buffer_;
   Builtins builtins_;
+  bool has_installed_extensions_;
   StringTracker* string_tracker_;
   unibrow::Mapping<unibrow::Ecma262UnCanonicalize> jsregexp_uncanonicalize_;
   unibrow::Mapping<unibrow::CanonicalizationRange> jsregexp_canonrange_;
@@ -1173,8 +1202,18 @@ class Isolate {
   unibrow::Mapping<unibrow::Ecma262Canonicalize>
       regexp_macro_assembler_canonicalize_;
   RegExpStack* regexp_stack_;
+
+  DateCache* date_cache_;
+
   unibrow::Mapping<unibrow::Ecma262Canonicalize> interp_canonicalize_mapping_;
   void* embedder_data_;
+
+  // The garbage collector should be a little more aggressive when it knows
+  // that a context was recently exited.
+  bool context_exit_happened_;
+
+  // Time stamp at initialization.
+  double time_millis_at_init_;
 
 #if defined(V8_TARGET_ARCH_ARM) && !defined(__arm__) || \
     defined(V8_TARGET_ARCH_MIPS) && !defined(__mips__)

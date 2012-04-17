@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -267,8 +267,9 @@ const int kBinary32ExponentShift = 23;
 // other bits set.
 const uint64_t kQuietNaNMask = static_cast<uint64_t>(0xfff) << 51;
 
-// ASCII/UC16 constants
+// ASCII/UTF-16 constants
 // Code-point values in Unicode 4.0 are 21 bits wide.
+// Code units in UTF-16 are 16 bits wide.
 typedef uint16_t uc16;
 typedef int32_t uc32;
 const int kASCIISize    = kCharSize;
@@ -299,7 +300,7 @@ const uint32_t kMaxAsciiCharCodeU = 0x7fu;
 // The USE(x) template is used to silence C++ compiler warnings
 // issued for (yet) unused variables (typically parameters).
 template <typename T>
-static inline void USE(T) { }
+inline void USE(T) { }
 
 
 // FUNCTION_ADDR(f) gets the address of a C function f.
@@ -366,7 +367,30 @@ template <typename T, class P = FreeStoreAllocationPolicy> class List;
 // -----------------------------------------------------------------------------
 // Declarations for use in both the preparser and the rest of V8.
 
+// The different language modes that V8 implements. ES5 defines two language
+// modes: an unrestricted mode respectively a strict mode which are indicated by
+// CLASSIC_MODE respectively STRICT_MODE in the enum. The harmony spec drafts
+// for the next ES standard specify a new third mode which is called 'extended
+// mode'. The extended mode is only available if the harmony flag is set. It is
+// based on the 'strict mode' and adds new functionality to it. This means that
+// most of the semantics of these two modes coincide.
+//
+// In the current draft the term 'base code' is used to refer to code that is
+// neither in strict nor extended mode. However, the more distinguishing term
+// 'classic mode' is used in V8 instead to avoid mix-ups.
+
+enum LanguageMode {
+  CLASSIC_MODE,
+  STRICT_MODE,
+  EXTENDED_MODE
+};
+
+
 // The Strict Mode (ECMA-262 5th edition, 4.2.2).
+//
+// This flag is used in the backend to represent the language mode. So far
+// there is no semantic difference between the strict and the extended mode in
+// the backend, so both modes are represented by the kStrictMode value.
 enum StrictModeFlag {
   kNonStrictMode,
   kStrictMode

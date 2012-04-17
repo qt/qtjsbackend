@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -40,7 +40,7 @@ namespace internal {
 bool CodeStub::FindCodeInCache(Code** code_out) {
   Heap* heap = Isolate::Current()->heap();
   int index = heap->code_stubs()->FindEntry(GetKey());
-  if (index != NumberDictionary::kNotFound) {
+  if (index != UnseededNumberDictionary::kNotFound) {
     *code_out = Code::cast(heap->code_stubs()->ValueAt(index));
     return true;
   }
@@ -101,7 +101,14 @@ Handle<Code> CodeStub::GetCode() {
   Factory* factory = isolate->factory();
   Heap* heap = isolate->heap();
   Code* code;
-  if (!FindCodeInCache(&code)) {
+  if (UseSpecialCache()
+      ? FindCodeInSpecialCache(&code)
+      : FindCodeInCache(&code)) {
+    ASSERT(IsPregenerated() == code->is_pregenerated());
+    return Handle<Code>(code);
+  }
+
+  {
     HandleScope scope(isolate);
 
     // Generate the new code.
@@ -119,64 +126,25 @@ Handle<Code> CodeStub::GetCode() {
     Handle<Code> new_object = factory->NewCode(
         desc, flags, masm.CodeObject(), NeedsImmovableCode());
     RecordCodeGeneration(*new_object, &masm);
-    FinishCode(*new_object);
+    FinishCode(new_object);
 
-    // Update the dictionary and the root in Heap.
-    Handle<NumberDictionary> dict =
-        factory->DictionaryAtNumberPut(
-            Handle<NumberDictionary>(heap->code_stubs()),
-            GetKey(),
-            new_object);
-    heap->public_set_code_stubs(*dict);
+    if (UseSpecialCache()) {
+      AddToSpecialCache(new_object);
+    } else {
+      // Update the dictionary and the root in Heap.
+      Handle<UnseededNumberDictionary> dict =
+          factory->DictionaryAtNumberPut(
+              Handle<UnseededNumberDictionary>(heap->code_stubs()),
+              GetKey(),
+              new_object);
+      heap->public_set_code_stubs(*dict);
+    }
     code = *new_object;
-    Activate(code);
-  } else {
-    CHECK(IsPregenerated() == code->is_pregenerated());
   }
 
+  Activate(code);
   ASSERT(!NeedsImmovableCode() || heap->lo_space()->Contains(code));
   return Handle<Code>(code, isolate);
-}
-
-
-MaybeObject* CodeStub::TryGetCode() {
-  Code* code;
-  if (!FindCodeInCache(&code)) {
-    // Generate the new code.
-    MacroAssembler masm(Isolate::Current(), NULL, 256);
-    GenerateCode(&masm);
-    Heap* heap = masm.isolate()->heap();
-
-    // Create the code object.
-    CodeDesc desc;
-    masm.GetCode(&desc);
-
-    // Try to copy the generated code into a heap object.
-    Code::Flags flags = Code::ComputeFlags(
-        static_cast<Code::Kind>(GetCodeKind()),
-        GetICState());
-    Object* new_object;
-    { MaybeObject* maybe_new_object =
-          heap->CreateCode(desc, flags, masm.CodeObject());
-      if (!maybe_new_object->ToObject(&new_object)) return maybe_new_object;
-    }
-    code = Code::cast(new_object);
-    RecordCodeGeneration(code, &masm);
-    FinishCode(code);
-
-    // Try to update the code cache but do not fail if unable.
-    MaybeObject* maybe_new_object =
-        heap->code_stubs()->AtNumberPut(GetKey(), code);
-    if (maybe_new_object->ToObject(&new_object)) {
-      heap->public_set_code_stubs(NumberDictionary::cast(new_object));
-    } else if (MustBeInStubCache()) {
-      return maybe_new_object;
-    }
-
-    Activate(code);
-  }
-
-  return code;
 }
 
 
@@ -197,6 +165,32 @@ const char* CodeStub::MajorName(CodeStub::Major major_key,
 
 void CodeStub::PrintName(StringStream* stream) {
   stream->Add("%s", MajorName(MajorKey(), false));
+}
+
+
+void ICCompareStub::AddToSpecialCache(Handle<Code> new_object) {
+  ASSERT(*known_map_ != NULL);
+  Isolate* isolate = new_object->GetIsolate();
+  Factory* factory = isolate->factory();
+  return Map::UpdateCodeCache(known_map_,
+                              factory->compare_ic_symbol(),
+                              new_object);
+}
+
+
+bool ICCompareStub::FindCodeInSpecialCache(Code** code_out) {
+  Isolate* isolate = known_map_->GetIsolate();
+  Factory* factory = isolate->factory();
+  Code::Flags flags = Code::ComputeFlags(
+      static_cast<Code::Kind>(GetCodeKind()),
+      UNINITIALIZED);
+  Handle<Object> probe(
+      known_map_->FindInCodeCache(*factory->compare_ic_symbol(), flags));
+  if (probe->IsCode()) {
+    *code_out = Code::cast(*probe);
+    return true;
+  }
+  return false;
 }
 
 
@@ -225,6 +219,10 @@ void ICCompareStub::Generate(MacroAssembler* masm) {
     case CompareIC::OBJECTS:
       GenerateObjects(masm);
       break;
+    case CompareIC::KNOWN_OBJECTS:
+      ASSERT(*known_map_ != NULL);
+      GenerateKnownObjects(masm);
+      break;
     default:
       UNREACHABLE();
   }
@@ -251,6 +249,14 @@ void InstanceofStub::PrintName(StringStream* stream) {
               args,
               inline_check,
               return_true_false_object);
+}
+
+
+void JSEntryStub::FinishCode(Handle<Code> code) {
+  Handle<FixedArray> handler_table =
+      code->GetIsolate()->factory()->NewFixedArray(1, TENURED);
+  handler_table->set(0, Smi::FromInt(handler_offset_));
+  code->set_handler_table(*handler_table);
 }
 
 
@@ -290,12 +296,14 @@ void KeyedStoreElementStub::Generate(MacroAssembler* masm) {
     case FAST_SMI_ONLY_ELEMENTS: {
       KeyedStoreStubCompiler::GenerateStoreFastElement(masm,
                                                        is_js_array_,
-                                                       elements_kind_);
+                                                       elements_kind_,
+                                                       grow_mode_);
     }
       break;
     case FAST_DOUBLE_ELEMENTS:
       KeyedStoreStubCompiler::GenerateStoreFastDoubleElement(masm,
-                                                             is_js_array_);
+                                                             is_js_array_,
+                                                             grow_mode_);
       break;
     case EXTERNAL_BYTE_ELEMENTS:
     case EXTERNAL_UNSIGNED_BYTE_ELEMENTS:
@@ -332,6 +340,12 @@ void ArgumentsAccessStub::PrintName(StringStream* stream) {
 void CallFunctionStub::PrintName(StringStream* stream) {
   stream->Add("CallFunctionStub_Args%d", argc_);
   if (ReceiverMightBeImplicit()) stream->Add("_Implicit");
+  if (RecordCallTarget()) stream->Add("_Recording");
+}
+
+
+void CallConstructStub::PrintName(StringStream* stream) {
+  stream->Add("CallConstructStub");
   if (RecordCallTarget()) stream->Add("_Recording");
 }
 
@@ -428,10 +442,13 @@ void ElementsTransitionAndStoreStub::Generate(MacroAssembler* masm) {
       }
       KeyedStoreStubCompiler::GenerateStoreFastElement(masm,
                                                        is_jsarray_,
-                                                       FAST_ELEMENTS);
+                                                       FAST_ELEMENTS,
+                                                       grow_mode_);
     } else if (from_ == FAST_SMI_ONLY_ELEMENTS && to_ == FAST_DOUBLE_ELEMENTS) {
       ElementsTransitionGenerator::GenerateSmiOnlyToDouble(masm, &fail);
-      KeyedStoreStubCompiler::GenerateStoreFastDoubleElement(masm, is_jsarray_);
+      KeyedStoreStubCompiler::GenerateStoreFastDoubleElement(masm,
+                                                             is_jsarray_,
+                                                             grow_mode_);
     } else {
       UNREACHABLE();
     }

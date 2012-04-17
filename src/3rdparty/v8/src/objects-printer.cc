@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -151,6 +151,9 @@ void HeapObject::HeapObjectPrint(FILE* out) {
       PrintF(out, "Value wrapper around:");
       JSValue::cast(this)->value()->Print(out);
       break;
+    case JS_DATE_TYPE:
+      JSDate::cast(this)->value()->Print(out);
+      break;
     case CODE_TYPE:
       Code::cast(this)->CodePrint(out);
       break;
@@ -295,7 +298,9 @@ void JSObject::PrintProperties(FILE* out) {
         case NULL_DESCRIPTOR:
           PrintF(out, "(null descriptor)\n");
           break;
-        default:
+        case NORMAL:  // only in slow mode
+        case HANDLER:  // only in lookup results, not in descriptors
+        case INTERCEPTOR:  // only in lookup results, not in descriptors
           UNREACHABLE();
           break;
       }
@@ -444,6 +449,9 @@ static const char* TypeToString(InstanceType type) {
     case EXTERNAL_ASCII_SYMBOL_TYPE:
     case EXTERNAL_SYMBOL_WITH_ASCII_DATA_TYPE:
     case EXTERNAL_SYMBOL_TYPE: return "EXTERNAL_SYMBOL";
+    case SHORT_EXTERNAL_ASCII_SYMBOL_TYPE:
+    case SHORT_EXTERNAL_SYMBOL_WITH_ASCII_DATA_TYPE:
+    case SHORT_EXTERNAL_SYMBOL_TYPE: return "SHORT_EXTERNAL_SYMBOL";
     case ASCII_STRING_TYPE: return "ASCII_STRING";
     case STRING_TYPE: return "TWO_BYTE_STRING";
     case CONS_STRING_TYPE:
@@ -451,6 +459,9 @@ static const char* TypeToString(InstanceType type) {
     case EXTERNAL_ASCII_STRING_TYPE:
     case EXTERNAL_STRING_WITH_ASCII_DATA_TYPE:
     case EXTERNAL_STRING_TYPE: return "EXTERNAL_STRING";
+    case SHORT_EXTERNAL_ASCII_STRING_TYPE:
+    case SHORT_EXTERNAL_STRING_WITH_ASCII_DATA_TYPE:
+    case SHORT_EXTERNAL_STRING_TYPE: return "SHORT_EXTERNAL_STRING";
     case FIXED_ARRAY_TYPE: return "FIXED_ARRAY";
     case BYTE_ARRAY_TYPE: return "BYTE_ARRAY";
     case FREE_SPACE_TYPE: return "FREE_SPACE";
@@ -546,6 +557,21 @@ void PolymorphicCodeCache::PolymorphicCodeCachePrint(FILE* out) {
 }
 
 
+void TypeFeedbackInfo::TypeFeedbackInfoPrint(FILE* out) {
+  HeapObject::PrintHeader(out, "TypeFeedbackInfo");
+  PrintF(out, "\n - ic_total_count: %d, ic_with_type_info_count: %d",
+         ic_total_count(), ic_with_type_info_count());
+  PrintF(out, "\n - type_feedback_cells: ");
+  type_feedback_cells()->FixedArrayPrint(out);
+}
+
+
+void AliasedArgumentsEntry::AliasedArgumentsEntryPrint(FILE* out) {
+  HeapObject::PrintHeader(out, "AliasedArgumentsEntry");
+  PrintF(out, "\n - aliased_context_slot: %d", aliased_context_slot());
+}
+
+
 void FixedArray::FixedArrayPrint(FILE* out) {
   HeapObject::PrintHeader(out, "FixedArray");
   PrintF(out, " - length: %d", length());
@@ -561,7 +587,11 @@ void FixedDoubleArray::FixedDoubleArrayPrint(FILE* out) {
   HeapObject::PrintHeader(out, "FixedDoubleArray");
   PrintF(out, " - length: %d", length());
   for (int i = 0; i < length(); i++) {
-    PrintF(out, "\n  [%d]: %g", i, get_scalar(i));
+    if (is_the_hole(i)) {
+      PrintF(out, "\n  [%d]: <the hole>", i);
+    } else {
+      PrintF(out, "\n  [%d]: %g", i, get_scalar(i));
+    }
   }
   PrintF(out, "\n");
 }
@@ -619,7 +649,7 @@ void String::StringPrint(FILE* out) {
 
 
 // This method is only meant to be called from gdb for debugging purposes.
-// Since the string can also be in two-byte encoding, non-ascii characters
+// Since the string can also be in two-byte encoding, non-ASCII characters
 // will be ignored in the output.
 char* String::ToAsciiArray() {
   // Static so that subsequent calls frees previously allocated space.
@@ -630,6 +660,30 @@ char* String::ToAsciiArray() {
   WriteToFlat(this, buffer, 0, length());
   buffer[length()] = 0;
   return buffer;
+}
+
+
+static const char* const weekdays[] = {
+  "???", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
+};
+
+void JSDate::JSDatePrint(FILE* out) {
+  HeapObject::PrintHeader(out, "JSDate");
+  PrintF(out, " - map = 0x%p\n", reinterpret_cast<void*>(map()));
+  PrintF(out, " - value = ");
+  value()->Print(out);
+  if (!year()->IsSmi()) {
+    PrintF(out, " - time = NaN\n");
+  } else {
+    PrintF(out, " - time = %s %04d/%02d/%02d %02d:%02d:%02d\n",
+           weekdays[weekday()->IsSmi() ? Smi::cast(weekday())->value() + 1 : 0],
+           year()->IsSmi() ? Smi::cast(year())->value() : -1,
+           month()->IsSmi() ? Smi::cast(month())->value() : -1,
+           day()->IsSmi() ? Smi::cast(day())->value() : -1,
+           hour()->IsSmi() ? Smi::cast(hour())->value() : -1,
+           min()->IsSmi() ? Smi::cast(min())->value() : -1,
+           sec()->IsSmi() ? Smi::cast(sec())->value() : -1);
+  }
 }
 
 
@@ -775,6 +829,15 @@ void AccessorInfo::AccessorInfoPrint(FILE* out) {
   data()->ShortPrint(out);
   PrintF(out, "\n - flag: ");
   flag()->ShortPrint(out);
+}
+
+
+void AccessorPair::AccessorPairPrint(FILE* out) {
+  HeapObject::PrintHeader(out, "AccessorPair");
+  PrintF(out, "\n - getter: ");
+  getter()->ShortPrint(out);
+  PrintF(out, "\n - setter: ");
+  setter()->ShortPrint(out);
 }
 
 

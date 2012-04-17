@@ -30,19 +30,27 @@
 
 // The original source code covered by the above license above has been
 // modified significantly by Google Inc.
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 
 #ifndef V8_ASSEMBLER_H_
 #define V8_ASSEMBLER_H_
 
+#include "v8.h"
+
 #include "allocation.h"
+#include "builtins.h"
 #include "gdb-jit.h"
+#include "isolate.h"
 #include "runtime.h"
 #include "token.h"
 
 namespace v8 {
+
+class ApiFunction;
+
 namespace internal {
 
+struct StatsCounter;
 const unsigned kNoASTId = -1;
 // -----------------------------------------------------------------------------
 // Platform independent assembler base class.
@@ -57,21 +65,6 @@ class AssemblerBase: public Malloced {
  private:
   Isolate* isolate_;
   int jit_cookie_;
-};
-
-// -----------------------------------------------------------------------------
-// Common double constants.
-
-class DoubleConstant: public AllStatic {
- public:
-  static const double min_int;
-  static const double one_half;
-  static const double minus_zero;
-  static const double zero;
-  static const double uint8_max_value;
-  static const double negative_infinity;
-  static const double canonical_non_hole_nan;
-  static const double the_hole_nan;
 };
 
 
@@ -271,7 +264,7 @@ class RelocInfo BASE_EMBEDDED {
   INLINE(void apply(intptr_t delta));
 
   // Is the pointer this relocation info refers to coded like a plain pointer
-  // or is it strange in some way (eg relative or patched into a series of
+  // or is it strange in some way (e.g. relative or patched into a series of
   // instructions).
   bool IsCodedSpecially();
 
@@ -371,7 +364,7 @@ class RelocInfo BASE_EMBEDDED {
   // routines expect to access these pointers indirectly. The following
   // location provides a place for these pointers to exist natually
   // when accessed via the Iterator.
-  Object *reconstructed_obj_ptr_;
+  Object* reconstructed_obj_ptr_;
   // External-reference pointers are also split across instruction-pairs
   // in mips, but are accessed via indirect pointers. This location
   // provides a place for that pointer to exist naturally. Its address
@@ -542,6 +535,8 @@ class ExternalReference BASE_EMBEDDED {
     DIRECT_GETTER_CALL
   };
 
+  static void SetUp();
+
   typedef void* ExternalReferenceRedirector(void* original, Type type);
 
   ExternalReference(Builtins::CFunctionId id, Isolate* isolate);
@@ -587,10 +582,12 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference transcendental_cache_array_address(Isolate* isolate);
   static ExternalReference delete_handle_scope_extensions(Isolate* isolate);
 
+  static ExternalReference get_date_field_function(Isolate* isolate);
+  static ExternalReference date_cache_stamp(Isolate* isolate);
+
   // Deoptimization support.
   static ExternalReference new_deoptimizer_function(Isolate* isolate);
   static ExternalReference compute_output_frames_function(Isolate* isolate);
-  static ExternalReference global_contexts_list(Isolate* isolate);
 
   // Static data in the keyed lookup cache.
   static ExternalReference keyed_lookup_cache_keys(Isolate* isolate);
@@ -652,6 +649,7 @@ class ExternalReference BASE_EMBEDDED {
 
   static ExternalReference math_sin_double_function(Isolate* isolate);
   static ExternalReference math_cos_double_function(Isolate* isolate);
+  static ExternalReference math_tan_double_function(Isolate* isolate);
   static ExternalReference math_log_double_function(Isolate* isolate);
 
   Address address() const {return reinterpret_cast<Address>(address_);}
@@ -816,33 +814,33 @@ class PreservePositionScope BASE_EMBEDDED {
 // -----------------------------------------------------------------------------
 // Utility functions
 
-static inline bool is_intn(int x, int n)  {
+inline bool is_intn(int x, int n)  {
   return -(1 << (n-1)) <= x && x < (1 << (n-1));
 }
 
-static inline bool is_int8(int x)  { return is_intn(x, 8); }
-static inline bool is_int16(int x)  { return is_intn(x, 16); }
-static inline bool is_int18(int x)  { return is_intn(x, 18); }
-static inline bool is_int24(int x)  { return is_intn(x, 24); }
+inline bool is_int8(int x)  { return is_intn(x, 8); }
+inline bool is_int16(int x)  { return is_intn(x, 16); }
+inline bool is_int18(int x)  { return is_intn(x, 18); }
+inline bool is_int24(int x)  { return is_intn(x, 24); }
 
-static inline bool is_uintn(int x, int n) {
+inline bool is_uintn(int x, int n) {
   return (x & -(1 << n)) == 0;
 }
 
-static inline bool is_uint2(int x)  { return is_uintn(x, 2); }
-static inline bool is_uint3(int x)  { return is_uintn(x, 3); }
-static inline bool is_uint4(int x)  { return is_uintn(x, 4); }
-static inline bool is_uint5(int x)  { return is_uintn(x, 5); }
-static inline bool is_uint6(int x)  { return is_uintn(x, 6); }
-static inline bool is_uint8(int x)  { return is_uintn(x, 8); }
-static inline bool is_uint10(int x)  { return is_uintn(x, 10); }
-static inline bool is_uint12(int x)  { return is_uintn(x, 12); }
-static inline bool is_uint16(int x)  { return is_uintn(x, 16); }
-static inline bool is_uint24(int x)  { return is_uintn(x, 24); }
-static inline bool is_uint26(int x)  { return is_uintn(x, 26); }
-static inline bool is_uint28(int x)  { return is_uintn(x, 28); }
+inline bool is_uint2(int x)  { return is_uintn(x, 2); }
+inline bool is_uint3(int x)  { return is_uintn(x, 3); }
+inline bool is_uint4(int x)  { return is_uintn(x, 4); }
+inline bool is_uint5(int x)  { return is_uintn(x, 5); }
+inline bool is_uint6(int x)  { return is_uintn(x, 6); }
+inline bool is_uint8(int x)  { return is_uintn(x, 8); }
+inline bool is_uint10(int x)  { return is_uintn(x, 10); }
+inline bool is_uint12(int x)  { return is_uintn(x, 12); }
+inline bool is_uint16(int x)  { return is_uintn(x, 16); }
+inline bool is_uint24(int x)  { return is_uintn(x, 24); }
+inline bool is_uint26(int x)  { return is_uintn(x, 26); }
+inline bool is_uint28(int x)  { return is_uintn(x, 28); }
 
-static inline int NumberOfBitsSet(uint32_t x) {
+inline int NumberOfBitsSet(uint32_t x) {
   unsigned int num_bits_set;
   for (num_bits_set = 0; x; x >>= 1) {
     num_bits_set += x & 1;

@@ -104,8 +104,12 @@ void Code::CodeIterateBody(ObjectVisitor* v) {
                   RelocInfo::ModeMask(RelocInfo::DEBUG_BREAK_SLOT) |
                   RelocInfo::ModeMask(RelocInfo::RUNTIME_ENTRY);
 
+  // There are two places where we iterate code bodies: here and the
+  // templated CodeIterateBody (below).  They should be kept in sync.
   IteratePointer(v, kRelocationInfoOffset);
+  IteratePointer(v, kHandlerTableOffset);
   IteratePointer(v, kDeoptimizationDataOffset);
+  IteratePointer(v, kTypeFeedbackInfoOffset);
 
   RelocIterator it(this, mode_mask);
   for (; !it.done(); it.next()) {
@@ -124,12 +128,20 @@ void Code::CodeIterateBody(Heap* heap) {
                   RelocInfo::ModeMask(RelocInfo::DEBUG_BREAK_SLOT) |
                   RelocInfo::ModeMask(RelocInfo::RUNTIME_ENTRY);
 
+  // There are two places where we iterate code bodies: here and the
+  // non-templated CodeIterateBody (above).  They should be kept in sync.
   StaticVisitor::VisitPointer(
       heap,
       reinterpret_cast<Object**>(this->address() + kRelocationInfoOffset));
   StaticVisitor::VisitPointer(
       heap,
+      reinterpret_cast<Object**>(this->address() + kHandlerTableOffset));
+  StaticVisitor::VisitPointer(
+      heap,
       reinterpret_cast<Object**>(this->address() + kDeoptimizationDataOffset));
+  StaticVisitor::VisitPointer(
+      heap,
+      reinterpret_cast<Object**>(this->address() + kTypeFeedbackInfoOffset));
 
   RelocIterator it(this, mode_mask);
   for (; !it.done(); it.next()) {

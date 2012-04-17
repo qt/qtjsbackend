@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -25,17 +25,16 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
 // -------------------------------------------------------------------
 //
 // If this object gets passed to an error constructor the error will
 // get an accessor for .message that constructs a descriptive error
 // message on access.
-const kAddMessageAccessorsMarker = { };
+var kAddMessageAccessorsMarker = { };
 
 // This will be lazily initialized when first needed (and forcibly
 // overwritten even though it's const).
-const kMessages = 0;
+var kMessages = 0;
 
 function FormatString(format, message) {
   var args = %MessageGetArguments(message);
@@ -206,11 +205,12 @@ function FormatMessage(message) {
       "illegal_break",                ["Illegal break statement"],
       "illegal_continue",             ["Illegal continue statement"],
       "illegal_return",               ["Illegal return statement"],
+      "illegal_let",                  ["Illegal let declaration outside extended mode"],
       "error_loading_debugger",       ["Error loading debugger"],
       "no_input_to_regexp",           ["No input to ", "%0"],
       "invalid_json",                 ["String '", "%0", "' is not valid JSON"],
       "circular_structure",           ["Converting circular structure to JSON"],
-      "obj_ctor_property_non_object", ["Object.", "%0", " called on non-object"],
+      "called_on_non_object",         ["%0", " called on non-object"],
       "called_on_null_or_undefined",  ["%0", " called on null or undefined"],
       "array_indexof_not_defined",    ["Array.getIndexOf: Argument undefined"],
       "object_not_extensible",        ["Can't add property ", "%0", ", object is not extensible"],
@@ -245,18 +245,26 @@ function FormatMessage(message) {
       "unprotected_const",            ["Illegal const declaration in unprotected statement context."],
       "cant_prevent_ext_external_array_elements", ["Cannot prevent extension of an object with external array elements"],
       "redef_external_array_element", ["Cannot redefine a property of an object with external array elements"],
+      "harmony_const_assign",         ["Assignment to constant variable."],
+      "invalid_module_path",          ["Module does not export '", "%0", "', or export is not itself a module"],
+      "module_type_error",            ["Module '", "%0", "' used improperly"],
     ];
     var messages = { __proto__ : null };
-    var desc = new PropertyDescriptor();
-    desc.setConfigurable(false);
-    desc.setEnumerable(false);
-    desc.setWritable(false);
     for (var i = 0; i < messagesDictionary.length; i += 2) {
       var key = messagesDictionary[i];
       var format = messagesDictionary[i + 1];
-      ObjectFreeze(format);
-      desc.setValue(format);
-      DefineOwnProperty(messages, key, desc);
+
+      for (var j = 0; j < format.length; j++) {
+        %IgnoreAttributesAndSetProperty(format, %_NumberToString(j), format[j],
+                                        DONT_DELETE | READ_ONLY | DONT_ENUM);
+      }
+      %IgnoreAttributesAndSetProperty(format, 'length', format.length,
+                                      DONT_DELETE | READ_ONLY | DONT_ENUM);
+      %PreventExtensions(format);
+      %IgnoreAttributesAndSetProperty(messages,
+                                      key,
+                                      format,
+                                      DONT_DELETE | DONT_ENUM | READ_ONLY);
     }
     %PreventExtensions(messages);
     %IgnoreAttributesAndSetProperty(builtins, "kMessages",
@@ -389,7 +397,7 @@ function ScriptLocationFromPosition(position,
   }
 
   return new SourceLocation(this, position, line, column, start, end);
-};
+}
 
 
 /**
@@ -419,7 +427,7 @@ function ScriptLocationFromLine(opt_line, opt_column, opt_offset_position) {
   // resource.
   var column = opt_column || 0;
   if (line == 0) {
-    column -= this.column_offset
+    column -= this.column_offset;
   }
 
   var offset_position = opt_offset_position || 0;
@@ -434,7 +442,8 @@ function ScriptLocationFromLine(opt_line, opt_column, opt_offset_position) {
       return null;
     }
 
-    return this.locationFromPosition(this.line_ends[offset_line + line - 1] + 1 + column);  // line > 0 here.
+    return this.locationFromPosition(
+        this.line_ends[offset_line + line - 1] + 1 + column);  // line > 0 here.
   }
 }
 
@@ -450,8 +459,10 @@ function ScriptLocationFromLine(opt_line, opt_column, opt_offset_position) {
  *     invalid
  */
 function ScriptSourceSlice(opt_from_line, opt_to_line) {
-  var from_line = IS_UNDEFINED(opt_from_line) ? this.line_offset : opt_from_line;
-  var to_line = IS_UNDEFINED(opt_to_line) ? this.line_offset + this.lineCount() : opt_to_line
+  var from_line = IS_UNDEFINED(opt_from_line) ? this.line_offset
+                                              : opt_from_line;
+  var to_line = IS_UNDEFINED(opt_to_line) ? this.line_offset + this.lineCount()
+                                          : opt_to_line;
 
   // Adjust according to the offset within the resource.
   from_line -= this.line_offset;
@@ -471,8 +482,10 @@ function ScriptSourceSlice(opt_from_line, opt_to_line) {
   var to_position = to_line == 0 ? 0 : line_ends[to_line - 1] + 1;
 
   // Return a source slice with line numbers re-adjusted to the resource.
-  return new SourceSlice(this, from_line + this.line_offset, to_line + this.line_offset,
-                         from_position, to_position);
+  return new SourceSlice(this,
+                         from_line + this.line_offset,
+                         to_line + this.line_offset,
+                          from_position, to_position);
 }
 
 
@@ -505,7 +518,7 @@ function ScriptSourceLine(opt_line) {
 function ScriptLineCount() {
   // Return number of source lines.
   return this.line_ends.length;
-};
+}
 
 
 /**
@@ -522,6 +535,13 @@ function ScriptNameOrSourceURL() {
   if (this.name) {
     return this.name;
   }
+
+  // The result is cached as on long scripts it takes noticable time to search
+  // for the sourceURL.
+  if (this.hasCachedNameOrSourceURL)
+      return this.cachedNameOrSourceURL;
+  this.hasCachedNameOrSourceURL = true;
+
   // TODO(608): the spaces in a regexp below had to be escaped as \040
   // because this file is being processed by js2c whose handling of spaces
   // in regexps is broken. Also, ['"] are excluded from allowed URLs to
@@ -530,6 +550,7 @@ function ScriptNameOrSourceURL() {
   // the scanner/parser.
   var source = ToString(this.source);
   var sourceUrlPos = %StringIndexOf(source, "sourceURL=", 0);
+  this.cachedNameOrSourceURL = this.name;
   if (sourceUrlPos > 4) {
     var sourceUrlPattern =
         /\/\/@[\040\t]sourceURL=[\040\t]*([^\s\'\"]*)[\040\t]*$/gm;
@@ -540,15 +561,17 @@ function ScriptNameOrSourceURL() {
     var match =
         %_RegExpExec(sourceUrlPattern, source, sourceUrlPos - 4, matchInfo);
     if (match) {
-      return SubString(source, matchInfo[CAPTURE(2)], matchInfo[CAPTURE(3)]);
+      this.cachedNameOrSourceURL =
+          SubString(source, matchInfo[CAPTURE(2)], matchInfo[CAPTURE(3)]);
     }
   }
-  return this.name;
+  return this.cachedNameOrSourceURL;
 }
 
 
 SetUpLockedPrototype(Script,
-  $Array("source", "name", "line_ends", "line_offset", "column_offset"),
+  $Array("source", "name", "line_ends", "line_offset", "column_offset",
+         "cachedNameOrSourceURL", "hasCachedNameOrSourceURL" ),
   $Array(
     "lineFromPosition", ScriptLineFromPosition,
     "locationFromPosition", ScriptLocationFromPosition,
@@ -570,10 +593,10 @@ SetUpLockedPrototype(Script,
  *   position : position within the source
  *   start    : position of start of source context (inclusive)
  *   end      : position of end of source context (not inclusive)
- * Source text for the source context is the character interval [start, end[. In
- * most cases end will point to a newline character. It might point just past
- * the final position of the source if the last source line does not end with a
- * newline character.
+ * Source text for the source context is the character interval
+ * [start, end[. In most cases end will point to a newline character.
+ * It might point just past the final position of the source if the last
+ * source line does not end with a newline character.
  * @param {Script} script The Script object for which this is a location
  * @param {number} position Source position for the location
  * @param {number} line The line number for the location
@@ -591,7 +614,7 @@ function SourceLocation(script, position, line, column, start, end) {
   this.end = end;
 }
 
-const kLineLengthLimit = 78;
+var kLineLengthLimit = 78;
 
 /**
  * Restrict source location start and end positions to make the source slice
@@ -640,7 +663,7 @@ function SourceLocationRestrict(opt_limit, opt_before) {
       this.end = this.start + limit;
     }
   }
-};
+}
 
 
 /**
@@ -649,8 +672,11 @@ function SourceLocationRestrict(opt_limit, opt_before) {
  *     Source text for this location.
  */
 function SourceLocationSourceText() {
-  return %_CallFunction(this.script.source, this.start, this.end, StringSubstring);
-};
+  return %_CallFunction(this.script.source,
+                        this.start,
+                        this.end,
+                        StringSubstring);
+}
 
 
 SetUpLockedPrototype(SourceLocation,
@@ -658,7 +684,7 @@ SetUpLockedPrototype(SourceLocation,
   $Array(
     "restrict", SourceLocationRestrict,
     "sourceText", SourceLocationSourceText
-  )
+ )
 );
 
 
@@ -698,7 +724,7 @@ function SourceSliceSourceText() {
                         this.from_position,
                         this.to_position,
                         StringSubstring);
-};
+}
 
 SetUpLockedPrototype(SourceSlice,
   $Array("script", "from_line", "to_line", "from_position", "to_position"),
@@ -733,24 +759,19 @@ function DefineOneShotAccessor(obj, name, fun) {
   // can't rely on 'this' being the same as 'obj'.
   var hasBeenSet = false;
   var value;
-  function getter() {
+  var getter = function() {
     if (hasBeenSet) {
       return value;
     }
     hasBeenSet = true;
     value = fun(obj);
     return value;
-  }
-  function setter(v) {
+  };
+  var setter = function(v) {
     hasBeenSet = true;
     value = v;
-  }
-  var desc = { get: getter,
-               set: setter,
-               enumerable: false,
-               configurable: true };
-  desc = ToPropertyDescriptor(desc);
-  DefineOwnProperty(obj, name, desc, true);
+  };
+  %DefineOrRedefineAccessorProperty(obj, name, getter, setter, DONT_ENUM);
 }
 
 function CallSite(receiver, fun, pos) {
@@ -761,7 +782,7 @@ function CallSite(receiver, fun, pos) {
 
 function CallSiteGetThis() {
   return this.receiver;
-};
+}
 
 function CallSiteGetTypeName() {
   var constructor = this.receiver.constructor;
@@ -773,33 +794,33 @@ function CallSiteGetTypeName() {
     return %_CallFunction(this.receiver, ObjectToString);
   }
   return constructorName;
-};
+}
 
 function CallSiteIsToplevel() {
   if (this.receiver == null) {
     return true;
   }
   return IS_GLOBAL(this.receiver);
-};
+}
 
 function CallSiteIsEval() {
   var script = %FunctionGetScript(this.fun);
   return script && script.compilation_type == COMPILATION_TYPE_EVAL;
-};
+}
 
 function CallSiteGetEvalOrigin() {
   var script = %FunctionGetScript(this.fun);
   return FormatEvalOrigin(script);
-};
+}
 
 function CallSiteGetScriptNameOrSourceURL() {
   var script = %FunctionGetScript(this.fun);
   return script ? script.nameOrSourceURL() : null;
-};
+}
 
 function CallSiteGetFunction() {
   return this.fun;
-};
+}
 
 function CallSiteGetFunctionName() {
   // See if the function knows its own name
@@ -815,15 +836,19 @@ function CallSiteGetFunctionName() {
     return "eval";
   }
   return null;
-};
+}
 
 function CallSiteGetMethodName() {
   // See if we can find a unique property on the receiver that holds
   // this function.
   var ownName = this.fun.name;
   if (ownName && this.receiver &&
-      (%_CallFunction(this.receiver, ownName, ObjectLookupGetter) === this.fun ||
-       %_CallFunction(this.receiver, ownName, ObjectLookupSetter) === this.fun ||
+      (%_CallFunction(this.receiver,
+                      ownName,
+                      ObjectLookupGetter) === this.fun ||
+       %_CallFunction(this.receiver,
+                      ownName,
+                      ObjectLookupSetter) === this.fun ||
        this.receiver[ownName] === this.fun)) {
     // To handle DontEnum properties we guess that the method has
     // the same name as the function.
@@ -833,7 +858,8 @@ function CallSiteGetMethodName() {
   for (var prop in this.receiver) {
     if (this.receiver.__lookupGetter__(prop) === this.fun ||
         this.receiver.__lookupSetter__(prop) === this.fun ||
-        (!this.receiver.__lookupGetter__(prop) && this.receiver[prop] === this.fun)) {
+        (!this.receiver.__lookupGetter__(prop) &&
+         this.receiver[prop] === this.fun)) {
       // If we find more than one match bail out to avoid confusion.
       if (name) {
         return null;
@@ -845,12 +871,12 @@ function CallSiteGetMethodName() {
     return name;
   }
   return null;
-};
+}
 
 function CallSiteGetFileName() {
   var script = %FunctionGetScript(this.fun);
   return script ? script.name : null;
-};
+}
 
 function CallSiteGetLineNumber() {
   if (this.pos == -1) {
@@ -862,7 +888,7 @@ function CallSiteGetLineNumber() {
     location = script.locationFromPosition(this.pos, true);
   }
   return location ? location.line + 1 : null;
-};
+}
 
 function CallSiteGetColumnNumber() {
   if (this.pos == -1) {
@@ -874,16 +900,16 @@ function CallSiteGetColumnNumber() {
     location = script.locationFromPosition(this.pos, true);
   }
   return location ? location.column + 1: null;
-};
+}
 
 function CallSiteIsNative() {
   var script = %FunctionGetScript(this.fun);
   return script ? (script.type == TYPE_NATIVE) : false;
-};
+}
 
 function CallSiteGetPosition() {
   return this.pos;
-};
+}
 
 function CallSiteIsConstructor() {
   var constructor = this.receiver ? this.receiver.constructor : null;
@@ -891,7 +917,7 @@ function CallSiteIsConstructor() {
     return false;
   }
   return this.fun === constructor;
-};
+}
 
 SetUpLockedPrototype(CallSite, $Array("receiver", "fun", "pos"), $Array(
   "getThis", CallSiteGetThis,
@@ -934,12 +960,13 @@ function FormatEvalOrigin(script) {
       // eval script originated from "real" source.
       if (eval_from_script.name) {
         eval_origin += " (" + eval_from_script.name;
-        var location = eval_from_script.locationFromPosition(script.eval_from_script_position, true);
+        var location = eval_from_script.locationFromPosition(
+            script.eval_from_script_position, true);
         if (location) {
           eval_origin += ":" + (location.line + 1);
           eval_origin += ":" + (location.column + 1);
         }
-        eval_origin += ")"
+        eval_origin += ")";
       } else {
         eval_origin += " (unknown source)";
       }
@@ -947,7 +974,7 @@ function FormatEvalOrigin(script) {
   }
 
   return eval_origin;
-};
+}
 
 function FormatSourcePosition(frame) {
   var fileName;
@@ -956,8 +983,9 @@ function FormatSourcePosition(frame) {
     fileLocation = "native";
   } else if (frame.isEval()) {
     fileName = frame.getScriptNameOrSourceURL();
-    if (!fileName)
+    if (!fileName) {
       fileLocation = frame.getEvalOrigin();
+    }
   } else {
     fileName = frame.getFileName();
   }
@@ -1060,19 +1088,19 @@ function captureStackTrace(obj, cons_opt) {
   if (stackTraceLimit < 0 || stackTraceLimit > 10000) {
     stackTraceLimit = 10000;
   }
-  var raw_stack = %CollectStackTrace(cons_opt
-                                     ? cons_opt
-                                     : captureStackTrace, stackTraceLimit);
+  var raw_stack = %CollectStackTrace(obj,
+                                     cons_opt ? cons_opt : captureStackTrace,
+                                     stackTraceLimit);
   DefineOneShotAccessor(obj, 'stack', function (obj) {
     return FormatRawStackTrace(obj, raw_stack);
   });
-};
+}
 
 
 function SetUpError() {
   // Define special error type constructors.
 
-  function DefineError(f) {
+  var DefineError = function(f) {
     // Store the error function in both the global object
     // and the runtime object. The function is fetched
     // from the runtime object when throwing errors from
@@ -1088,7 +1116,7 @@ function SetUpError() {
       // However, it can't be an instance of the Error object because
       // it hasn't been properly configured yet.  Instead we create a
       // special not-a-true-error-but-close-enough object.
-      function ErrorPrototype() {}
+      var ErrorPrototype = function() {};
       %FunctionSetPrototype(ErrorPrototype, $Object.prototype);
       %FunctionSetInstanceClassName(ErrorPrototype, 'Error');
       %FunctionSetPrototype(f, new ErrorPrototype());
@@ -1130,7 +1158,7 @@ function SetUpError() {
       }
     });
     %SetNativeFlag(f);
-  }
+  };
 
   DefineError(function Error() { });
   DefineError(function TypeError() { });
@@ -1149,14 +1177,14 @@ $Error.captureStackTrace = captureStackTrace;
 
 // Global list of error objects visited during ErrorToString. This is
 // used to detect cycles in error toString formatting.
-const visited_errors = new InternalArray();
-const cyclic_error_marker = new $Object();
+var visited_errors = new InternalArray();
+var cyclic_error_marker = new $Object();
 
 function ErrorToStringDetectCycle(error) {
   if (!%PushIfAbsent(visited_errors, error)) throw cyclic_error_marker;
   try {
     var type = error.type;
-    var name = error.name
+    var name = error.name;
     name = IS_UNDEFINED(name) ? "Error" : TO_STRING_INLINE(name);
     var message = error.message;
     var hasMessage = %_CallFunction(error, "message", ObjectHasOwnProperty);
@@ -1173,9 +1201,8 @@ function ErrorToStringDetectCycle(error) {
 }
 
 function ErrorToString() {
-  if (IS_NULL_OR_UNDEFINED(this) && !IS_UNDETECTABLE(this)) {
-    throw MakeTypeError("called_on_null_or_undefined",
-                        ["Error.prototype.toString"]);
+  if (!IS_SPEC_OBJECT(this)) {
+    throw MakeTypeError("called_on_non_object", ["Error.prototype.toString"]);
   }
 
   try {
@@ -1195,4 +1222,4 @@ InstallFunctions($Error.prototype, DONT_ENUM, ['toString', ErrorToString]);
 
 // Boilerplate for exceptions for stack overflows. Used from
 // Isolate::StackOverflow().
-const kStackOverflowBoilerplate = MakeRangeError('stack_overflow', []);
+var kStackOverflowBoilerplate = MakeRangeError('stack_overflow', []);

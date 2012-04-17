@@ -82,8 +82,7 @@ bp = Debug.setBreakPoint(f, 3);
 // Step through the function ensuring that the var statements are hit as well.
 prepare_step_test();
 f();
-// TODO(1782): Fix issue to bring back this assert.
-//assertEquals(4, step_count);
+assertEquals(4, step_count);
 
 // Clear the breakpoint and check that no stepping happens.
 Debug.clearBreakPoint(bp);

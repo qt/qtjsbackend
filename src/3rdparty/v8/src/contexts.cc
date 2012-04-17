@@ -103,19 +103,11 @@ Handle<Object> Context::Lookup(Handle<String> name,
     PrintF(")\n");
   }
 
-  Handle<JSObject> qml_global;
-  Handle<JSObject> qml_global_global;
-
   do {
     if (FLAG_trace_contexts) {
       PrintF(" - looking in context %p", reinterpret_cast<void*>(*context));
       if (context->IsGlobalContext()) PrintF(" (global context)");
       PrintF("\n");
-    }
-
-    if (qml_global.is_null() && !context->qml_global()->IsUndefined()) {
-      qml_global = Handle<JSObject>(context->qml_global(), isolate);
-      qml_global_global = Handle<JSObject>(context->global(), isolate);
     }
 
     // 1. Check global objects, subjects of with, and extension objects.
@@ -145,16 +137,17 @@ Handle<Object> Context::Lookup(Handle<String> name,
     if (context->IsFunctionContext() || context->IsBlockContext()) {
       // Use serialized scope information of functions and blocks to search
       // for the context index.
-      Handle<SerializedScopeInfo> scope_info;
+      Handle<ScopeInfo> scope_info;
       if (context->IsFunctionContext()) {
-        scope_info = Handle<SerializedScopeInfo>(
+        scope_info = Handle<ScopeInfo>(
             context->closure()->shared()->scope_info(), isolate);
       } else {
-        scope_info = Handle<SerializedScopeInfo>(
-            SerializedScopeInfo::cast(context->extension()), isolate);
+        scope_info = Handle<ScopeInfo>(
+            ScopeInfo::cast(context->extension()), isolate);
       }
       VariableMode mode;
-      int slot_index = scope_info->ContextSlotIndex(*name, &mode);
+      InitializationFlag init_flag;
+      int slot_index = scope_info->ContextSlotIndex(*name, &mode, &init_flag);
       ASSERT(slot_index < 0 || slot_index >= MIN_CONTEXT_SLOTS);
       if (slot_index >= 0) {
         if (FLAG_trace_contexts) {
@@ -176,15 +169,19 @@ Handle<Object> Context::Lookup(Handle<String> name,
             break;
           case LET:
             *attributes = NONE;
-            *binding_flags = MUTABLE_CHECK_INITIALIZED;
+            *binding_flags = (init_flag == kNeedsInitialization)
+                ? MUTABLE_CHECK_INITIALIZED : MUTABLE_IS_INITIALIZED;
             break;
           case CONST:
             *attributes = READ_ONLY;
-            *binding_flags = IMMUTABLE_CHECK_INITIALIZED;
+            *binding_flags = (init_flag == kNeedsInitialization)
+                ? IMMUTABLE_CHECK_INITIALIZED : IMMUTABLE_IS_INITIALIZED;
             break;
           case CONST_HARMONY:
             *attributes = READ_ONLY;
-            *binding_flags = IMMUTABLE_CHECK_INITIALIZED_HARMONY;
+            *binding_flags = (init_flag == kNeedsInitialization)
+                ? IMMUTABLE_CHECK_INITIALIZED_HARMONY :
+                IMMUTABLE_IS_INITIALIZED_HARMONY;
             break;
           case DYNAMIC:
           case DYNAMIC_GLOBAL:
@@ -236,95 +233,10 @@ Handle<Object> Context::Lookup(Handle<String> name,
     }
   } while (follow_context_chain);
 
-  if (!qml_global.is_null()) {
-    if ((flags & FOLLOW_PROTOTYPE_CHAIN) == 0) {
-      *attributes = qml_global_global->GetLocalPropertyAttribute(*name);
-    } else {
-      *attributes = qml_global_global->GetPropertyAttribute(*name);
-    }
-
-    if (*attributes != ABSENT) {
-      *attributes = ABSENT;
-    } else {
-      if ((flags & FOLLOW_PROTOTYPE_CHAIN) == 0) {
-        *attributes = qml_global->GetLocalPropertyAttribute(*name);
-      } else {
-        *attributes = qml_global->GetPropertyAttribute(*name);
-      }
-
-      if (*attributes != ABSENT) {
-        // property found
-        if (FLAG_trace_contexts) {
-          PrintF("=> found property in qml global object %p\n",
-                 reinterpret_cast<void*>(*qml_global));
-        }
-        return qml_global;
-      }
-    }
-  }
-
   if (FLAG_trace_contexts) {
     PrintF("=> no property/slot found\n");
   }
   return Handle<Object>::null();
-}
-
-
-bool Context::GlobalIfNotShadowedByEval(Handle<String> name) {
-  Context* context = this;
-
-  // Check that there is no local with the given name in contexts
-  // before the global context and check that there are no context
-  // extension objects (conservative check for with statements).
-  while (!context->IsGlobalContext()) {
-    // Check if the context is a catch or with context, or has introduced
-    // bindings by calling non-strict eval.
-    if (context->has_extension()) return false;
-
-    // Not a with context so it must be a function context.
-    ASSERT(context->IsFunctionContext());
-
-    // Check non-parameter locals.
-    Handle<SerializedScopeInfo> scope_info(
-        context->closure()->shared()->scope_info());
-    VariableMode mode;
-    int index = scope_info->ContextSlotIndex(*name, &mode);
-    ASSERT(index < 0 || index >= MIN_CONTEXT_SLOTS);
-    if (index >= 0) return false;
-
-    // Check parameter locals.
-    int param_index = scope_info->ParameterIndex(*name);
-    if (param_index >= 0) return false;
-
-    // Check context only holding the function name variable.
-    index = scope_info->FunctionContextSlotIndex(*name, NULL);
-    if (index >= 0) return false;
-    context = context->previous();
-  }
-
-  // No local or potential with statement found so the variable is
-  // global unless it is shadowed by an eval-introduced variable.
-  return true;
-}
-
-
-void Context::ComputeEvalScopeInfo(bool* outer_scope_calls_non_strict_eval) {
-  // Skip up the context chain checking all the function contexts to see
-  // whether they call eval.
-  Context* context = this;
-  while (!context->IsGlobalContext()) {
-    if (context->IsFunctionContext()) {
-      Handle<SerializedScopeInfo> scope_info(
-          context->closure()->shared()->scope_info());
-      if (scope_info->CallsEval() && !scope_info->IsStrictMode()) {
-        // No need to go further since the answers will not change from
-        // here.
-        *outer_scope_calls_non_strict_eval = true;
-        return;
-      }
-    }
-    context = context->previous();
-  }
 }
 
 

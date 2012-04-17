@@ -229,8 +229,36 @@ void Debug::GenerateCallICDebugBreak(MacroAssembler* masm) {
 }
 
 
-void Debug::GenerateConstructCallDebugBreak(MacroAssembler* masm) {
+void Debug::GenerateReturnDebugBreak(MacroAssembler* masm) {
   // Register state just before return from JS function (from codegen-x64.cc).
+  // ----------- S t a t e -------------
+  //  -- rax: return value
+  // -----------------------------------
+  Generate_DebugBreakCallHelper(masm, rax.bit(), 0, true);
+}
+
+
+void Debug::GenerateCallFunctionStubDebugBreak(MacroAssembler* masm) {
+  // Register state for CallFunctionStub (from code-stubs-x64.cc).
+  // ----------- S t a t e -------------
+  //  -- rdi : function
+  // -----------------------------------
+  Generate_DebugBreakCallHelper(masm, rdi.bit(), 0, false);
+}
+
+
+void Debug::GenerateCallFunctionStubRecordDebugBreak(MacroAssembler* masm) {
+  // Register state for CallFunctionStub (from code-stubs-x64.cc).
+  // ----------- S t a t e -------------
+  //  -- rdi : function
+  //  -- rbx: cache cell for call target
+  // -----------------------------------
+  Generate_DebugBreakCallHelper(masm, rbx.bit() | rdi.bit(), 0, false);
+}
+
+
+void Debug::GenerateCallConstructStubDebugBreak(MacroAssembler* masm) {
+  // Register state for CallConstructStub (from code-stubs-x64.cc).
   // rax is the actual number of arguments not encoded as a smi, see comment
   // above IC call.
   // ----------- S t a t e -------------
@@ -241,21 +269,16 @@ void Debug::GenerateConstructCallDebugBreak(MacroAssembler* masm) {
 }
 
 
-void Debug::GenerateReturnDebugBreak(MacroAssembler* masm) {
-  // Register state just before return from JS function (from codegen-x64.cc).
+void Debug::GenerateCallConstructStubRecordDebugBreak(MacroAssembler* masm) {
+  // Register state for CallConstructStub (from code-stubs-x64.cc).
+  // rax is the actual number of arguments not encoded as a smi, see comment
+  // above IC call.
   // ----------- S t a t e -------------
-  //  -- rax: return value
+  //  -- rax: number of arguments
+  //  -- rbx: cache cell for call target
   // -----------------------------------
-  Generate_DebugBreakCallHelper(masm, rax.bit(), 0, true);
-}
-
-
-void Debug::GenerateStubNoRegistersDebugBreak(MacroAssembler* masm) {
-  // Register state for stub CallFunction (from CallFunctionStub in ic-x64.cc).
-  // ----------- S t a t e -------------
-  //  No registers used on entry.
-  // -----------------------------------
-  Generate_DebugBreakCallHelper(masm, 0, 0, false);
+  // The number of arguments in rax is not smi encoded.
+  Generate_DebugBreakCallHelper(masm, rbx.bit() | rdi.bit(), rax.bit(), false);
 }
 
 
@@ -264,9 +287,7 @@ void Debug::GenerateSlot(MacroAssembler* masm) {
   Label check_codesize;
   __ bind(&check_codesize);
   __ RecordDebugBreakSlot();
-  for (int i = 0; i < Assembler::kDebugBreakSlotLength; i++) {
-    __ nop();
-  }
+  __ Nop(Assembler::kDebugBreakSlotLength);
   ASSERT_EQ(Assembler::kDebugBreakSlotLength,
             masm->SizeOfCodeGeneratedSince(&check_codesize));
 }

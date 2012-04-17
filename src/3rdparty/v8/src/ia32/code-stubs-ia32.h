@@ -49,6 +49,8 @@ class TranscendentalCacheStub: public CodeStub {
                           ArgumentType argument_type)
       : type_(type), argument_type_(argument_type) {}
   void Generate(MacroAssembler* masm);
+  static void GenerateOperation(MacroAssembler* masm,
+                                TranscendentalCache::Type type);
  private:
   TranscendentalCache::Type type_;
   ArgumentType argument_type_;
@@ -56,7 +58,6 @@ class TranscendentalCacheStub: public CodeStub {
   Major MajorKey() { return TranscendentalCache; }
   int MinorKey() { return type_ | argument_type_; }
   Runtime::FunctionId RuntimeFunction();
-  void GenerateOperation(MacroAssembler* masm);
 };
 
 
@@ -147,7 +148,7 @@ class UnaryOpStub: public CodeStub {
     return UnaryOpIC::ToState(operand_type_);
   }
 
-  virtual void FinishCode(Code* code) {
+  virtual void FinishCode(Handle<Code> code) {
     code->set_unary_op_type(operand_type_);
   }
 };
@@ -234,7 +235,7 @@ class BinaryOpStub: public CodeStub {
     return BinaryOpIC::ToState(operands_type_);
   }
 
-  virtual void FinishCode(Code* code) {
+  virtual void FinishCode(Handle<Code> code) {
     code->set_binary_op_type(operands_type_);
     code->set_binary_op_result_type(result_type_);
   }
@@ -709,13 +710,6 @@ class RecordWriteStub: public CodeStub {
         AddressBits::encode(address_.code()) |
         RememberedSetActionBits::encode(remembered_set_action_) |
         SaveFPRegsModeBits::encode(save_fp_regs_mode_);
-  }
-
-  bool MustBeInStubCache() {
-    // All stubs must be registered in the stub cache
-    // otherwise IncrementalMarker would not be able to find
-    // and patch it.
-    return true;
   }
 
   void Activate(Code* code) {

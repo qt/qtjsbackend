@@ -32,7 +32,7 @@
 
 // The original source code covered by the above license above has been modified
 // significantly by Google Inc.
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 
 #include "v8.h"
 
@@ -350,7 +350,7 @@ Assembler::Assembler(Isolate* arg_isolate, void* buffer, int buffer_size)
   }
 #endif
 
-  // Setup buffer pointers.
+  // Set up buffer pointers.
   ASSERT(buffer_ != NULL);
   pc_ = buffer_;
   reloc_info_writer.Reposition(buffer_ + buffer_size, pc_);
@@ -377,7 +377,7 @@ void Assembler::GetCode(CodeDesc* desc) {
   // Finalize code (at this point overflow() may be true, but the gap ensures
   // that we are still not overlapping instructions and relocation info).
   ASSERT(pc_ <= reloc_info_writer.pos());  // No overlap.
-  // Setup code descriptor.
+  // Set up code descriptor.
   desc->buffer = buffer_;
   desc->buffer_size = buffer_size_;
   desc->instr_size = pc_offset();
@@ -388,8 +388,91 @@ void Assembler::GetCode(CodeDesc* desc) {
 
 void Assembler::Align(int m) {
   ASSERT(IsPowerOf2(m));
-  while ((pc_offset() & (m - 1)) != 0) {
-    nop();
+  int mask = m - 1;
+  int addr = pc_offset();
+  Nop((m - (addr & mask)) & mask);
+}
+
+
+bool Assembler::IsNop(Address addr) {
+  Address a = addr;
+  while (*a == 0x66) a++;
+  if (*a == 0x90) return true;
+  if (a[0] == 0xf && a[1] == 0x1f) return true;
+  return false;
+}
+
+
+void Assembler::Nop(int bytes) {
+  EnsureSpace ensure_space(this);
+
+  if (!CpuFeatures::IsSupported(SSE2)) {
+    // Older CPUs that do not support SSE2 may not support multibyte NOP
+    // instructions.
+    for (; bytes > 0; bytes--) {
+      EMIT(0x90);
+    }
+    return;
+  }
+
+  // Multi byte nops from http://support.amd.com/us/Processor_TechDocs/40546.pdf
+  while (bytes > 0) {
+    switch (bytes) {
+      case 2:
+        EMIT(0x66);
+      case 1:
+        EMIT(0x90);
+        return;
+      case 3:
+        EMIT(0xf);
+        EMIT(0x1f);
+        EMIT(0);
+        return;
+      case 4:
+        EMIT(0xf);
+        EMIT(0x1f);
+        EMIT(0x40);
+        EMIT(0);
+        return;
+      case 6:
+        EMIT(0x66);
+      case 5:
+        EMIT(0xf);
+        EMIT(0x1f);
+        EMIT(0x44);
+        EMIT(0);
+        EMIT(0);
+        return;
+      case 7:
+        EMIT(0xf);
+        EMIT(0x1f);
+        EMIT(0x80);
+        EMIT(0);
+        EMIT(0);
+        EMIT(0);
+        EMIT(0);
+        return;
+      default:
+      case 11:
+        EMIT(0x66);
+        bytes--;
+      case 10:
+        EMIT(0x66);
+        bytes--;
+      case 9:
+        EMIT(0x66);
+        bytes--;
+      case 8:
+        EMIT(0xf);
+        EMIT(0x1f);
+        EMIT(0x84);
+        EMIT(0);
+        EMIT(0);
+        EMIT(0);
+        EMIT(0);
+        EMIT(0);
+        bytes -= 8;
+    }
   }
 }
 
@@ -463,13 +546,6 @@ void Assembler::push(const Operand& src) {
 }
 
 
-void Assembler::push(Handle<Object> handle) {
-  EnsureSpace ensure_space(this);
-  EMIT(0x68);
-  emit(handle);
-}
-
-
 void Assembler::pop(Register dst) {
   ASSERT(reloc_info_writer.last_pc() != NULL);
   EnsureSpace ensure_space(this);
@@ -499,7 +575,7 @@ void Assembler::leave() {
 
 
 void Assembler::mov_b(Register dst, const Operand& src) {
-  ASSERT(dst.code() < 4);
+  CHECK(dst.is_byte_register());
   EnsureSpace ensure_space(this);
   EMIT(0x8A);
   emit_operand(dst, src);
@@ -515,7 +591,7 @@ void Assembler::mov_b(const Operand& dst, int8_t imm8) {
 
 
 void Assembler::mov_b(const Operand& dst, Register src) {
-  ASSERT(src.code() < 4);
+  CHECK(src.is_byte_register());
   EnsureSpace ensure_space(this);
   EMIT(0x88);
   emit_operand(src, dst);
@@ -753,7 +829,7 @@ void Assembler::cmpb(const Operand& op, int8_t imm8) {
 
 
 void Assembler::cmpb(const Operand& op, Register reg) {
-  ASSERT(reg.is_byte_register());
+  CHECK(reg.is_byte_register());
   EnsureSpace ensure_space(this);
   EMIT(0x38);
   emit_operand(reg, op);
@@ -761,7 +837,7 @@ void Assembler::cmpb(const Operand& op, Register reg) {
 
 
 void Assembler::cmpb(Register reg, const Operand& op) {
-  ASSERT(reg.is_byte_register());
+  CHECK(reg.is_byte_register());
   EnsureSpace ensure_space(this);
   EMIT(0x3A);
   emit_operand(reg, op);
@@ -825,6 +901,7 @@ void Assembler::cmpw_ax(const Operand& op) {
 
 
 void Assembler::dec_b(Register dst) {
+  CHECK(dst.is_byte_register());
   EnsureSpace ensure_space(this);
   EMIT(0xFE);
   EMIT(0xC8 | dst.code());
@@ -1098,7 +1175,9 @@ void Assembler::test(Register reg, const Immediate& imm) {
   EnsureSpace ensure_space(this);
   // Only use test against byte for registers that have a byte
   // variant: eax, ebx, ecx, and edx.
-  if (imm.rmode_ == RelocInfo::NONE && is_uint8(imm.x_) && reg.code() < 4) {
+  if (imm.rmode_ == RelocInfo::NONE &&
+      is_uint8(imm.x_) &&
+      reg.is_byte_register()) {
     uint8_t imm8 = imm.x_;
     if (reg.is(eax)) {
       EMIT(0xA8);
@@ -1128,6 +1207,7 @@ void Assembler::test(Register reg, const Operand& op) {
 
 
 void Assembler::test_b(Register reg, const Operand& op) {
+  CHECK(reg.is_byte_register());
   EnsureSpace ensure_space(this);
   EMIT(0x84);
   emit_operand(reg, op);
@@ -1143,7 +1223,7 @@ void Assembler::test(const Operand& op, const Immediate& imm) {
 
 
 void Assembler::test_b(const Operand& op, uint8_t imm8) {
-  if (op.is_reg_only() && op.reg().code() >= 4) {
+  if (op.is_reg_only() && !op.reg().is_byte_register()) {
     test(op, Immediate(imm8));
     return;
   }
@@ -1626,10 +1706,38 @@ void Assembler::fsin() {
 }
 
 
+void Assembler::fptan() {
+  EnsureSpace ensure_space(this);
+  EMIT(0xD9);
+  EMIT(0xF2);
+}
+
+
 void Assembler::fyl2x() {
   EnsureSpace ensure_space(this);
   EMIT(0xD9);
   EMIT(0xF1);
+}
+
+
+void Assembler::f2xm1() {
+  EnsureSpace ensure_space(this);
+  EMIT(0xD9);
+  EMIT(0xF0);
+}
+
+
+void Assembler::fscale() {
+  EnsureSpace ensure_space(this);
+  EMIT(0xD9);
+  EMIT(0xFD);
+}
+
+
+void Assembler::fninit() {
+  EnsureSpace ensure_space(this);
+  EMIT(0xDB);
+  EMIT(0xE3);
 }
 
 
@@ -1946,6 +2054,16 @@ void Assembler::ucomisd(XMMRegister dst, XMMRegister src) {
 }
 
 
+void Assembler::ucomisd(XMMRegister dst, const Operand& src) {
+  ASSERT(CpuFeatures::IsEnabled(SSE2));
+  EnsureSpace ensure_space(this);
+  EMIT(0x66);
+  EMIT(0x0F);
+  EMIT(0x2E);
+  emit_sse_operand(dst, src);
+}
+
+
 void Assembler::roundsd(XMMRegister dst, XMMRegister src, RoundingMode mode) {
   ASSERT(CpuFeatures::IsEnabled(SSE4_1));
   EnsureSpace ensure_space(this);
@@ -2151,6 +2269,19 @@ void Assembler::movd(const Operand& dst, XMMRegister src) {
 }
 
 
+void Assembler::extractps(Register dst, XMMRegister src, byte imm8) {
+  ASSERT(CpuFeatures::IsSupported(SSE4_1));
+  ASSERT(is_uint8(imm8));
+  EnsureSpace ensure_space(this);
+  EMIT(0x66);
+  EMIT(0x0F);
+  EMIT(0x3A);
+  EMIT(0x17);
+  emit_sse_operand(dst, src);
+  EMIT(imm8);
+}
+
+
 void Assembler::pand(XMMRegister dst, XMMRegister src) {
   ASSERT(CpuFeatures::IsEnabled(SSE2));
   EnsureSpace ensure_space(this);
@@ -2330,7 +2461,7 @@ void Assembler::GrowBuffer() {
     V8::FatalProcessOutOfMemory("Assembler::GrowBuffer");
   }
 
-  // Setup new buffer.
+  // Set up new buffer.
   desc.buffer = NewArray<byte>(desc.buffer_size);
   desc.instr_size = pc_offset();
   desc.reloc_size = (buffer_ + buffer_size_) - (reloc_info_writer.pos());

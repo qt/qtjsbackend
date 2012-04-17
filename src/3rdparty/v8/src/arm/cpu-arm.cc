@@ -26,16 +26,11 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 // CPU specific code for arm independent of OS goes here.
+#ifdef __arm__
+#include <sys/syscall.h>  // for cache flushing.
+#endif
 
 #include "v8.h"
-
-#if defined(__arm__)
-  #if !defined(__QNXNTO__)
-    #include <sys/syscall.h>  // for cache flushing.
-  #else
-    #include <sys/mman.h>  // for cache flushing.
-  #endif
-#endif
 
 #if defined(V8_TARGET_ARCH_ARM)
 
@@ -46,7 +41,7 @@
 namespace v8 {
 namespace internal {
 
-void CPU::Setup() {
+void CPU::SetUp() {
   CpuFeatures::Probe();
 }
 
@@ -69,10 +64,6 @@ void CPU::FlushICache(void* start, size_t size) {
   // None of this code ends up in the snapshot so there are no issues
   // around whether or not to generate the code when building snapshots.
   Simulator::FlushICache(Isolate::Current()->simulator_i_cache(), start, size);
-#elif defined(__QNXNTO__)
-  // The QNX kernel does not expose the symbol __ARM_NR_cacheflush so we
-  // use the msync system call instead of the approach used on Linux
-  msync(start, size, MS_SYNC|MS_INVALIDATE_ICACHE);
 #else
   // Ideally, we would call
   //   syscall(__ARM_NR_cacheflush, start,

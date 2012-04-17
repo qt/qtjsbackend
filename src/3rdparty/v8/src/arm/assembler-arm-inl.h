@@ -32,18 +32,26 @@
 
 // The original source code covered by the above license above has been modified
 // significantly by Google Inc.
-// Copyright 2006-2008 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 
 #ifndef V8_ARM_ASSEMBLER_ARM_INL_H_
 #define V8_ARM_ASSEMBLER_ARM_INL_H_
 
 #include "arm/assembler-arm.h"
+
 #include "cpu.h"
 #include "debug.h"
 
 
 namespace v8 {
 namespace internal {
+
+
+int DwVfpRegister::ToAllocationIndex(DwVfpRegister reg) {
+  ASSERT(!reg.is(kDoubleRegZero));
+  ASSERT(!reg.is(kScratchDoubleReg));
+  return reg.code();
+}
 
 
 void RelocInfo::apply(intptr_t delta) {
@@ -64,13 +72,15 @@ Address RelocInfo::target_address() {
 
 
 Address RelocInfo::target_address_address() {
-  ASSERT(IsCodeTarget(rmode_) || rmode_ == RUNTIME_ENTRY);
+  ASSERT(IsCodeTarget(rmode_) || rmode_ == RUNTIME_ENTRY
+                              || rmode_ == EMBEDDED_OBJECT
+                              || rmode_ == EXTERNAL_REFERENCE);
   return reinterpret_cast<Address>(Assembler::target_address_address_at(pc_));
 }
 
 
 int RelocInfo::target_address_size() {
-  return Assembler::kExternalTargetSize;
+  return kPointerSize;
 }
 
 
@@ -224,7 +234,7 @@ void RelocInfo::Visit(ObjectVisitor* visitor) {
   } else if (mode == RelocInfo::GLOBAL_PROPERTY_CELL) {
     visitor->VisitGlobalPropertyCell(this);
   } else if (mode == RelocInfo::EXTERNAL_REFERENCE) {
-    visitor->VisitExternalReference(target_reference_address());
+    visitor->VisitExternalReference(this);
 #ifdef ENABLE_DEBUGGER_SUPPORT
   // TODO(isolates): Get a cached isolate below.
   } else if (((RelocInfo::IsJSReturn(mode) &&
@@ -250,7 +260,7 @@ void RelocInfo::Visit(Heap* heap) {
   } else if (mode == RelocInfo::GLOBAL_PROPERTY_CELL) {
     StaticVisitor::VisitGlobalPropertyCell(heap, this);
   } else if (mode == RelocInfo::EXTERNAL_REFERENCE) {
-    StaticVisitor::VisitExternalReference(target_reference_address());
+    StaticVisitor::VisitExternalReference(this);
 #ifdef ENABLE_DEBUGGER_SUPPORT
   } else if (heap->isolate()->debug()->has_break_points() &&
              ((RelocInfo::IsJSReturn(mode) &&
@@ -354,8 +364,14 @@ Address Assembler::target_address_at(Address pc) {
 }
 
 
-void Assembler::set_target_at(Address constant_pool_entry,
-                              Address target) {
+void Assembler::deserialization_set_special_target_at(
+    Address constant_pool_entry, Address target) {
+  Memory::Address_at(constant_pool_entry) = target;
+}
+
+
+void Assembler::set_external_target_at(Address constant_pool_entry,
+                                       Address target) {
   Memory::Address_at(constant_pool_entry) = target;
 }
 

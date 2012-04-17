@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -32,6 +32,7 @@
 #include "v8.h"
 
 #include "cctest.h"
+#include "compiler.h"
 #include "execution.h"
 #include "isolate.h"
 #include "parser.h"
@@ -62,17 +63,18 @@ TEST(ScanKeywords) {
     int length = i::StrLength(key_token.keyword);
     CHECK(static_cast<int>(sizeof(buffer)) >= length);
     {
-      i::Utf8ToUC16CharacterStream stream(keyword, length);
+      i::Utf8ToUtf16CharacterStream stream(keyword, length);
       i::Scanner scanner(&unicode_cache);
-      // The scanner should parse 'let' as Token::LET for this test.
+      // The scanner should parse Harmony keywords for this test.
       scanner.SetHarmonyScoping(true);
+      scanner.SetHarmonyModules(true);
       scanner.Initialize(&stream);
       CHECK_EQ(key_token.token, scanner.Next());
       CHECK_EQ(i::Token::EOS, scanner.Next());
     }
     // Removing characters will make keyword matching fail.
     {
-      i::Utf8ToUC16CharacterStream stream(keyword, length - 1);
+      i::Utf8ToUtf16CharacterStream stream(keyword, length - 1);
       i::Scanner scanner(&unicode_cache);
       scanner.Initialize(&stream);
       CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
@@ -83,7 +85,7 @@ TEST(ScanKeywords) {
     for (int j = 0; j < static_cast<int>(ARRAY_SIZE(chars_to_append)); ++j) {
       memmove(buffer, keyword, length);
       buffer[length] = chars_to_append[j];
-      i::Utf8ToUC16CharacterStream stream(buffer, length + 1);
+      i::Utf8ToUtf16CharacterStream stream(buffer, length + 1);
       i::Scanner scanner(&unicode_cache);
       scanner.Initialize(&stream);
       CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
@@ -93,7 +95,7 @@ TEST(ScanKeywords) {
     {
       memmove(buffer, keyword, length);
       buffer[length - 1] = '_';
-      i::Utf8ToUC16CharacterStream stream(buffer, length);
+      i::Utf8ToUtf16CharacterStream stream(buffer, length);
       i::Scanner scanner(&unicode_cache);
       scanner.Initialize(&stream);
       CHECK_EQ(i::Token::IDENTIFIER, scanner.Next());
@@ -229,7 +231,7 @@ TEST(Preparsing) {
   CHECK_EQ(11, error_location.end_pos);
   // Should not crash.
   const char* message = pre_impl->BuildMessage();
-  i::Vector<const char*> args(pre_impl->BuildArgs());
+  pre_impl->BuildArgs();
   CHECK_GT(strlen(message), 0);
 }
 
@@ -253,7 +255,7 @@ TEST(StandAlonePreParser) {
   uintptr_t stack_limit = i::Isolate::Current()->stack_guard()->real_climit();
   for (int i = 0; programs[i]; i++) {
     const char* program = programs[i];
-    i::Utf8ToUC16CharacterStream stream(
+    i::Utf8ToUtf16CharacterStream stream(
         reinterpret_cast<const i::byte*>(program),
         static_cast<unsigned>(strlen(program)));
     i::CompleteParserRecorder log;
@@ -289,7 +291,7 @@ TEST(StandAlonePreParserNoNatives) {
   uintptr_t stack_limit = i::Isolate::Current()->stack_guard()->real_climit();
   for (int i = 0; programs[i]; i++) {
     const char* program = programs[i];
-    i::Utf8ToUC16CharacterStream stream(
+    i::Utf8ToUtf16CharacterStream stream(
         reinterpret_cast<const i::byte*>(program),
         static_cast<unsigned>(strlen(program)));
     i::CompleteParserRecorder log;
@@ -324,8 +326,9 @@ TEST(RegressChromium62639) {
   // and then used the invalid currently scanned literal. This always
   // failed in debug mode, and sometimes crashed in release mode.
 
-  i::Utf8ToUC16CharacterStream stream(reinterpret_cast<const i::byte*>(program),
-                                      static_cast<unsigned>(strlen(program)));
+  i::Utf8ToUtf16CharacterStream stream(
+      reinterpret_cast<const i::byte*>(program),
+      static_cast<unsigned>(strlen(program)));
   i::ScriptDataImpl* data =
       i::ParserApi::PreParse(&stream, NULL, false);
   CHECK(data->HasError());
@@ -348,17 +351,17 @@ TEST(Regress928) {
       "try { } catch (e) { var foo = function () { /* first */ } }"
       "var bar = function () { /* second */ }";
 
-  i::Utf8ToUC16CharacterStream stream(reinterpret_cast<const i::byte*>(program),
-                                      static_cast<unsigned>(strlen(program)));
-  i::ScriptDataImpl* data =
-      i::ParserApi::PartialPreParse(&stream, NULL, false);
+  v8::HandleScope handles;
+  i::Handle<i::String> source(
+      FACTORY->NewStringFromAscii(i::CStrVector(program)));
+  i::ScriptDataImpl* data = i::ParserApi::PartialPreParse(source, NULL, false);
   CHECK(!data->HasError());
 
   data->Initialize();
 
   int first_function =
       static_cast<int>(strstr(program, "function") - program);
-  int first_lbrace = first_function + static_cast<int>(strlen("function () "));
+  int first_lbrace = first_function + i::StrLength("function () ");
   CHECK_EQ('{', program[first_lbrace]);
   i::FunctionEntry entry1 = data->GetFunctionEntry(first_lbrace);
   CHECK(!entry1.is_valid());
@@ -366,7 +369,7 @@ TEST(Regress928) {
   int second_function =
       static_cast<int>(strstr(program + first_lbrace, "function") - program);
   int second_lbrace =
-      second_function + static_cast<int>(strlen("function () "));
+      second_function + i::StrLength("function () ");
   CHECK_EQ('{', program[second_lbrace]);
   i::FunctionEntry entry2 = data->GetFunctionEntry(second_lbrace);
   CHECK(entry2.is_valid());
@@ -390,7 +393,7 @@ TEST(PreParseOverflow) {
 
   uintptr_t stack_limit = i::Isolate::Current()->stack_guard()->real_climit();
 
-  i::Utf8ToUC16CharacterStream stream(
+  i::Utf8ToUtf16CharacterStream stream(
       reinterpret_cast<const i::byte*>(*program),
       static_cast<unsigned>(kProgramSize));
   i::CompleteParserRecorder log;
@@ -447,10 +450,10 @@ void TestCharacterStream(const char* ascii_source,
   i::Handle<i::String> uc16_string(
       FACTORY->NewExternalStringFromTwoByte(&resource));
 
-  i::ExternalTwoByteStringUC16CharacterStream uc16_stream(
+  i::ExternalTwoByteStringUtf16CharacterStream uc16_stream(
       i::Handle<i::ExternalTwoByteString>::cast(uc16_string), start, end);
-  i::GenericStringUC16CharacterStream string_stream(ascii_string, start, end);
-  i::Utf8ToUC16CharacterStream utf8_stream(
+  i::GenericStringUtf16CharacterStream string_stream(ascii_string, start, end);
+  i::Utf8ToUtf16CharacterStream utf8_stream(
       reinterpret_cast<const i::byte*>(ascii_source), end);
   utf8_stream.SeekForward(start);
 
@@ -573,12 +576,14 @@ TEST(Utf8CharacterStream) {
   char buffer[kAllUtf8CharsSizeU];
   unsigned cursor = 0;
   for (int i = 0; i <= kMaxUC16Char; i++) {
-    cursor += unibrow::Utf8::Encode(buffer + cursor, i);
+    cursor += unibrow::Utf8::Encode(buffer + cursor,
+                                    i,
+                                    unibrow::Utf16::kNoPreviousCharacter);
   }
   ASSERT(cursor == kAllUtf8CharsSizeU);
 
-  i::Utf8ToUC16CharacterStream stream(reinterpret_cast<const i::byte*>(buffer),
-                                      kAllUtf8CharsSizeU);
+  i::Utf8ToUtf16CharacterStream stream(reinterpret_cast<const i::byte*>(buffer),
+                                       kAllUtf8CharsSizeU);
   for (int i = 0; i <= kMaxUC16Char; i++) {
     CHECK_EQU(i, stream.pos());
     int32_t c = stream.Advance();
@@ -608,7 +613,7 @@ TEST(Utf8CharacterStream) {
 
 #undef CHECK_EQU
 
-void TestStreamScanner(i::UC16CharacterStream* stream,
+void TestStreamScanner(i::Utf16CharacterStream* stream,
                        i::Token::Value* expected_tokens,
                        int skip_pos = 0,  // Zero means not skipping.
                        int skip_to = 0) {
@@ -631,8 +636,8 @@ TEST(StreamScanner) {
   v8::V8::Initialize();
 
   const char* str1 = "{ foo get for : */ <- \n\n /*foo*/ bib";
-  i::Utf8ToUC16CharacterStream stream1(reinterpret_cast<const i::byte*>(str1),
-                                       static_cast<unsigned>(strlen(str1)));
+  i::Utf8ToUtf16CharacterStream stream1(reinterpret_cast<const i::byte*>(str1),
+                                        static_cast<unsigned>(strlen(str1)));
   i::Token::Value expectations1[] = {
       i::Token::LBRACE,
       i::Token::IDENTIFIER,
@@ -650,8 +655,8 @@ TEST(StreamScanner) {
   TestStreamScanner(&stream1, expectations1, 0, 0);
 
   const char* str2 = "case default const {THIS\nPART\nSKIPPED} do";
-  i::Utf8ToUC16CharacterStream stream2(reinterpret_cast<const i::byte*>(str2),
-                                       static_cast<unsigned>(strlen(str2)));
+  i::Utf8ToUtf16CharacterStream stream2(reinterpret_cast<const i::byte*>(str2),
+                                        static_cast<unsigned>(strlen(str2)));
   i::Token::Value expectations2[] = {
       i::Token::CASE,
       i::Token::DEFAULT,
@@ -681,7 +686,7 @@ TEST(StreamScanner) {
   for (int i = 0; i <= 4; i++) {
      expectations3[6 - i] = i::Token::ILLEGAL;
      expectations3[5 - i] = i::Token::EOS;
-     i::Utf8ToUC16CharacterStream stream3(
+     i::Utf8ToUtf16CharacterStream stream3(
          reinterpret_cast<const i::byte*>(str3),
          static_cast<unsigned>(strlen(str3)));
      TestStreamScanner(&stream3, expectations3, 1, 1 + i);
@@ -690,7 +695,7 @@ TEST(StreamScanner) {
 
 
 void TestScanRegExp(const char* re_source, const char* expected) {
-  i::Utf8ToUC16CharacterStream stream(
+  i::Utf8ToUtf16CharacterStream stream(
        reinterpret_cast<const i::byte*>(re_source),
        static_cast<unsigned>(strlen(re_source)));
   i::Scanner scanner(i::Isolate::Current()->unicode_cache());
@@ -746,6 +751,67 @@ TEST(RegExpScanning) {
 }
 
 
+static int Utf8LengthHelper(const char* s) {
+  int len = i::StrLength(s);
+  int character_length = len;
+  for (int i = 0; i < len; i++) {
+    unsigned char c = s[i];
+    int input_offset = 0;
+    int output_adjust = 0;
+    if (c > 0x7f) {
+      if (c < 0xc0) continue;
+      if (c >= 0xf0) {
+        if (c >= 0xf8) {
+          // 5 and 6 byte UTF-8 sequences turn into a kBadChar for each UTF-8
+          // byte.
+          continue;  // Handle first UTF-8 byte.
+        }
+        if ((c & 7) == 0 && ((s[i + 1] & 0x30) == 0)) {
+          // This 4 byte sequence could have been coded as a 3 byte sequence.
+          // Record a single kBadChar for the first byte and continue.
+          continue;
+        }
+        input_offset = 3;
+        // 4 bytes of UTF-8 turn into 2 UTF-16 code units.
+        character_length -= 2;
+      } else if (c >= 0xe0) {
+        if ((c & 0xf) == 0 && ((s[i + 1] & 0x20) == 0)) {
+          // This 3 byte sequence could have been coded as a 2 byte sequence.
+          // Record a single kBadChar for the first byte and continue.
+          continue;
+        }
+        input_offset = 2;
+        // 3 bytes of UTF-8 turn into 1 UTF-16 code unit.
+        output_adjust = 2;
+      } else {
+        if ((c & 0x1e) == 0) {
+          // This 2 byte sequence could have been coded as a 1 byte sequence.
+          // Record a single kBadChar for the first byte and continue.
+          continue;
+        }
+        input_offset = 1;
+        // 2 bytes of UTF-8 turn into 1 UTF-16 code unit.
+        output_adjust = 1;
+      }
+      bool bad = false;
+      for (int j = 1; j <= input_offset; j++) {
+        if ((s[i + j] & 0xc0) != 0x80) {
+          // Bad UTF-8 sequence turns the first in the sequence into kBadChar,
+          // which is a single UTF-16 code unit.
+          bad = true;
+          break;
+        }
+      }
+      if (!bad) {
+        i += input_offset;
+        character_length -= output_adjust;
+      }
+    }
+  }
+  return character_length;
+}
+
+
 TEST(ScopePositions) {
   // Test the parser for correctly setting the start and end positions
   // of a scope. We check the scope positions of exactly one scope
@@ -758,76 +824,167 @@ TEST(ScopePositions) {
     const char* inner_source;
     const char* outer_suffix;
     i::ScopeType scope_type;
+    i::LanguageMode language_mode;
   };
 
   const SourceData source_data[] = {
-    { "  with ({}) ", "{ block; }", " more;", i::WITH_SCOPE },
-    { "  with ({}) ", "{ block; }", "; more;", i::WITH_SCOPE },
+    { "  with ({}) ", "{ block; }", " more;", i::WITH_SCOPE, i::CLASSIC_MODE },
+    { "  with ({}) ", "{ block; }", "; more;", i::WITH_SCOPE, i::CLASSIC_MODE },
     { "  with ({}) ", "{\n"
       "    block;\n"
       "  }", "\n"
-      "  more;", i::WITH_SCOPE },
-    { "  with ({}) ", "statement;", " more;", i::WITH_SCOPE },
+      "  more;", i::WITH_SCOPE, i::CLASSIC_MODE },
+    { "  with ({}) ", "statement;", " more;", i::WITH_SCOPE, i::CLASSIC_MODE },
     { "  with ({}) ", "statement", "\n"
-      "  more;", i::WITH_SCOPE },
+      "  more;", i::WITH_SCOPE, i::CLASSIC_MODE },
     { "  with ({})\n"
       "    ", "statement;", "\n"
-      "  more;", i::WITH_SCOPE },
-    { "  try {} catch ", "(e) { block; }", " more;", i::CATCH_SCOPE },
-    { "  try {} catch ", "(e) { block; }", "; more;", i::CATCH_SCOPE },
+      "  more;", i::WITH_SCOPE, i::CLASSIC_MODE },
+    { "  try {} catch ", "(e) { block; }", " more;",
+      i::CATCH_SCOPE, i::CLASSIC_MODE },
+    { "  try {} catch ", "(e) { block; }", "; more;",
+      i::CATCH_SCOPE, i::CLASSIC_MODE },
     { "  try {} catch ", "(e) {\n"
       "    block;\n"
       "  }", "\n"
-      "  more;", i::CATCH_SCOPE },
+      "  more;", i::CATCH_SCOPE, i::CLASSIC_MODE },
     { "  try {} catch ", "(e) { block; }", " finally { block; } more;",
-      i::CATCH_SCOPE },
+      i::CATCH_SCOPE, i::CLASSIC_MODE },
     { "  start;\n"
-      "  ", "{ let block; }", " more;", i::BLOCK_SCOPE },
+      "  ", "{ let block; }", " more;", i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  start;\n"
-      "  ", "{ let block; }", "; more;", i::BLOCK_SCOPE },
+      "  ", "{ let block; }", "; more;", i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  start;\n"
       "  ", "{\n"
       "    let block;\n"
       "  }", "\n"
-      "  more;", i::BLOCK_SCOPE },
+      "  more;", i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  start;\n"
       "  function fun", "(a,b) { infunction; }", " more;",
-      i::FUNCTION_SCOPE },
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
     { "  start;\n"
       "  function fun", "(a,b) {\n"
       "    infunction;\n"
       "  }", "\n"
-      "  more;", i::FUNCTION_SCOPE },
+      "  more;", i::FUNCTION_SCOPE, i::CLASSIC_MODE },
     { "  (function fun", "(a,b) { infunction; }", ")();",
-      i::FUNCTION_SCOPE },
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
     { "  for ", "(let x = 1 ; x < 10; ++ x) { block; }", " more;",
-      i::BLOCK_SCOPE },
+      i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  for ", "(let x = 1 ; x < 10; ++ x) { block; }", "; more;",
-      i::BLOCK_SCOPE },
+      i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  for ", "(let x = 1 ; x < 10; ++ x) {\n"
       "    block;\n"
       "  }", "\n"
-      "  more;", i::BLOCK_SCOPE },
+      "  more;", i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  for ", "(let x = 1 ; x < 10; ++ x) statement;", " more;",
-      i::BLOCK_SCOPE },
+      i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  for ", "(let x = 1 ; x < 10; ++ x) statement", "\n"
-      "  more;", i::BLOCK_SCOPE },
+      "  more;", i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  for ", "(let x = 1 ; x < 10; ++ x)\n"
       "    statement;", "\n"
-      "  more;", i::BLOCK_SCOPE },
-    { "  for ", "(let x in {}) { block; }", " more;", i::BLOCK_SCOPE },
-    { "  for ", "(let x in {}) { block; }", "; more;", i::BLOCK_SCOPE },
+      "  more;", i::BLOCK_SCOPE, i::EXTENDED_MODE },
+    { "  for ", "(let x in {}) { block; }", " more;",
+      i::BLOCK_SCOPE, i::EXTENDED_MODE },
+    { "  for ", "(let x in {}) { block; }", "; more;",
+      i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  for ", "(let x in {}) {\n"
       "    block;\n"
       "  }", "\n"
-      "  more;", i::BLOCK_SCOPE },
-    { "  for ", "(let x in {}) statement;", " more;", i::BLOCK_SCOPE },
+      "  more;", i::BLOCK_SCOPE, i::EXTENDED_MODE },
+    { "  for ", "(let x in {}) statement;", " more;",
+      i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  for ", "(let x in {}) statement", "\n"
-      "  more;", i::BLOCK_SCOPE },
+      "  more;", i::BLOCK_SCOPE, i::EXTENDED_MODE },
     { "  for ", "(let x in {})\n"
       "    statement;", "\n"
-      "  more;", i::BLOCK_SCOPE },
-    { NULL, NULL, NULL, i::EVAL_SCOPE }
+      "  more;", i::BLOCK_SCOPE, i::EXTENDED_MODE },
+    // Check that 6-byte and 4-byte encodings of UTF-8 strings do not throw
+    // the preparser off in terms of byte offsets.
+    // 6 byte encoding.
+    { "  'foo\355\240\201\355\260\211';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // 4 byte encoding.
+    { "  'foo\360\220\220\212';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // 3 byte encoding of \u0fff.
+    { "  'foo\340\277\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Broken 6 byte encoding with missing last byte.
+    { "  'foo\355\240\201\355\211';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Broken 3 byte encoding of \u0fff with missing last byte.
+    { "  'foo\340\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Broken 3 byte encoding of \u0fff with missing 2 last bytes.
+    { "  'foo\340';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Broken 3 byte encoding of \u00ff should be a 2 byte encoding.
+    { "  'foo\340\203\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Broken 3 byte encoding of \u007f should be a 2 byte encoding.
+    { "  'foo\340\201\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Unpaired lead surrogate.
+    { "  'foo\355\240\201';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Unpaired lead surrogate where following code point is a 3 byte sequence.
+    { "  'foo\355\240\201\340\277\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Unpaired lead surrogate where following code point is a 4 byte encoding
+    // of a trail surrogate.
+    { "  'foo\355\240\201\360\215\260\211';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Unpaired trail surrogate.
+    { "  'foo\355\260\211';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // 2 byte encoding of \u00ff.
+    { "  'foo\303\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Broken 2 byte encoding of \u00ff with missing last byte.
+    { "  'foo\303';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Broken 2 byte encoding of \u007f should be a 1 byte encoding.
+    { "  'foo\301\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Illegal 5 byte encoding.
+    { "  'foo\370\277\277\277\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Illegal 6 byte encoding.
+    { "  'foo\374\277\277\277\277\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Illegal 0xfe byte
+    { "  'foo\376\277\277\277\277\277\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    // Illegal 0xff byte
+    { "  'foo\377\277\277\277\277\277\277\277';\n"
+      "  (function fun", "(a,b) { infunction; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    { "  'foo';\n"
+      "  (function fun", "(a,b) { 'bar\355\240\201\355\260\213'; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    { "  'foo';\n"
+      "  (function fun", "(a,b) { 'bar\360\220\220\214'; }", ")();",
+      i::FUNCTION_SCOPE, i::CLASSIC_MODE },
+    { NULL, NULL, NULL, i::EVAL_SCOPE, i::CLASSIC_MODE }
   };
 
   v8::HandleScope handles;
@@ -837,28 +994,34 @@ TEST(ScopePositions) {
   int marker;
   i::Isolate::Current()->stack_guard()->SetStackLimit(
       reinterpret_cast<uintptr_t>(&marker) - 128 * 1024);
+  i::FLAG_harmony_scoping = true;
 
   for (int i = 0; source_data[i].outer_prefix; i++) {
-    int kPrefixLen = i::StrLength(source_data[i].outer_prefix);
-    int kInnerLen = i::StrLength(source_data[i].inner_source);
-    int kSuffixLen = i::StrLength(source_data[i].outer_suffix);
+    int kPrefixLen = Utf8LengthHelper(source_data[i].outer_prefix);
+    int kInnerLen = Utf8LengthHelper(source_data[i].inner_source);
+    int kSuffixLen = Utf8LengthHelper(source_data[i].outer_suffix);
+    int kPrefixByteLen = i::StrLength(source_data[i].outer_prefix);
+    int kInnerByteLen = i::StrLength(source_data[i].inner_source);
+    int kSuffixByteLen = i::StrLength(source_data[i].outer_suffix);
     int kProgramSize = kPrefixLen + kInnerLen + kSuffixLen;
-    i::Vector<char> program = i::Vector<char>::New(kProgramSize + 1);
-    int length = i::OS::SNPrintF(program, "%s%s%s",
-                                 source_data[i].outer_prefix,
-                                 source_data[i].inner_source,
-                                 source_data[i].outer_suffix);
-    CHECK(length == kProgramSize);
+    int kProgramByteSize = kPrefixByteLen + kInnerByteLen + kSuffixByteLen;
+    i::Vector<char> program = i::Vector<char>::New(kProgramByteSize + 1);
+    i::OS::SNPrintF(program, "%s%s%s",
+                             source_data[i].outer_prefix,
+                             source_data[i].inner_source,
+                             source_data[i].outer_suffix);
 
     // Parse program source.
     i::Handle<i::String> source(
-        FACTORY->NewStringFromAscii(i::CStrVector(program.start())));
+        FACTORY->NewStringFromUtf8(i::CStrVector(program.start())));
+    CHECK_EQ(source->length(), kProgramSize);
     i::Handle<i::Script> script = FACTORY->NewScript(source);
-    i::Parser parser(script, false, NULL, NULL);
-    parser.SetHarmonyScoping(true);
-    i::FunctionLiteral* function =
-        parser.ParseProgram(source, true, i::kNonStrictMode);
-    ASSERT(function != NULL);
+    i::Parser parser(script, i::kAllowLazy | i::EXTENDED_MODE, NULL, NULL);
+    i::CompilationInfo info(script);
+    info.MarkAsGlobal();
+    info.SetLanguageMode(source_data[i].language_mode);
+    i::FunctionLiteral* function = parser.ParseProgram(&info);
+    CHECK(function != NULL);
 
     // Check scope types and positions.
     i::Scope* scope = function->scope();
@@ -873,5 +1036,203 @@ TEST(ScopePositions) {
     // The end position of a token is one position after the last
     // character belonging to that token.
     CHECK_EQ(inner_scope->end_position(), kPrefixLen + kInnerLen);
+  }
+}
+
+
+void TestParserSync(i::Handle<i::String> source, int flags) {
+  uintptr_t stack_limit = i::Isolate::Current()->stack_guard()->real_climit();
+  bool harmony_scoping = ((i::kLanguageModeMask & flags) == i::EXTENDED_MODE);
+
+  // Preparse the data.
+  i::CompleteParserRecorder log;
+  i::Scanner scanner(i::Isolate::Current()->unicode_cache());
+  i::GenericStringUtf16CharacterStream stream(source, 0, source->length());
+  scanner.SetHarmonyScoping(harmony_scoping);
+  scanner.Initialize(&stream);
+  v8::preparser::PreParser::PreParseResult result =
+      v8::preparser::PreParser::PreParseProgram(
+          &scanner, &log, flags, stack_limit);
+  CHECK_EQ(v8::preparser::PreParser::kPreParseSuccess, result);
+  i::ScriptDataImpl data(log.ExtractData());
+
+  // Parse the data
+  i::Handle<i::Script> script = FACTORY->NewScript(source);
+  bool save_harmony_scoping = i::FLAG_harmony_scoping;
+  i::FLAG_harmony_scoping = harmony_scoping;
+  i::Parser parser(script, flags, NULL, NULL);
+  i::CompilationInfo info(script);
+  info.MarkAsGlobal();
+  i::FunctionLiteral* function = parser.ParseProgram(&info);
+  i::FLAG_harmony_scoping = save_harmony_scoping;
+
+  i::String* type_string = NULL;
+  if (function == NULL) {
+    // Extract exception from the parser.
+    i::Handle<i::String> type_symbol = FACTORY->LookupAsciiSymbol("type");
+    CHECK(i::Isolate::Current()->has_pending_exception());
+    i::MaybeObject* maybe_object = i::Isolate::Current()->pending_exception();
+    i::JSObject* exception = NULL;
+    CHECK(maybe_object->To(&exception));
+
+    // Get the type string.
+    maybe_object = exception->GetProperty(*type_symbol);
+    CHECK(maybe_object->To(&type_string));
+  }
+
+  // Check that preparsing fails iff parsing fails.
+  if (data.has_error() && function != NULL) {
+    i::OS::Print(
+        "Preparser failed on:\n"
+        "\t%s\n"
+        "with error:\n"
+        "\t%s\n"
+        "However, the parser succeeded",
+        *source->ToCString(), data.BuildMessage());
+    CHECK(false);
+  } else if (!data.has_error() && function == NULL) {
+    i::OS::Print(
+        "Parser failed on:\n"
+        "\t%s\n"
+        "with error:\n"
+        "\t%s\n"
+        "However, the preparser succeeded",
+        *source->ToCString(), *type_string->ToCString());
+    CHECK(false);
+  }
+
+  // Check that preparser and parser produce the same error.
+  if (function == NULL) {
+    if (!type_string->IsEqualTo(i::CStrVector(data.BuildMessage()))) {
+      i::OS::Print(
+          "Expected parser and preparser to produce the same error on:\n"
+          "\t%s\n"
+          "However, found the following error messages\n"
+          "\tparser:    %s\n"
+          "\tpreparser: %s\n",
+          *source->ToCString(), *type_string->ToCString(), data.BuildMessage());
+      CHECK(false);
+    }
+  }
+}
+
+
+void TestParserSyncWithFlags(i::Handle<i::String> source) {
+  static const int kFlagsCount = 6;
+  const int flags[kFlagsCount] = {
+    i::kNoParsingFlags | i::CLASSIC_MODE,
+    i::kNoParsingFlags | i::STRICT_MODE,
+    i::kNoParsingFlags | i::EXTENDED_MODE,
+    i::kAllowLazy | i::CLASSIC_MODE,
+    i::kAllowLazy | i::STRICT_MODE,
+    i::kAllowLazy | i::EXTENDED_MODE
+  };
+
+  for (int k = 0; k < kFlagsCount; ++k) {
+    TestParserSync(source, flags[k]);
+  }
+}
+
+
+TEST(ParserSync) {
+  const char* context_data[][2] = {
+    { "", "" },
+    { "{", "}" },
+    { "if (true) ", " else {}" },
+    { "if (true) {} else ", "" },
+    { "if (true) ", "" },
+    { "do ", " while (false)" },
+    { "while (false) ", "" },
+    { "for (;;) ", "" },
+    { "with ({})", "" },
+    { "switch (12) { case 12: ", "}" },
+    { "switch (12) { default: ", "}" },
+    { "label2: ", "" },
+    { NULL, NULL }
+  };
+
+  const char* statement_data[] = {
+    "{}",
+    "var x",
+    "var x = 1",
+    "const x",
+    "const x = 1",
+    ";",
+    "12",
+    "if (false) {} else ;",
+    "if (false) {} else {}",
+    "if (false) {} else 12",
+    "if (false) ;"
+    "if (false) {}",
+    "if (false) 12",
+    "do {} while (false)",
+    "for (;;) ;",
+    "for (;;) {}",
+    "for (;;) 12",
+    "continue",
+    "continue label",
+    "continue\nlabel",
+    "break",
+    "break label",
+    "break\nlabel",
+    "return",
+    "return  12",
+    "return\n12",
+    "with ({}) ;",
+    "with ({}) {}",
+    "with ({}) 12",
+    "switch ({}) { default: }"
+    "label3: "
+    "throw",
+    "throw  12",
+    "throw\n12",
+    "try {} catch(e) {}",
+    "try {} finally {}",
+    "try {} catch(e) {} finally {}",
+    "debugger",
+    NULL
+  };
+
+  const char* termination_data[] = {
+    "",
+    ";",
+    "\n",
+    ";\n",
+    "\n;",
+    NULL
+  };
+
+  v8::HandleScope handles;
+  v8::Persistent<v8::Context> context = v8::Context::New();
+  v8::Context::Scope context_scope(context);
+
+  int marker;
+  i::Isolate::Current()->stack_guard()->SetStackLimit(
+      reinterpret_cast<uintptr_t>(&marker) - 128 * 1024);
+
+  for (int i = 0; context_data[i][0] != NULL; ++i) {
+    for (int j = 0; statement_data[j] != NULL; ++j) {
+      for (int k = 0; termination_data[k] != NULL; ++k) {
+        int kPrefixLen = i::StrLength(context_data[i][0]);
+        int kStatementLen = i::StrLength(statement_data[j]);
+        int kTerminationLen = i::StrLength(termination_data[k]);
+        int kSuffixLen = i::StrLength(context_data[i][1]);
+        int kProgramSize = kPrefixLen + kStatementLen + kTerminationLen
+            + kSuffixLen + i::StrLength("label: for (;;) {  }");
+
+        // Plug the source code pieces together.
+        i::Vector<char> program = i::Vector<char>::New(kProgramSize + 1);
+        int length = i::OS::SNPrintF(program,
+            "label: for (;;) { %s%s%s%s }",
+            context_data[i][0],
+            statement_data[j],
+            termination_data[k],
+            context_data[i][1]);
+        CHECK(length == kProgramSize);
+        i::Handle<i::String> source =
+            FACTORY->NewStringFromAscii(i::CStrVector(program.start()));
+        TestParserSyncWithFlags(source);
+      }
+    }
   }
 }

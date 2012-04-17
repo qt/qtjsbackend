@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -473,7 +473,6 @@ void KeyedLoadIC::GenerateGeneric(MacroAssembler* masm) {
   Counters* counters = isolate->counters();
   __ IncrementCounter(counters->keyed_load_generic_smi(), 1);
   __ ret(0);
-
   __ bind(&check_number_dictionary);
   __ mov(ebx, eax);
   __ SmiUntag(ebx);
@@ -535,14 +534,34 @@ void KeyedLoadIC::GenerateGeneric(MacroAssembler* masm) {
   __ mov(edi, FieldOperand(eax, String::kHashFieldOffset));
   __ shr(edi, String::kHashShift);
   __ xor_(ecx, edi);
-  __ and_(ecx, KeyedLookupCache::kCapacityMask);
+  __ and_(ecx, KeyedLookupCache::kCapacityMask & KeyedLookupCache::kHashMask);
 
   // Load the key (consisting of map and symbol) from the cache and
   // check for match.
+  Label load_in_object_property;
+  static const int kEntriesPerBucket = KeyedLookupCache::kEntriesPerBucket;
+  Label hit_on_nth_entry[kEntriesPerBucket];
   ExternalReference cache_keys =
       ExternalReference::keyed_lookup_cache_keys(masm->isolate());
-  __ mov(edi, ecx);
+
+  for (int i = 0; i < kEntriesPerBucket - 1; i++) {
+    Label try_next_entry;
+    __ mov(edi, ecx);
+    __ shl(edi, kPointerSizeLog2 + 1);
+    if (i != 0) {
+      __ add(edi, Immediate(kPointerSize * i * 2));
+    }
+    __ cmp(ebx, Operand::StaticArray(edi, times_1, cache_keys));
+    __ j(not_equal, &try_next_entry);
+    __ add(edi, Immediate(kPointerSize));
+    __ cmp(eax, Operand::StaticArray(edi, times_1, cache_keys));
+    __ j(equal, &hit_on_nth_entry[i]);
+    __ bind(&try_next_entry);
+  }
+
+  __ lea(edi, Operand(ecx, 1));
   __ shl(edi, kPointerSizeLog2 + 1);
+  __ add(edi, Immediate(kPointerSize * (kEntriesPerBucket - 1) * 2));
   __ cmp(ebx, Operand::StaticArray(edi, times_1, cache_keys));
   __ j(not_equal, &slow);
   __ add(edi, Immediate(kPointerSize));
@@ -556,13 +575,25 @@ void KeyedLoadIC::GenerateGeneric(MacroAssembler* masm) {
   // ecx     : lookup cache index
   ExternalReference cache_field_offsets =
       ExternalReference::keyed_lookup_cache_field_offsets(masm->isolate());
-  __ mov(edi,
-         Operand::StaticArray(ecx, times_pointer_size, cache_field_offsets));
-  __ movzx_b(ecx, FieldOperand(ebx, Map::kInObjectPropertiesOffset));
-  __ sub(edi, ecx);
-  __ j(above_equal, &property_array_property);
+
+  // Hit on nth entry.
+  for (int i = kEntriesPerBucket - 1; i >= 0; i--) {
+    __ bind(&hit_on_nth_entry[i]);
+    if (i != 0) {
+      __ add(ecx, Immediate(i));
+    }
+    __ mov(edi,
+           Operand::StaticArray(ecx, times_pointer_size, cache_field_offsets));
+    __ movzx_b(ecx, FieldOperand(ebx, Map::kInObjectPropertiesOffset));
+    __ sub(edi, ecx);
+    __ j(above_equal, &property_array_property);
+    if (i != 0) {
+      __ jmp(&load_in_object_property);
+    }
+  }
 
   // Load in-object property.
+  __ bind(&load_in_object_property);
   __ movzx_b(ecx, FieldOperand(ebx, Map::kInstanceSizeOffset));
   __ add(ecx, edi);
   __ mov(eax, FieldOperand(edx, ecx, times_pointer_size, 0));
@@ -606,14 +637,12 @@ void KeyedLoadIC::GenerateString(MacroAssembler* masm) {
 
   Register receiver = edx;
   Register index = eax;
-  Register scratch1 = ebx;
-  Register scratch2 = ecx;
+  Register scratch = ecx;
   Register result = eax;
 
   StringCharAtGenerator char_at_generator(receiver,
                                           index,
-                                          scratch1,
-                                          scratch2,
+                                          scratch,
                                           result,
                                           &miss,  // When not a string.
                                           &miss,  // When not a number.
@@ -736,7 +765,8 @@ void KeyedStoreIC::GenerateGeneric(MacroAssembler* masm,
   // -----------------------------------
   Label slow, fast_object_with_map_check, fast_object_without_map_check;
   Label fast_double_with_map_check, fast_double_without_map_check;
-  Label check_if_double_array, array, extra;
+  Label check_if_double_array, array, extra, transition_smi_elements;
+  Label finish_object_store, non_double_value, transition_double_elements;
 
   // Check that the object isn't a smi.
   __ JumpIfSmi(edx, &slow);
@@ -833,11 +863,12 @@ void KeyedStoreIC::GenerateGeneric(MacroAssembler* masm,
   __ ret(0);
 
   __ bind(&non_smi_value);
-  // Escape to slow case when writing non-smi into smi-only array.
+  // Escape to elements kind transition case.
   __ mov(edi, FieldOperand(edx, HeapObject::kMapOffset));
-  __ CheckFastObjectElements(edi, &slow, Label::kNear);
+  __ CheckFastObjectElements(edi, &transition_smi_elements);
 
   // Fast elements array, store the value to the elements backing store.
+  __ bind(&finish_object_store);
   __ mov(CodeGenerator::FixedArrayElementOperand(ebx, ecx), eax);
   // Update write barrier for the elements array address.
   __ mov(edx, eax);  // Preserve the value which is returned.
@@ -853,8 +884,54 @@ void KeyedStoreIC::GenerateGeneric(MacroAssembler* masm,
   __ bind(&fast_double_without_map_check);
   // If the value is a number, store it as a double in the FastDoubleElements
   // array.
-  __ StoreNumberToDoubleElements(eax, ebx, ecx, edx, xmm0, &slow, false);
+  __ StoreNumberToDoubleElements(eax, ebx, ecx, edx, xmm0,
+                                 &transition_double_elements, false);
   __ ret(0);
+
+  __ bind(&transition_smi_elements);
+  __ mov(ebx, FieldOperand(edx, HeapObject::kMapOffset));
+
+  // Transition the array appropriately depending on the value type.
+  __ CheckMap(eax,
+              masm->isolate()->factory()->heap_number_map(),
+              &non_double_value,
+              DONT_DO_SMI_CHECK);
+
+  // Value is a double. Transition FAST_SMI_ONLY_ELEMENTS ->
+  // FAST_DOUBLE_ELEMENTS and complete the store.
+  __ LoadTransitionedArrayMapConditional(FAST_SMI_ONLY_ELEMENTS,
+                                         FAST_DOUBLE_ELEMENTS,
+                                         ebx,
+                                         edi,
+                                         &slow);
+  ElementsTransitionGenerator::GenerateSmiOnlyToDouble(masm, &slow);
+  __ mov(ebx, FieldOperand(edx, JSObject::kElementsOffset));
+  __ jmp(&fast_double_without_map_check);
+
+  __ bind(&non_double_value);
+  // Value is not a double, FAST_SMI_ONLY_ELEMENTS -> FAST_ELEMENTS
+  __ LoadTransitionedArrayMapConditional(FAST_SMI_ONLY_ELEMENTS,
+                                         FAST_ELEMENTS,
+                                         ebx,
+                                         edi,
+                                         &slow);
+  ElementsTransitionGenerator::GenerateSmiOnlyToObject(masm);
+  __ mov(ebx, FieldOperand(edx, JSObject::kElementsOffset));
+  __ jmp(&finish_object_store);
+
+  __ bind(&transition_double_elements);
+  // Elements are FAST_DOUBLE_ELEMENTS, but value is an Object that's not a
+  // HeapNumber. Make sure that the receiver is a Array with FAST_ELEMENTS and
+  // transition array from FAST_DOUBLE_ELEMENTS to FAST_ELEMENTS
+  __ mov(ebx, FieldOperand(edx, HeapObject::kMapOffset));
+  __ LoadTransitionedArrayMapConditional(FAST_DOUBLE_ELEMENTS,
+                                         FAST_ELEMENTS,
+                                         ebx,
+                                         edi,
+                                         &slow);
+  ElementsTransitionGenerator::GenerateDoubleToObject(masm, &slow);
+  __ mov(ebx, FieldOperand(edx, JSObject::kElementsOffset));
+  __ jmp(&finish_object_store);
 }
 
 
@@ -1376,10 +1453,10 @@ void StoreIC::GenerateArrayLength(MacroAssembler* masm) {
   //  -- esp[0] : return address
   // -----------------------------------
   //
-  // This accepts as a receiver anything JSObject::SetElementsLength accepts
+  // This accepts as a receiver anything JSArray::SetElementsLength accepts
   // (currently anything except for external arrays which means anything with
-  // elements of FixedArray type.), but currently is restricted to JSArray.
-  // Value must be a number, but only smis are accepted as the most common case.
+  // elements of FixedArray type).  Value must be a number, but only smis are
+  // accepted as the most common case.
 
   Label miss;
 
@@ -1400,6 +1477,13 @@ void StoreIC::GenerateArrayLength(MacroAssembler* masm) {
   __ mov(scratch, FieldOperand(receiver, JSArray::kElementsOffset));
   __ CmpObjectType(scratch, FIXED_ARRAY_TYPE, scratch);
   __ j(not_equal, &miss);
+
+  // Check that the array has fast properties, otherwise the length
+  // property might have been redefined.
+  __ mov(scratch, FieldOperand(receiver, JSArray::kPropertiesOffset));
+  __ CompareRoot(FieldOperand(scratch, FixedArray::kMapOffset),
+                 Heap::kHashTableMapRootIndex);
+  __ j(equal, &miss);
 
   // Check that value is a smi.
   __ JumpIfNotSmi(value, &miss);
@@ -1555,6 +1639,9 @@ void KeyedStoreIC::GenerateTransitionElementsSmiToDouble(MacroAssembler* masm) {
   __ pop(ebx);
   __ push(edx);
   __ push(ebx);  // return address
+  // Leaving the code managed by the register allocator and return to the
+  // convention of using esi as context register.
+  __ mov(esi, Operand(ebp, StandardFrameConstants::kContextOffset));
   __ TailCallRuntime(Runtime::kTransitionElementsSmiToDouble, 1, 1);
 }
 
@@ -1578,6 +1665,9 @@ void KeyedStoreIC::GenerateTransitionElementsDoubleToObject(
   __ pop(ebx);
   __ push(edx);
   __ push(ebx);  // return address
+  // Leaving the code managed by the register allocator and return to the
+  // convention of using esi as context register.
+  __ mov(esi, Operand(ebp, StandardFrameConstants::kContextOffset));
   __ TailCallRuntime(Runtime::kTransitionElementsDoubleToObject, 1, 1);
 }
 
@@ -1627,6 +1717,9 @@ void CompareIC::UpdateCaches(Handle<Object> x, Handle<Object> y) {
     rewritten = stub.GetCode();
   } else {
     ICCompareStub stub(op_, state);
+    if (state == KNOWN_OBJECTS) {
+      stub.set_known_map(Handle<Map>(Handle<JSObject>::cast(x)->map()));
+    }
     rewritten = stub.GetCode();
   }
   set_target(*rewritten);

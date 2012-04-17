@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -54,7 +54,11 @@ class Factory {
       int size,
       PretenureFlag pretenure = NOT_TENURED);
 
-  Handle<NumberDictionary> NewNumberDictionary(int at_least_space_for);
+  Handle<SeededNumberDictionary> NewSeededNumberDictionary(
+      int at_least_space_for);
+
+  Handle<UnseededNumberDictionary> NewUnseededNumberDictionary(
+      int at_least_space_for);
 
   Handle<StringDictionary> NewStringDictionary(int at_least_space_for);
 
@@ -69,6 +73,10 @@ class Factory {
   Handle<DeoptimizationOutputData> NewDeoptimizationOutputData(
       int deopt_entry_count,
       PretenureFlag pretenure);
+  // Allocates a pre-tenured empty AccessorPair.
+  Handle<AccessorPair> NewAccessorPair();
+
+  Handle<TypeFeedbackInfo> NewTypeFeedbackInfo();
 
   Handle<String> LookupSymbol(Vector<const char> str);
   Handle<String> LookupSymbol(Handle<String> str);
@@ -172,7 +180,7 @@ class Factory {
   // Create a 'block' context.
   Handle<Context> NewBlockContext(Handle<JSFunction> function,
                                   Handle<Context> previous,
-                                  Handle<SerializedScopeInfo> scope_info);
+                                  Handle<ScopeInfo> scope_info);
 
   // Return the Symbol matching the passed in string.
   Handle<String> SymbolFromString(Handle<String> value);
@@ -227,12 +235,14 @@ class Factory {
   Handle<FixedDoubleArray> CopyFixedDoubleArray(
       Handle<FixedDoubleArray> array);
 
-  // Numbers (eg, literals) are pretenured by the parser.
+  // Numbers (e.g. literals) are pretenured by the parser.
   Handle<Object> NewNumber(double value,
                            PretenureFlag pretenure = NOT_TENURED);
 
-  Handle<Object> NewNumberFromInt(int value);
-  Handle<Object> NewNumberFromUint(uint32_t value);
+  Handle<Object> NewNumberFromInt(int32_t value,
+                                  PretenureFlag pretenure = NOT_TENURED);
+  Handle<Object> NewNumberFromUint(uint32_t value,
+                                  PretenureFlag pretenure = NOT_TENURED);
 
   // These objects are used by the api to create env-independent data
   // structures in the heap.
@@ -254,15 +264,24 @@ class Factory {
 
   // JS arrays are pretenured when allocated by the parser.
   Handle<JSArray> NewJSArray(int capacity,
+                             ElementsKind elements_kind = FAST_ELEMENTS,
                              PretenureFlag pretenure = NOT_TENURED);
 
   Handle<JSArray> NewJSArrayWithElements(
-      Handle<FixedArray> elements,
+      Handle<FixedArrayBase> elements,
+      ElementsKind elements_kind = FAST_ELEMENTS,
       PretenureFlag pretenure = NOT_TENURED);
 
-  void SetContent(Handle<JSArray> array, Handle<FixedArray> elements);
+  void SetElementsCapacityAndLength(Handle<JSArray> array,
+                                    int capacity,
+                                    int length);
 
-  void EnsureCanContainNonSmiElements(Handle<JSArray> array);
+  void SetContent(Handle<JSArray> array, Handle<FixedArrayBase> elements);
+
+  void EnsureCanContainHeapObjectElements(Handle<JSArray> array);
+  void EnsureCanContainElements(Handle<JSArray> array,
+                                Handle<FixedArrayBase> elements,
+                                EnsureElementsMode mode);
 
   Handle<JSProxy> NewJSProxy(Handle<Object> handler, Handle<Object> prototype);
 
@@ -277,7 +296,7 @@ class Factory {
 
   Handle<JSFunction> NewFunctionWithoutPrototype(
       Handle<String> name,
-      StrictModeFlag strict_mode);
+      LanguageMode language_mode);
 
   Handle<JSFunction> NewFunction(Handle<Object> super, bool is_global);
 
@@ -291,7 +310,7 @@ class Factory {
       Handle<Context> context,
       PretenureFlag pretenure = TENURED);
 
-  Handle<SerializedScopeInfo> NewSerializedScopeInfo(int length);
+  Handle<ScopeInfo> NewScopeInfo(int length);
 
   Handle<Code> NewCode(const CodeDesc& desc,
                        Code::Flags flags,
@@ -409,7 +428,7 @@ class Factory {
       Handle<String> name,
       int number_of_literals,
       Handle<Code> code,
-      Handle<SerializedScopeInfo> scope_info);
+      Handle<ScopeInfo> scope_info);
   Handle<SharedFunctionInfo> NewSharedFunctionInfo(Handle<String> name);
 
   Handle<JSMessageObject> NewJSMessageObject(
@@ -421,8 +440,13 @@ class Factory {
       Handle<Object> stack_trace,
       Handle<Object> stack_frames);
 
-  Handle<NumberDictionary> DictionaryAtNumberPut(
-      Handle<NumberDictionary>,
+  Handle<SeededNumberDictionary> DictionaryAtNumberPut(
+      Handle<SeededNumberDictionary>,
+      uint32_t key,
+      Handle<Object> value);
+
+  Handle<UnseededNumberDictionary> DictionaryAtNumberPut(
+      Handle<UnseededNumberDictionary>,
       uint32_t key,
       Handle<Object> value);
 
@@ -467,7 +491,7 @@ class Factory {
 
   Handle<JSFunction> NewFunctionWithoutPrototypeHelper(
       Handle<String> name,
-      StrictModeFlag strict_mode);
+      LanguageMode language_mode);
 
   Handle<DescriptorArray> CopyAppendCallbackDescriptors(
       Handle<DescriptorArray> array,

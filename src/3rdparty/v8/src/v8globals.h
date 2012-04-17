@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -29,6 +29,7 @@
 #define V8_V8GLOBALS_H_
 
 #include "globals.h"
+#include "checks.h"
 
 namespace v8 {
 namespace internal {
@@ -106,14 +107,12 @@ const uint32_t kQuietNaNHighBitsMask = 0xfff << (51 - 32);
 
 // -----------------------------------------------------------------------------
 // Forward declarations for frequently used classes
-// (sorted alphabetically)
 
 class AccessorInfo;
 class Allocation;
 class Arguments;
 class Assembler;
 class AssertNoAllocation;
-class BreakableStatement;
 class Code;
 class CodeGenerator;
 class CodeStub;
@@ -123,21 +122,18 @@ class Debugger;
 class DebugInfo;
 class Descriptor;
 class DescriptorArray;
-class Expression;
 class ExternalReference;
 class FixedArray;
-class FunctionEntry;
-class FunctionLiteral;
 class FunctionTemplateInfo;
 class MemoryChunk;
-class NumberDictionary;
+class SeededNumberDictionary;
+class UnseededNumberDictionary;
 class StringDictionary;
 template <typename T> class Handle;
 class Heap;
 class HeapObject;
 class IC;
 class InterceptorInfo;
-class IterationStatement;
 class JSArray;
 class JSFunction;
 class JSObject;
@@ -148,32 +144,19 @@ class Map;
 class MapSpace;
 class MarkCompactCollector;
 class NewSpace;
-class NodeVisitor;
 class Object;
 class MaybeObject;
 class OldSpace;
-class Property;
 class Foreign;
-class RegExpNode;
-struct RegExpCompileData;
-class RegExpTree;
-class RegExpCompiler;
-class RegExpVisitor;
 class Scope;
-template<class Allocator = FreeStoreAllocationPolicy> class ScopeInfo;
-class SerializedScopeInfo;
+class ScopeInfo;
 class Script;
-class Slot;
 class Smi;
 template <typename Config, class Allocator = FreeStoreAllocationPolicy>
     class SplayTree;
-class Statement;
 class String;
 class Struct;
-class SwitchStatement;
-class AstVisitor;
 class Variable;
-class VariableProxy;
 class RelocInfo;
 class Deserializer;
 class MessageLocation;
@@ -322,30 +305,6 @@ typedef enum {
 typedef void (*StoreBufferCallback)(Heap* heap,
                                     MemoryChunk* page,
                                     StoreBufferEvent event);
-
-
-// Type of properties.
-// Order of properties is significant.
-// Must fit in the BitField PropertyDetails::TypeField.
-// A copy of this is in mirror-debugger.js.
-enum PropertyType {
-  NORMAL                    = 0,  // only in slow mode
-  FIELD                     = 1,  // only in fast mode
-  CONSTANT_FUNCTION         = 2,  // only in fast mode
-  CALLBACKS                 = 3,
-  HANDLER                   = 4,  // only in lookup results, not in descriptors
-  INTERCEPTOR               = 5,  // only in lookup results, not in descriptors
-  MAP_TRANSITION            = 6,  // only in fast mode
-  ELEMENTS_TRANSITION       = 7,
-  CONSTANT_TRANSITION       = 8,  // only in fast mode
-  NULL_DESCRIPTOR           = 9,  // only in fast mode
-  // All properties before MAP_TRANSITION are real.
-  FIRST_PHANTOM_PROPERTY_TYPE = MAP_TRANSITION,
-  // There are no IC stubs for NULL_DESCRIPTORS. Therefore,
-  // NULL_DESCRIPTOR can be used as the type flag for IC stubs for
-  // nonexistent properties.
-  NONEXISTENT = NULL_DESCRIPTOR
-};
 
 
 // Whether to remove map transitions and constant transitions from a
@@ -502,6 +461,7 @@ enum CallKind {
 enum ScopeType {
   EVAL_SCOPE,      // The top-level scope for an eval source.
   FUNCTION_SCOPE,  // The top-level scope for a function.
+  MODULE_SCOPE,    // The scope introduced by a module literal
   GLOBAL_SCOPE,    // The top-level scope for a program or a top-level eval.
   CATCH_SCOPE,     // The scope introduced by catch.
   BLOCK_SCOPE,     // The scope introduced by a new block.
@@ -509,9 +469,9 @@ enum ScopeType {
 };
 
 
-static const uint32_t kHoleNanUpper32 = 0x7FFFFFFF;
-static const uint32_t kHoleNanLower32 = 0xFFFFFFFF;
-static const uint32_t kNaNOrInfinityLowerBoundUpper32 = 0x7FF00000;
+const uint32_t kHoleNanUpper32 = 0x7FFFFFFF;
+const uint32_t kHoleNanLower32 = 0xFFFFFFFF;
+const uint32_t kNaNOrInfinityLowerBoundUpper32 = 0x7FF00000;
 
 const uint64_t kHoleNanInt64 =
     (static_cast<uint64_t>(kHoleNanUpper32) << 32) | kHoleNanLower32;
@@ -547,6 +507,43 @@ enum VariableMode {
 
   TEMPORARY        // temporary variables (not user-visible), never
                    // in a context
+};
+
+
+// ES6 Draft Rev3 10.2 specifies declarative environment records with mutable
+// and immutable bindings that can be in two states: initialized and
+// uninitialized. In ES5 only immutable bindings have these two states. When
+// accessing a binding, it needs to be checked for initialization. However in
+// the following cases the binding is initialized immediately after creation
+// so the initialization check can always be skipped:
+// 1. Var declared local variables.
+//      var foo;
+// 2. A local variable introduced by a function declaration.
+//      function foo() {}
+// 3. Parameters
+//      function x(foo) {}
+// 4. Catch bound variables.
+//      try {} catch (foo) {}
+// 6. Function variables of named function expressions.
+//      var x = function foo() {}
+// 7. Implicit binding of 'this'.
+// 8. Implicit binding of 'arguments' in functions.
+//
+// ES5 specified object environment records which are introduced by ES elements
+// such as Program and WithStatement that associate identifier bindings with the
+// properties of some object. In the specification only mutable bindings exist
+// (which may be non-writable) and have no distinct initialization step. However
+// V8 allows const declarations in global code with distinct creation and
+// initialization steps which are represented by non-writable properties in the
+// global object. As a result also these bindings need to be checked for
+// initialization.
+//
+// The following enum specifies a flag that indicates if the binding needs a
+// distinct initialization step (kNeedsInitialization) or if the binding is
+// immediately initialized upon creation (kCreatedInitialized).
+enum InitializationFlag {
+  kNeedsInitialization,
+  kCreatedInitialized
 };
 
 

@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -30,6 +30,7 @@
 #if defined(V8_TARGET_ARCH_IA32)
 
 #include "codegen.h"
+#include "heap.h"
 #include "macro-assembler.h"
 
 namespace v8 {
@@ -54,6 +55,85 @@ void StubRuntimeCallHelper::AfterCall(MacroAssembler* masm) const {
 
 
 #define __ masm.
+
+
+UnaryMathFunction CreateTranscendentalFunction(TranscendentalCache::Type type) {
+  size_t actual_size;
+  // Allocate buffer in executable space.
+  byte* buffer = static_cast<byte*>(OS::Allocate(1 * KB,
+                                                 &actual_size,
+                                                 true));
+  if (buffer == NULL) {
+    // Fallback to library function if function cannot be created.
+    switch (type) {
+      case TranscendentalCache::SIN: return &sin;
+      case TranscendentalCache::COS: return &cos;
+      case TranscendentalCache::TAN: return &tan;
+      case TranscendentalCache::LOG: return &log;
+      default: UNIMPLEMENTED();
+    }
+  }
+
+  MacroAssembler masm(NULL, buffer, static_cast<int>(actual_size));
+  // esp[1 * kPointerSize]: raw double input
+  // esp[0 * kPointerSize]: return address
+  // Move double input into registers.
+
+  __ push(ebx);
+  __ push(edx);
+  __ push(edi);
+  __ fld_d(Operand(esp, 4 * kPointerSize));
+  __ mov(ebx, Operand(esp, 4 * kPointerSize));
+  __ mov(edx, Operand(esp, 5 * kPointerSize));
+  TranscendentalCacheStub::GenerateOperation(&masm, type);
+  // The return value is expected to be on ST(0) of the FPU stack.
+  __ pop(edi);
+  __ pop(edx);
+  __ pop(ebx);
+  __ Ret();
+
+  CodeDesc desc;
+  masm.GetCode(&desc);
+  ASSERT(desc.reloc_size == 0);
+
+  CPU::FlushICache(buffer, actual_size);
+  OS::ProtectCode(buffer, actual_size);
+  return FUNCTION_CAST<UnaryMathFunction>(buffer);
+}
+
+
+UnaryMathFunction CreateSqrtFunction() {
+  size_t actual_size;
+  // Allocate buffer in executable space.
+  byte* buffer = static_cast<byte*>(OS::Allocate(1 * KB,
+                                                 &actual_size,
+                                                 true));
+  // If SSE2 is not available, we can use libc's implementation to ensure
+  // consistency since code by fullcodegen's calls into runtime in that case.
+  if (buffer == NULL || !CpuFeatures::IsSupported(SSE2)) return &sqrt;
+  MacroAssembler masm(NULL, buffer, static_cast<int>(actual_size));
+  // esp[1 * kPointerSize]: raw double input
+  // esp[0 * kPointerSize]: return address
+  // Move double input into registers.
+  {
+    CpuFeatures::Scope use_sse2(SSE2);
+    __ movdbl(xmm0, Operand(esp, 1 * kPointerSize));
+    __ sqrtsd(xmm0, xmm0);
+    __ movdbl(Operand(esp, 1 * kPointerSize), xmm0);
+    // Load result into floating point register as return value.
+    __ fld_d(Operand(esp, 1 * kPointerSize));
+    __ Ret();
+  }
+
+  CodeDesc desc;
+  masm.GetCode(&desc);
+  ASSERT(desc.reloc_size == 0);
+
+  CPU::FlushICache(buffer, actual_size);
+  OS::ProtectCode(buffer, actual_size);
+  return FUNCTION_CAST<UnaryMathFunction>(buffer);
+}
+
 
 static void MemCopyWrapper(void* dest, const void* src, size_t size) {
   memcpy(dest, src, size);
@@ -301,11 +381,17 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
   //  -- edx    : receiver
   //  -- esp[0] : return address
   // -----------------------------------
-  Label loop, entry, convert_hole, gc_required;
+  Label loop, entry, convert_hole, gc_required, only_change_map;
+
+  // Check for empty arrays, which only require a map transition and no changes
+  // to the backing store.
+  __ mov(edi, FieldOperand(edx, JSObject::kElementsOffset));
+  __ cmp(edi, Immediate(masm->isolate()->factory()->empty_fixed_array()));
+  __ j(equal, &only_change_map);
+
   __ push(eax);
   __ push(ebx);
 
-  __ mov(edi, FieldOperand(edx, JSObject::kElementsOffset));
   __ mov(edi, FieldOperand(edi, FixedArray::kLengthOffset));
 
   // Allocate new FixedDoubleArray.
@@ -378,6 +464,12 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
 
   // Found hole, store hole_nan_as_double instead.
   __ bind(&convert_hole);
+
+  if (FLAG_debug_code) {
+    __ cmp(ebx, masm->isolate()->factory()->the_hole_value());
+    __ Assert(equal, "object found in smi-only array");
+  }
+
   if (CpuFeatures::IsSupported(SSE2)) {
     CpuFeatures::Scope use_sse2(SSE2);
     __ movdbl(FieldOperand(eax, edi, times_4, FixedDoubleArray::kHeaderSize),
@@ -393,6 +485,11 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
 
   __ pop(ebx);
   __ pop(eax);
+
+  // Restore esi.
+  __ mov(esi, Operand(ebp, StandardFrameConstants::kContextOffset));
+
+  __ bind(&only_change_map);
   // eax: value
   // ebx: target map
   // Set transitioned map.
@@ -402,10 +499,8 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
                       ebx,
                       edi,
                       kDontSaveFPRegs,
-                      EMIT_REMEMBERED_SET,
+                      OMIT_REMEMBERED_SET,
                       OMIT_SMI_CHECK);
-  // Restore esi.
-  __ mov(esi, Operand(ebp, StandardFrameConstants::kContextOffset));
 }
 
 
@@ -418,12 +513,18 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
   //  -- edx    : receiver
   //  -- esp[0] : return address
   // -----------------------------------
-  Label loop, entry, convert_hole, gc_required;
+  Label loop, entry, convert_hole, gc_required, only_change_map, success;
+
+  // Check for empty arrays, which only require a map transition and no changes
+  // to the backing store.
+  __ mov(edi, FieldOperand(edx, JSObject::kElementsOffset));
+  __ cmp(edi, Immediate(masm->isolate()->factory()->empty_fixed_array()));
+  __ j(equal, &only_change_map);
+
   __ push(eax);
   __ push(edx);
   __ push(ebx);
 
-  __ mov(edi, FieldOperand(edx, JSObject::kElementsOffset));
   __ mov(ebx, FieldOperand(edi, FixedDoubleArray::kLengthOffset));
 
   // Allocate new FixedArray.
@@ -439,6 +540,20 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
   __ mov(edi, FieldOperand(edx, JSObject::kElementsOffset));
 
   __ jmp(&entry);
+
+  // ebx: target map
+  // edx: receiver
+  // Set transitioned map.
+  __ bind(&only_change_map);
+  __ mov(FieldOperand(edx, HeapObject::kMapOffset), ebx);
+  __ RecordWriteField(edx,
+                      HeapObject::kMapOffset,
+                      ebx,
+                      edi,
+                      kDontSaveFPRegs,
+                      OMIT_REMEMBERED_SET,
+                      OMIT_SMI_CHECK);
+  __ jmp(&success);
 
   // Call into runtime if GC is required.
   __ bind(&gc_required);
@@ -501,7 +616,7 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
                       ebx,
                       edi,
                       kDontSaveFPRegs,
-                      EMIT_REMEMBERED_SET,
+                      OMIT_REMEMBERED_SET,
                       OMIT_SMI_CHECK);
   // Replace receiver's backing store with newly created and filled FixedArray.
   __ mov(FieldOperand(edx, JSObject::kElementsOffset), eax);
@@ -516,6 +631,112 @@ void ElementsTransitionGenerator::GenerateDoubleToObject(
   // Restore registers.
   __ pop(eax);
   __ mov(esi, Operand(ebp, StandardFrameConstants::kContextOffset));
+
+  __ bind(&success);
+}
+
+
+void StringCharLoadGenerator::Generate(MacroAssembler* masm,
+                                       Factory* factory,
+                                       Register string,
+                                       Register index,
+                                       Register result,
+                                       Label* call_runtime) {
+  // Fetch the instance type of the receiver into result register.
+  __ mov(result, FieldOperand(string, HeapObject::kMapOffset));
+  __ movzx_b(result, FieldOperand(result, Map::kInstanceTypeOffset));
+
+  // We need special handling for indirect strings.
+  Label check_sequential;
+  __ test(result, Immediate(kIsIndirectStringMask));
+  __ j(zero, &check_sequential, Label::kNear);
+
+  // Dispatch on the indirect string shape: slice or cons.
+  Label cons_string;
+  __ test(result, Immediate(kSlicedNotConsMask));
+  __ j(zero, &cons_string, Label::kNear);
+
+  // Handle slices.
+  Label indirect_string_loaded;
+  __ mov(result, FieldOperand(string, SlicedString::kOffsetOffset));
+  __ SmiUntag(result);
+  __ add(index, result);
+  __ mov(string, FieldOperand(string, SlicedString::kParentOffset));
+  __ jmp(&indirect_string_loaded, Label::kNear);
+
+  // Handle cons strings.
+  // Check whether the right hand side is the empty string (i.e. if
+  // this is really a flat string in a cons string). If that is not
+  // the case we would rather go to the runtime system now to flatten
+  // the string.
+  __ bind(&cons_string);
+  __ cmp(FieldOperand(string, ConsString::kSecondOffset),
+         Immediate(factory->empty_string()));
+  __ j(not_equal, call_runtime);
+  __ mov(string, FieldOperand(string, ConsString::kFirstOffset));
+
+  __ bind(&indirect_string_loaded);
+  __ mov(result, FieldOperand(string, HeapObject::kMapOffset));
+  __ movzx_b(result, FieldOperand(result, Map::kInstanceTypeOffset));
+
+  // Distinguish sequential and external strings. Only these two string
+  // representations can reach here (slices and flat cons strings have been
+  // reduced to the underlying sequential or external string).
+  Label seq_string;
+  __ bind(&check_sequential);
+  STATIC_ASSERT(kSeqStringTag == 0);
+  __ test(result, Immediate(kStringRepresentationMask));
+  __ j(zero, &seq_string, Label::kNear);
+
+  // Handle external strings.
+  Label ascii_external, done;
+  if (FLAG_debug_code) {
+    // Assert that we do not have a cons or slice (indirect strings) here.
+    // Sequential strings have already been ruled out.
+    __ test(result, Immediate(kIsIndirectStringMask));
+    __ Assert(zero, "external string expected, but not found");
+  }
+  // Rule out short external strings.
+  STATIC_CHECK(kShortExternalStringTag != 0);
+  __ test_b(result, kShortExternalStringMask);
+  __ j(not_zero, call_runtime);
+  // Check encoding.
+  STATIC_ASSERT(kTwoByteStringTag == 0);
+  __ test_b(result, kStringEncodingMask);
+  __ mov(result, FieldOperand(string, ExternalString::kResourceDataOffset));
+  __ j(not_equal, &ascii_external, Label::kNear);
+  // Two-byte string.
+  __ movzx_w(result, Operand(result, index, times_2, 0));
+  __ jmp(&done, Label::kNear);
+  __ bind(&ascii_external);
+  // Ascii string.
+  __ movzx_b(result, Operand(result, index, times_1, 0));
+  __ jmp(&done, Label::kNear);
+
+  // Dispatch on the encoding: ASCII or two-byte.
+  Label ascii;
+  __ bind(&seq_string);
+  STATIC_ASSERT((kStringEncodingMask & kAsciiStringTag) != 0);
+  STATIC_ASSERT((kStringEncodingMask & kTwoByteStringTag) == 0);
+  __ test(result, Immediate(kStringEncodingMask));
+  __ j(not_zero, &ascii, Label::kNear);
+
+  // Two-byte string.
+  // Load the two-byte character code into the result register.
+  __ movzx_w(result, FieldOperand(string,
+                                  index,
+                                  times_2,
+                                  SeqTwoByteString::kHeaderSize));
+  __ jmp(&done, Label::kNear);
+
+  // Ascii string.
+  // Load the byte into the result register.
+  __ bind(&ascii);
+  __ movzx_b(result, FieldOperand(string,
+                                  index,
+                                  times_1,
+                                  SeqAsciiString::kHeaderSize));
+  __ bind(&done);
 }
 
 #undef __

@@ -79,6 +79,7 @@ int random();
 #endif  // WIN32
 
 #include "atomicops.h"
+#include "lazy-instance.h"
 #include "platform-tls.h"
 #include "utils.h"
 #include "v8globals.h"
@@ -96,6 +97,13 @@ class Mutex;
 double ceiling(double x);
 double modulo(double x, double y);
 
+// Custom implementation of sin, cos, tan and log.
+double fast_sin(double input);
+double fast_cos(double input);
+double fast_tan(double input);
+double fast_log(double input);
+double fast_sqrt(double input);
+
 // Forward declarations.
 class Socket;
 
@@ -109,7 +117,11 @@ class Socket;
 class OS {
  public:
   // Initializes the platform OS support. Called once at VM startup.
-  static void Setup();
+  static void SetUp();
+
+  // Initializes the platform OS support that depend on CPU features. This is
+  // called after CPU initialization.
+  static void PostSetUp();
 
   // Returns the accumulated user time for thread. This routine
   // can be used for profiling. The implementation should
@@ -171,6 +183,10 @@ class OS {
                         size_t* allocated,
                         bool is_executable);
   static void Free(void* address, const size_t size);
+
+  // This is the granularity at which the ProtectCode(...) call can set page
+  // permissions.
+  static intptr_t CommitPageSize();
 
   // Mark code segments non-writable.
   static void ProtectCode(void* address, const size_t size);
@@ -352,6 +368,9 @@ class VirtualMemory {
   // Uncommit real memory.  Returns whether the operation succeeded.
   bool Uncommit(void* address, size_t size);
 
+  // Creates a single guard page at the given address.
+  bool Guard(void* address);
+
   void Release() {
     ASSERT(IsReserved());
     // Notice: Order is important here. The VirtualMemory object might live
@@ -408,16 +427,22 @@ class Thread {
     LOCAL_STORAGE_KEY_MAX_VALUE = kMaxInt
   };
 
-  struct Options {
-    Options() : name("v8:<unknown>"), stack_size(0) {}
+  class Options {
+   public:
+    Options() : name_("v8:<unknown>"), stack_size_(0) {}
+    Options(const char* name, int stack_size = 0)
+        : name_(name), stack_size_(stack_size) {}
 
-    const char* name;
-    int stack_size;
+    const char* name() const { return name_; }
+    int stack_size() const { return stack_size_; }
+
+   private:
+    const char* name_;
+    int stack_size_;
   };
 
   // Create new thread.
   explicit Thread(const Options& options);
-  explicit Thread(const char* name);
   virtual ~Thread();
 
   // Start new thread by calling the Run() method in the new thread.
@@ -473,7 +498,7 @@ class Thread {
   PlatformData* data() { return data_; }
 
  private:
-  void set_name(const char *name);
+  void set_name(const char* name);
 
   PlatformData* data_;
 
@@ -509,6 +534,25 @@ class Mutex {
   virtual bool TryLock() = 0;
 };
 
+struct CreateMutexTrait {
+  static Mutex* Create() {
+    return OS::CreateMutex();
+  }
+};
+
+// POD Mutex initialized lazily (i.e. the first time Pointer() is called).
+// Usage:
+//   static LazyMutex my_mutex = LAZY_MUTEX_INITIALIZER;
+//
+//   void my_function() {
+//     ScopedLock my_lock(my_mutex.Pointer());
+//     // Do something.
+//   }
+//
+typedef LazyDynamicInstance<
+    Mutex, CreateMutexTrait, ThreadSafeInitOnceTrait>::type LazyMutex;
+
+#define LAZY_MUTEX_INITIALIZER LAZY_DYNAMIC_INSTANCE_INITIALIZER
 
 // ----------------------------------------------------------------------------
 // ScopedLock
@@ -549,7 +593,7 @@ class Semaphore {
   virtual void Wait() = 0;
 
   // Suspends the calling thread until the counter is non zero or the timeout
-  // time has passsed. If timeout happens the return value is false and the
+  // time has passed. If timeout happens the return value is false and the
   // counter is unchanged. Otherwise the semaphore counter is decremented and
   // true is returned. The timeout value is specified in microseconds.
   virtual bool Wait(int timeout) = 0;
@@ -557,6 +601,31 @@ class Semaphore {
   // Increments the semaphore counter.
   virtual void Signal() = 0;
 };
+
+template <int InitialValue>
+struct CreateSemaphoreTrait {
+  static Semaphore* Create() {
+    return OS::CreateSemaphore(InitialValue);
+  }
+};
+
+// POD Semaphore initialized lazily (i.e. the first time Pointer() is called).
+// Usage:
+//   // The following semaphore starts at 0.
+//   static LazySemaphore<0>::type my_semaphore = LAZY_SEMAPHORE_INITIALIZER;
+//
+//   void my_function() {
+//     // Do something with my_semaphore.Pointer().
+//   }
+//
+template <int InitialValue>
+struct LazySemaphore {
+  typedef typename LazyDynamicInstance<
+      Semaphore, CreateSemaphoreTrait<InitialValue>,
+      ThreadSafeInitOnceTrait>::type type;
+};
+
+#define LAZY_SEMAPHORE_INITIALIZER LAZY_DYNAMIC_INSTANCE_INITIALIZER
 
 
 // ----------------------------------------------------------------------------
@@ -589,7 +658,7 @@ class Socket {
 
   virtual bool IsValid() const = 0;
 
-  static bool Setup();
+  static bool SetUp();
   static int LastError();
   static uint16_t HToN(uint16_t value);
   static uint16_t NToH(uint16_t value);

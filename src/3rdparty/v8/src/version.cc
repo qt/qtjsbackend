@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -33,12 +33,12 @@
 // NOTE these macros are used by the SCons build script so their names
 // cannot be changed without changing the SCons build script.
 #define MAJOR_VERSION     3
-#define MINOR_VERSION     7
-#define BUILD_NUMBER      4
+#define MINOR_VERSION     10
+#define BUILD_NUMBER      1
 #define PATCH_LEVEL       0
 // Use 1 for candidates and 0 otherwise.
 // (Boolean macro values are not supported by all preprocessors.)
-#define IS_CANDIDATE_VERSION 1
+#define IS_CANDIDATE_VERSION 0
 
 // Define SONAME to have the SCons build the put a specific SONAME into the
 // shared library instead the generic SONAME generated from the V8 version

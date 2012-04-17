@@ -157,16 +157,7 @@ Atomic64 Release_Load(volatile const Atomic64* ptr);
   (defined(V8_HOST_ARCH_IA32) || defined(V8_HOST_ARCH_X64))
 #include "atomicops_internals_x86_gcc.h"
 #elif defined(__GNUC__) && defined(V8_HOST_ARCH_ARM)
-  // We need special handling for QNX as the existing code in
-  // atomicops_internals_arm_gcc.h is actually Linux-specific. This is due to
-  // it using a magic hard-wired function address for LinuxKernelCmpxchgFunc.
-  // The QNX implementation uses the equivalent system call for that platform
-  // but is not source compatible.
-  #if defined(__QNXNTO__)
-    #include "atomicops_internals_arm_qnx.h"
-  #else
-    #include "atomicops_internals_arm_gcc.h"
-  #endif
+#include "atomicops_internals_arm_gcc.h"
 #elif defined(__GNUC__) && defined(V8_HOST_ARCH_MIPS)
 #include "atomicops_internals_mips_gcc.h"
 #else

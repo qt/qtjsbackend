@@ -36,6 +36,7 @@ void LOperand::PrintTo(StringStream* stream) {
   LUnallocated* unalloc = NULL;
   switch (kind()) {
     case INVALID:
+      stream->Add("(0)");
       break;
     case UNALLOCATED:
       unalloc = LUnallocated::cast(this);
@@ -70,9 +71,6 @@ void LOperand::PrintTo(StringStream* stream) {
         case LUnallocated::ANY:
           stream->Add("(-)");
           break;
-        case LUnallocated::IGNORE:
-          stream->Add("(0)");
-          break;
       }
       break;
     case CONSTANT_OPERAND:
@@ -96,10 +94,35 @@ void LOperand::PrintTo(StringStream* stream) {
   }
 }
 
+#define DEFINE_OPERAND_CACHE(name, type)                      \
+  L##name* L##name::cache = NULL;                             \
+                                                              \
+  void L##name::SetUpCache() {                                \
+    if (cache) return;                                        \
+    cache = new L##name[kNumCachedOperands];                  \
+    for (int i = 0; i < kNumCachedOperands; i++) {            \
+      cache[i].ConvertTo(type, i);                            \
+    }                                                         \
+  }                                                           \
+                                                              \
+  void L##name::TearDownCache() {                             \
+    delete[] cache;                                           \
+  }
 
-int LOperand::VirtualRegister() {
-  LUnallocated* unalloc = LUnallocated::cast(this);
-  return unalloc->virtual_register();
+LITHIUM_OPERAND_LIST(DEFINE_OPERAND_CACHE)
+#undef DEFINE_OPERAND_CACHE
+
+void LOperand::SetUpCaches() {
+#define LITHIUM_OPERAND_SETUP(name, type) L##name::SetUpCache();
+  LITHIUM_OPERAND_LIST(LITHIUM_OPERAND_SETUP)
+#undef LITHIUM_OPERAND_SETUP
+}
+
+
+void LOperand::TearDownCaches() {
+#define LITHIUM_OPERAND_TEARDOWN(name, type) L##name::TearDownCache();
+  LITHIUM_OPERAND_LIST(LITHIUM_OPERAND_TEARDOWN)
+#undef LITHIUM_OPERAND_TEARDOWN
 }
 
 
