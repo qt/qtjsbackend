@@ -1,4 +1,14 @@
-# This file is used to ignore files which are generated in the Qt build system
-# ----------------------------------------------------------------------------
+Makefile*
+include/*
+*.obj
+*.pdb
+*.res
+*.manifest
+*_resource.rc
+.qmake.cache
+config.log
 src/v8/qtv8version.h
+src/v8/debug/
 src/v8/generated-debug/
+src/v8/release/
+src/v8/generated-release/
