@@ -57,6 +57,7 @@
 #include "v8.h"
 
 #include "platform.h"
+#include "platform-posix.h"
 #include "v8threads.h"
 #include "vm-state-inl.h"
 
@@ -101,6 +102,11 @@ void OS::SetUp() {
 #endif
   }
 #endif
+}
+
+
+void OS::PostSetUp() {
+  POSIXPostSetUp();
 }
 
 
@@ -568,6 +574,12 @@ bool VirtualMemory::Commit(void* address, size_t size, bool is_executable) {
 
 bool VirtualMemory::Uncommit(void* address, size_t size) {
   return UncommitRegion(address, size);
+}
+
+
+bool VirtualMemory::Guard(void* address) {
+  OS::Guard(address, OS::CommitPageSize());
+  return true;
 }
 
 
