@@ -3644,7 +3644,6 @@ void FullCodeGenerator::EmitFastAsciiArrayJoin(CallRuntime* expr) {
   Register scratch1 = t3;
   Register scratch2 = t5;
   Register scratch3 = t4;
-  Register scratch4 = v1;
 
   // Separator operand is on the stack.
   __ pop(separator);
