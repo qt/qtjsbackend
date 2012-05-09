@@ -2289,12 +2289,13 @@ void FullCodeGenerator::EmitResolvePossiblyDirectEval(int arg_count) {
   // Push the language mode.
   __ mov(r1, Operand(Smi::FromInt(language_mode())));
   __ push(r1);
-  // Push the qml mode flag.
-  __ mov(r1, Operand(Smi::FromInt(is_qml_mode())));
-  __ push(r1);
 
   // Push the start position of the scope the calls resides in.
   __ mov(r1, Operand(Smi::FromInt(scope()->start_position())));
+  __ push(r1);
+
+  // Push the qml mode flag.
+  __ mov(r1, Operand(Smi::FromInt(is_qml_mode())));
   __ push(r1);
 
   // Do the runtime call.
