@@ -6810,14 +6810,14 @@ void ICCompareStub::GenerateKnownObjects(MacroAssembler* masm) {
   __ ldr(r3, FieldMemOperand(r1, HeapObject::kMapOffset));
   __ cmp(r2, Operand(known_map_));
   __ b(ne, &miss);
-  __ ldrb(r2, FieldMemOperand(r0, Map::kBitField2Offset));
+  __ ldrb(r2, FieldMemOperand(r2, Map::kBitField2Offset));
   __ and_(r2, r2, Operand(1 << Map::kUseUserObjectComparison));
   __ cmp(r2, Operand(1 << Map::kUseUserObjectComparison));
   __ b(eq, &miss);
   __ cmp(r3, Operand(known_map_));
   __ b(ne, &miss);
-  __ ldrb(r3, FieldMemOperand(r1, Map::kBitField2Offset));
-  __ and_(r3, r2, Operand(1 << Map::kUseUserObjectComparison));
+  __ ldrb(r3, FieldMemOperand(r3, Map::kBitField2Offset));
+  __ and_(r3, r3, Operand(1 << Map::kUseUserObjectComparison));
   __ cmp(r3, Operand(1 << Map::kUseUserObjectComparison));
   __ b(eq, &miss);
 
