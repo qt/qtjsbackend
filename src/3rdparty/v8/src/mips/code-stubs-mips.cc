@@ -7062,12 +7062,16 @@ void ICCompareStub::GenerateKnownObjects(MacroAssembler* masm) {
   __ JumpIfSmi(a2, &miss);
   __ lw(a2, FieldMemOperand(a0, HeapObject::kMapOffset));
   __ lw(a3, FieldMemOperand(a1, HeapObject::kMapOffset));
+
+  // Check object in a0
   __ Branch(&miss, ne, a2, Operand(known_map_));
-  __ lbu(a2, FieldMemOperand(a0, Map::kBitField2Offset));
+  __ lbu(a2, FieldMemOperand(a2, Map::kBitField2Offset));
   __ And(a2, a2, Operand(1 << Map::kUseUserObjectComparison));
   __ Branch(&miss, eq, a2, Operand(1 << Map::kUseUserObjectComparison));
+
+  // Check object in a1
   __ Branch(&miss, ne, a3, Operand(known_map_));
-  __ lbu(a3, FieldMemOperand(a1, Map::kBitField2Offset));
+  __ lbu(a3, FieldMemOperand(a3, Map::kBitField2Offset));
   __ And(a3, a3, Operand(1 << Map::kUseUserObjectComparison));
   __ Branch(&miss, eq, a3, Operand(1 << Map::kUseUserObjectComparison));
 
