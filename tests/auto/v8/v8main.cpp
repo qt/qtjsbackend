@@ -41,6 +41,7 @@
 
 #include "v8test.h"
 #include <stdio.h>
+#include <string.h>
 #include <strings.h>
 
 #define RUN_TEST(testname) { \
