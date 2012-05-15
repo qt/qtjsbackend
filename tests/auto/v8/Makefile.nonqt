@@ -14,3 +14,15 @@ release:
 
 debug:
 	g++ -o v8test_debug -g -I$(V8INCPATH) $(SOURCES) -lpthread -L$(V8LIBPATH) -lv8_g
+
+mips-release:
+	g++ -o v8test_mips_release -g -I$(V8INCPATH) $(SOURCES) -lpthread -L$(V8LIBPATH)/out/mips.release/lib.target/ -Wl,-rpath,$(V8LIBPATH)/out/mips.release/lib.target -lv8
+
+mips-debug:
+	g++ -o v8test_mips_debug -g -I$(V8INCPATH) $(SOURCES) -lpthread -L$(V8LIBPATH)/out/mips.debug/lib.target/ -Wl,-rpath,$(V8LIBPATH)/out/mips.debug/lib.target -lv8
+
+arm-release:
+	g++ -o v8test_arm_release -g -I$(V8INCPATH) $(SOURCES) -lpthread -L$(V8LIBPATH)/out/arm.release/lib.target/ -Wl,-rpath,$(V8LIBPATH)/out/arm.release/lib.target -lv8
+
+arm-debug:
+	g++ -o v8test_arm_debug -g -I$(V8INCPATH) $(SOURCES) -lpthread -L$(V8LIBPATH)/out/arm.debug/lib.target/ -Wl,-rpath,$(V8LIBPATH)/out/arm.debug/lib.target -lv8

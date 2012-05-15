@@ -41,14 +41,18 @@
 
 #include "v8test.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
+static int exit_status = EXIT_SUCCESS;
+
 #define RUN_TEST(testname) { \
     if (argc == 1 || 0 == ::strcmp(argv[1], # testname)) { \
-        if (!v8test_ ## testname()) \
+        if (!v8test_ ## testname()) { \
             printf ("Test %s FAILED\n", # testname); \
-        else \
+            exit_status = EXIT_FAILURE; \
+        } else \
             printf ("Test %s PASS\n", # testname); \
     } \
 }
@@ -69,5 +73,5 @@ int main(int argc, char *argv[])
     RUN_TEST(fallbackpropertyhandler_in_prototype);
     RUN_TEST(fallbackpropertyhandler_nonempty);
 
-    return -1;
+    return exit_status;
 }
