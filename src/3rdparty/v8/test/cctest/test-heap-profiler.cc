@@ -54,9 +54,11 @@ class NamedEntriesDetector {
 
 static const v8::HeapGraphNode* GetGlobalObject(
     const v8::HeapSnapshot* snapshot) {
-  CHECK_EQ(2, snapshot->GetRoot()->GetChildrenCount());
+  bool snapshot_enabled = i::Snapshot::IsEnabled();
+
+  CHECK_EQ((snapshot_enabled ? 3 : 2), snapshot->GetRoot()->GetChildrenCount());
   const v8::HeapGraphNode* global_obj =
-      snapshot->GetRoot()->GetChild(0)->GetToNode();
+      snapshot->GetRoot()->GetChild(snapshot_enabled ? 1 : 0)->GetToNode();
   CHECK_EQ(0, strncmp("Object", const_cast<i::HeapEntry*>(
       reinterpret_cast<const i::HeapEntry*>(global_obj))->name(), 6));
   return global_obj;
@@ -653,14 +655,26 @@ TEST(HeapSnapshotJSONSerialization) {
       "  return null;\n"
       "}\n");
   // Get the string index using the path: <root> -> <global>.b.x.s
-  v8::Local<v8::Value> string_obj_pos_val = CompileRun(
-      "GetChildPosByProperty(\n"
-      "  GetChildPosByProperty(\n"
-      "    GetChildPosByProperty("
-      "      parsed.nodes[1 + children_offset + child_to_node_offset],"
-      "      \"b\",shortcut_type),\n"
-      "    \"x\", property_type),"
-      "  \"s\", property_type)");
+  v8::Local<v8::Value> string_obj_pos_val;
+  if (i::Snapshot::IsEnabled()) {
+      string_obj_pos_val = CompileRun(
+          "GetChildPosByProperty(\n"
+          "  GetChildPosByProperty(\n"
+          "    GetChildPosByProperty("
+          "      parsed.nodes[1 + children_offset + child_to_node_offset + child_fields_count],"
+          "      \"b\",shortcut_type),\n"
+          "    \"x\", property_type),"
+          "  \"s\", property_type)");
+  } else {
+      string_obj_pos_val = CompileRun(
+          "GetChildPosByProperty(\n"
+          "  GetChildPosByProperty(\n"
+          "    GetChildPosByProperty("
+          "      parsed.nodes[1 + children_offset + child_to_node_offset],"
+          "      \"b\",shortcut_type),\n"
+          "    \"x\", property_type),"
+          "  \"s\", property_type)");
+  }
   CHECK(!string_obj_pos_val.IsEmpty());
   int string_obj_pos =
       static_cast<int>(string_obj_pos_val->ToNumber()->Value());
