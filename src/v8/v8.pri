@@ -263,7 +263,7 @@ win32 {
 SOURCES += \
     $$V8SRC/platform-win32.cc \
     $$V8SRC/win32-math.cc
-LIBS += -lWs2_32 -lWinmm
+LIBS += -lws2_32 -lwinmm
 win32-msvc*: QMAKE_CXXFLAGS += -wd4100 -wd 4291 -wd4351 -wd4355 -wd4800
 win32-msvc*:arch_i386: DEFINES += _USE_32BIT_TIME_T
 }
