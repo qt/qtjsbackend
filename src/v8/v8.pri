@@ -76,6 +76,7 @@ SOURCES += \
     $$V8SRC/diy-fp.cc \
     $$V8SRC/dtoa.cc \
     $$V8SRC/elements.cc \
+    $$V8SRC/elements-kind.cc \
     $$V8SRC/execution.cc \
     $$V8SRC/factory.cc \
     $$V8SRC/flags.cc \
@@ -110,6 +111,7 @@ SOURCES += \
     $$V8SRC/objects-printer.cc \
     $$V8SRC/objects-visiting.cc \
     $$V8SRC/once.cc \
+    $$V8SRC/optimizing-compiler-thread.cc \
     $$V8SRC/parser.cc \
     $$V8SRC/preparser.cc \
     $$V8SRC/preparse-data.cc \
@@ -134,6 +136,7 @@ SOURCES += \
     $$V8SRC/strtod.cc \
     $$V8SRC/stub-cache.cc \
     $$V8SRC/token.cc \
+    $$V8SRC/transitions.cc \
     $$V8SRC/type-info.cc \
     $$V8SRC/unicode.cc \
     $$V8SRC/utils.cc \
@@ -146,8 +149,9 @@ SOURCES += \
     $$V8SRC/version.cc \
     $$V8SRC/store-buffer.cc \
     $$V8SRC/zone.cc \
+    $$V8SRC/extensions/externalize-string-extension.cc \
     $$V8SRC/extensions/gc-extension.cc \
-    $$V8SRC/extensions/externalize-string-extension.cc
+    $$V8SRC/extensions/statistics-extension.cc
 
 equals(V8_TARGET_ARCH, arm) {
 DEFINES += V8_TARGET_ARCH_ARM
