@@ -554,6 +554,7 @@ class FreeBSDMutex : public Mutex {
     ASSERT(result == 0);
     result = pthread_mutex_init(&mutex_, &attrs);
     ASSERT(result == 0);
+    USE(result);
   }
 
   virtual ~FreeBSDMutex() { pthread_mutex_destroy(&mutex_); }
@@ -716,11 +717,8 @@ class SignalSender : public Thread {
       : Thread(Thread::Options("SignalSender", kSignalSenderStackSize)),
         interval_(interval) {}
 
-  static void SetUp() {
-    if (!mutex_) {
-      mutex_ = OS::CreateMutex();
-    }
-  }
+  static void SetUp() { if (!mutex_) mutex_ = OS::CreateMutex(); }
+  static void TearDown() { delete mutex_; }
 
   static void AddActiveSampler(Sampler* sampler) {
     ScopedLock lock(mutex_);
@@ -861,6 +859,12 @@ void OS::SetUp() {
   srandom(static_cast<unsigned int>(seed));
   limit_mutex = CreateMutex();
   SignalSender::SetUp();
+}
+
+
+void OS::TearDown() {
+  SignalSender::TearDown();
+  delete limit_mutex;
 }
 
 

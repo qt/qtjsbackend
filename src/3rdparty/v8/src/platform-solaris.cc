@@ -487,12 +487,10 @@ void Thread::set_name(const char* name) {
 
 
 void Thread::Start() {
-  pthread_attr_t* attr_ptr = NULL;
   pthread_attr_t attr;
   if (stack_size_ > 0) {
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, static_cast<size_t>(stack_size_));
-    attr_ptr = &attr;
   }
   pthread_create(&data_->thread_, NULL, ThreadEntry, this);
   ASSERT(data_->thread_ != kNoThread);
@@ -712,11 +710,8 @@ class SignalSender : public Thread {
       : Thread(Thread::Options("SignalSender", kSignalSenderStackSize)),
         interval_(interval) {}
 
-  static void SetUp() {
-    if (!mutex_) {
-      mutex_ = OS::CreateMutex();
-    }
-  }
+  static void SetUp() { if (!mutex_) mutex_ = OS::CreateMutex(); }
+  static void TearDown() { delete mutex_; }
 
   static void InstallSignalHandler() {
     struct sigaction sa;
@@ -867,6 +862,12 @@ void OS::SetUp() {
   srandom(static_cast<unsigned int>(seed));
   limit_mutex = CreateMutex();
   SignalSender::SetUp();
+}
+
+
+void OS::TearDown() {
+  SignalSender::TearDown();
+  delete limit_mutex;
 }
 
 

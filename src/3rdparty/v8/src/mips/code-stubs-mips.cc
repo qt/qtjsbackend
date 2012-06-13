@@ -171,11 +171,6 @@ void FastNewContextStub::Generate(MacroAssembler* masm) {
   __ sw(a1, MemOperand(v0, Context::SlotOffset(Context::EXTENSION_INDEX)));
   __ sw(a2, MemOperand(v0, Context::SlotOffset(Context::GLOBAL_INDEX)));
 
-  // Copy the qml global object from the surrounding context.
-  __ lw(a1, MemOperand(cp, Context::SlotOffset(Context::QML_GLOBAL_INDEX)));
-  __ sw(a1, MemOperand(v0, Context::SlotOffset(Context::QML_GLOBAL_INDEX)));
-
-
   // Initialize the rest of the slots to undefined.
   __ LoadRoot(a1, Heap::kUndefinedValueRootIndex);
   for (int i = Context::MIN_CONTEXT_SLOTS; i < length; i++) {
@@ -237,10 +232,6 @@ void FastNewBlockContextStub::Generate(MacroAssembler* masm) {
   __ sw(cp, ContextOperand(v0, Context::PREVIOUS_INDEX));
   __ sw(a1, ContextOperand(v0, Context::EXTENSION_INDEX));
   __ sw(a2, ContextOperand(v0, Context::GLOBAL_INDEX));
-
-  // Copy the qml global object from the surrounding context.
-  __ lw(a1, ContextOperand(cp, Context::QML_GLOBAL_INDEX));
-  __ sw(a1, ContextOperand(v0, Context::QML_GLOBAL_INDEX));
 
   // Initialize the rest of the slots to the hole value.
   __ LoadRoot(a1, Heap::kTheHoleValueRootIndex);
@@ -1716,46 +1707,6 @@ void CompareStub::Generate(MacroAssembler* masm) {
 
   // NOTICE! This code is only reached after a smi-fast-case check, so
   // it is certain that at least one operand isn't a smi.
-  {
-    // This is optimized for reading the code and not benchmarked for
-    // speed or amount of instructions. The code is not ordered for speed
-    // or anything like this
-    Label miss, user_compare;
-
-    // No global compare if both operands are SMIs
-    __ And(a2, a1, Operand(a0));
-    __ JumpIfSmi(a2, &miss);
-
-
-    // We need to check if lhs and rhs are both objects, if not we are
-    // jumping out of the function. We will keep the 'map' in t0 (lhs) and
-    // t1 (rhs) for later usage.
-    __ GetObjectType(a0, t0, a3);
-    __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
-
-    __ GetObjectType(a1, t1, a3);
-    __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
-
-    // Check if the UseUserComparison flag is set by using the map of t0 for lhs
-    __ lbu(t0, FieldMemOperand(t0, Map::kBitField2Offset));
-    __ And(t0, t0, Operand(1 << Map::kUseUserObjectComparison));
-    __ Branch(&user_compare, eq, t0, Operand(1 << Map::kUseUserObjectComparison));
-
-
-    // Check if the UseUserComparison flag is _not_ set by using the map of t1 for
-    // rhs and then jump to the miss label.
-    __ lbu(t1, FieldMemOperand(t1, Map::kBitField2Offset));
-    __ And(t1, t1, Operand(1 << Map::kUseUserObjectComparison));
-    __ Branch(&miss, ne, t1, Operand(1 << Map::kUseUserObjectComparison));
-
-    // Invoke the runtime function here
-    __ bind(&user_compare);
-    __ Push(a0, a1);
-    __ TailCallRuntime(Runtime::kUserObjectEquals, 2, 1);
-
-    // We exit here without doing anything
-    __ bind(&miss);
-  }
 
   // Handle the case where the objects are identical.  Either returns the answer
   // or goes to slow.  Only falls through if the objects were not identical.
@@ -5449,9 +5400,9 @@ void CallFunctionStub::Generate(MacroAssembler* masm) {
     __ LoadRoot(at, Heap::kTheHoleValueRootIndex);
     __ Branch(&call, ne, t0, Operand(at));
     // Patch the receiver on the stack with the global receiver object.
-    __ lw(a2, MemOperand(cp, Context::SlotOffset(Context::GLOBAL_INDEX)));
-    __ lw(a2, FieldMemOperand(a2, GlobalObject::kGlobalReceiverOffset));
-    __ sw(a2, MemOperand(sp, argc_ * kPointerSize));
+    __ lw(a3, MemOperand(cp, Context::SlotOffset(Context::GLOBAL_INDEX)));
+    __ lw(a3, FieldMemOperand(a3, GlobalObject::kGlobalReceiverOffset));
+    __ sw(a3, MemOperand(sp, argc_ * kPointerSize));
     __ bind(&call);
   }
 
@@ -5459,8 +5410,12 @@ void CallFunctionStub::Generate(MacroAssembler* masm) {
   // a1: pushed function (to be verified)
   __ JumpIfSmi(a1, &non_function);
   // Get the map of the function object.
-  __ GetObjectType(a1, a2, a2);
-  __ Branch(&slow, ne, a2, Operand(JS_FUNCTION_TYPE));
+  __ GetObjectType(a1, a3, a3);
+  __ Branch(&slow, ne, a3, Operand(JS_FUNCTION_TYPE));
+
+  if (RecordCallTarget()) {
+    GenerateRecordCallTarget(masm);
+  }
 
   // Fast-case: Invoke the function now.
   // a1: pushed function
@@ -5485,8 +5440,17 @@ void CallFunctionStub::Generate(MacroAssembler* masm) {
 
   // Slow-case: Non-function called.
   __ bind(&slow);
+  if (RecordCallTarget()) {
+    // If there is a call target cache, mark it megamorphic in the
+    // non-function case.  MegamorphicSentinel is an immortal immovable
+    // object (undefined) so no write barrier is needed.
+    ASSERT_EQ(*TypeFeedbackCells::MegamorphicSentinel(masm->isolate()),
+              masm->isolate()->heap()->undefined_value());
+    __ LoadRoot(at, Heap::kUndefinedValueRootIndex);
+    __ sw(at, FieldMemOperand(a2, JSGlobalPropertyCell::kValueOffset));
+  }
   // Check for function proxy.
-  __ Branch(&non_function, ne, a2, Operand(JS_FUNCTION_PROXY_TYPE));
+  __ Branch(&non_function, ne, a3, Operand(JS_FUNCTION_PROXY_TYPE));
   __ push(a1);  // Put proxy as additional argument.
   __ li(a0, Operand(argc_ + 1, RelocInfo::NONE));
   __ li(a2, Operand(0, RelocInfo::NONE));
@@ -6142,37 +6106,11 @@ void SubStringStub::Generate(MacroAssembler* masm) {
   // a2: result string length
   __ lw(t0, FieldMemOperand(v0, String::kLengthOffset));
   __ sra(t0, t0, 1);
+  // Return original string.
   __ Branch(&return_v0, eq, a2, Operand(t0));
-
-
-  Label result_longer_than_two;
-  // Check for special case of two character ASCII string, in which case
-  // we do a lookup in the symbol table first.
-  __ li(t0, 2);
-  __ Branch(&result_longer_than_two, gt, a2, Operand(t0));
-  __ Branch(&runtime, lt, a2, Operand(t0));
-
-  __ JumpIfInstanceTypeIsNotSequentialAscii(a1, a1, &runtime);
-
-  // Get the two characters forming the sub string.
-  __ Addu(v0, v0, Operand(a3));
-  __ lbu(a3, FieldMemOperand(v0, SeqAsciiString::kHeaderSize));
-  __ lbu(t0, FieldMemOperand(v0, SeqAsciiString::kHeaderSize + 1));
-
-  // Try to lookup two character string in symbol table.
-  Label make_two_character_string;
-  StringHelper::GenerateTwoCharacterSymbolTableProbe(
-      masm, a3, t0, a1, t1, t2, t3, t4, &make_two_character_string);
-  __ jmp(&return_v0);
-
-  // a2: result string length.
-  // a3: two characters combined into halfword in little endian byte order.
-  __ bind(&make_two_character_string);
-  __ AllocateAsciiString(v0, a2, t0, t1, t4, &runtime);
-  __ sh(a3, FieldMemOperand(v0, SeqAsciiString::kHeaderSize));
-  __ jmp(&return_v0);
-
-  __ bind(&result_longer_than_two);
+  // Longer than original string's length or negative: unsafe arguments.
+  __ Branch(&runtime, hi, a2, Operand(t0));
+  // Shorter than original string's length: an actual substring.
 
   // Deal with different string types: update the index if necessary
   // and put the underlying string into t1.
@@ -7030,20 +6968,10 @@ void ICCompareStub::GenerateObjects(MacroAssembler* masm) {
   __ And(a2, a1, Operand(a0));
   __ JumpIfSmi(a2, &miss);
 
-  // Compare lhs, a2 holds the map, a3 holds the type_reg
-  __ GetObjectType(a0, a2, a3);
-  __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
-  __ lbu(a2, FieldMemOperand(a2, Map::kBitField2Offset));
-  __ And(a2, a2, Operand(1 << Map::kUseUserObjectComparison));
-  __ Branch(&miss, eq, a2, Operand(1 << Map::kUseUserObjectComparison));
-
-
-  // Compare rhs, a2 holds the map, a3 holds the type_reg
-  __ GetObjectType(a1, a2, a3);
-  __ Branch(&miss, ne, a3, Operand(JS_OBJECT_TYPE));
-  __ lbu(a2, FieldMemOperand(a2, Map::kBitField2Offset));
-  __ And(a2, a2, Operand(1 << Map::kUseUserObjectComparison));
-  __ Branch(&miss, eq, a2, Operand(1 << Map::kUseUserObjectComparison));
+  __ GetObjectType(a0, a2, a2);
+  __ Branch(&miss, ne, a2, Operand(JS_OBJECT_TYPE));
+  __ GetObjectType(a1, a2, a2);
+  __ Branch(&miss, ne, a2, Operand(JS_OBJECT_TYPE));
 
   ASSERT(GetCondition() == eq);
   __ Ret(USE_DELAY_SLOT);
@@ -7060,18 +6988,8 @@ void ICCompareStub::GenerateKnownObjects(MacroAssembler* masm) {
   __ JumpIfSmi(a2, &miss);
   __ lw(a2, FieldMemOperand(a0, HeapObject::kMapOffset));
   __ lw(a3, FieldMemOperand(a1, HeapObject::kMapOffset));
-
-  // Check object in a0
   __ Branch(&miss, ne, a2, Operand(known_map_));
-  __ lbu(a2, FieldMemOperand(a2, Map::kBitField2Offset));
-  __ And(a2, a2, Operand(1 << Map::kUseUserObjectComparison));
-  __ Branch(&miss, eq, a2, Operand(1 << Map::kUseUserObjectComparison));
-
-  // Check object in a1
   __ Branch(&miss, ne, a3, Operand(known_map_));
-  __ lbu(a3, FieldMemOperand(a3, Map::kBitField2Offset));
-  __ And(a3, a3, Operand(1 << Map::kUseUserObjectComparison));
-  __ Branch(&miss, eq, a3, Operand(1 << Map::kUseUserObjectComparison));
 
   __ Ret(USE_DELAY_SLOT);
   __ subu(v0, a0, a1);

@@ -352,9 +352,9 @@ void IC::Clear(Address address) {
       return KeyedStoreIC::Clear(address, target);
     case Code::CALL_IC: return CallIC::Clear(address, target);
     case Code::KEYED_CALL_IC:  return KeyedCallIC::Clear(address, target);
+    case Code::COMPARE_IC: return CompareIC::Clear(address, target);
     case Code::UNARY_OP_IC:
     case Code::BINARY_OP_IC:
-    case Code::COMPARE_IC:
     case Code::TO_BOOLEAN_IC:
       // Clearing these is tricky and does not
       // make any performance difference.
@@ -365,9 +365,8 @@ void IC::Clear(Address address) {
 
 
 void CallICBase::Clear(Address address, Code* target) {
+  if (target->ic_state() == UNINITIALIZED) return;
   bool contextual = CallICBase::Contextual::decode(target->extra_ic_state());
-  State state = target->ic_state();
-  if (state == UNINITIALIZED) return;
   Code* code =
       Isolate::Current()->stub_cache()->FindCallInitialize(
           target->arguments_count(),
@@ -407,6 +406,17 @@ void KeyedStoreIC::Clear(Address address, Code* target) {
       (Code::GetStrictMode(target->extra_ic_state()) == kStrictMode)
         ? initialize_stub_strict()
         : initialize_stub());
+}
+
+
+void CompareIC::Clear(Address address, Code* target) {
+  // Only clear ICCompareStubs, we currently cannot clear generic CompareStubs.
+  if (target->major_key() != CodeStub::CompareIC) return;
+  // Only clear CompareICs that can retain objects.
+  if (target->compare_state() != KNOWN_OBJECTS) return;
+  Token::Value op = CompareIC::ComputeOperation(target);
+  SetTargetAtAddress(address, GetRawUninitialized(op));
+  PatchInlinedSmiCode(address, DISABLE_INLINED_SMI_CHECK);
 }
 
 
@@ -665,7 +675,7 @@ Handle<Code> CallICBase::ComputeMonomorphicStub(LookupResult* lookup,
         // applicable.
         if (!holder.is_identical_to(receiver)) return Handle<Code>::null();
         return isolate()->stub_cache()->ComputeCallNormal(
-            argc, kind_, extra_state, IsQmlGlobal(holder));
+            argc, kind_, extra_state);
       }
       break;
     }
@@ -1053,18 +1063,33 @@ Handle<Code> KeyedLoadIC::ComputePolymorphicStub(
 }
 
 
+static Handle<Object> TryConvertKey(Handle<Object> key, Isolate* isolate) {
+  // This helper implements a few common fast cases for converting
+  // non-smi keys of keyed loads/stores to a smi or a string.
+  if (key->IsHeapNumber()) {
+    double value = Handle<HeapNumber>::cast(key)->value();
+    if (isnan(value)) {
+      key = isolate->factory()->nan_symbol();
+    } else {
+      int int_value = FastD2I(value);
+      if (value == int_value && Smi::IsValid(int_value)) {
+        key = Handle<Smi>(Smi::FromInt(int_value));
+      }
+    }
+  } else if (key->IsUndefined()) {
+    key = isolate->factory()->undefined_symbol();
+  }
+  return key;
+}
+
+
 MaybeObject* KeyedLoadIC::Load(State state,
                                Handle<Object> object,
                                Handle<Object> key,
                                bool force_generic_stub) {
-  // Check for values that can be converted into a symbol.
-  // TODO(1295): Remove this code.
-  if (key->IsHeapNumber() &&
-      isnan(Handle<HeapNumber>::cast(key)->value())) {
-    key = isolate()->factory()->nan_symbol();
-  } else if (key->IsUndefined()) {
-    key = isolate()->factory()->undefined_symbol();
-  }
+  // Check for values that can be converted into a symbol directly or
+  // is representable as a smi.
+  key = TryConvertKey(key, isolate());
 
   if (key->IsSymbol()) {
     Handle<String> name = Handle<String>::cast(key);
@@ -1761,6 +1786,10 @@ MaybeObject* KeyedStoreIC::Store(State state,
                                  Handle<Object> key,
                                  Handle<Object> value,
                                  bool force_generic) {
+  // Check for values that can be converted into a symbol directly or
+  // is representable as a smi.
+  key = TryConvertKey(key, isolate());
+
   if (key->IsSymbol()) {
     Handle<String> name = Handle<String>::cast(key);
 
@@ -2377,7 +2406,7 @@ RUNTIME_FUNCTION(MaybeObject*, BinaryOp_Patch) {
 
     // Activate inlined smi code.
     if (previous_type == BinaryOpIC::UNINITIALIZED) {
-      PatchInlinedSmiCode(ic.address());
+      PatchInlinedSmiCode(ic.address(), ENABLE_INLINED_SMI_CHECK);
     }
   }
 
@@ -2438,6 +2467,14 @@ RUNTIME_FUNCTION(MaybeObject*, BinaryOp_Patch) {
 }
 
 
+Code* CompareIC::GetRawUninitialized(Token::Value op) {
+  ICCompareStub stub(op, UNINITIALIZED);
+  Code* code = NULL;
+  CHECK(stub.FindCodeInCache(&code));
+  return code;
+}
+
+
 Handle<Code> CompareIC::GetUninitialized(Token::Value op) {
   ICCompareStub stub(op, UNINITIALIZED);
   return stub.GetCode();
@@ -2449,6 +2486,12 @@ CompareIC::State CompareIC::ComputeState(Code* target) {
   if (key == CodeStub::Compare) return GENERIC;
   ASSERT(key == CodeStub::CompareIC);
   return static_cast<State>(target->compare_state());
+}
+
+
+Token::Value CompareIC::ComputeOperation(Code* target) {
+  ASSERT(target->major_key() == CodeStub::CompareIC);
+  return static_cast<Token::Value>(target->compare_operation());
 }
 
 

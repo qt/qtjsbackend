@@ -221,7 +221,6 @@ class Context: public FixedArray {
     // (with contexts), or the variable name (catch contexts), the serialized
     // scope info (block contexts).
     EXTENSION_INDEX,
-    QML_GLOBAL_INDEX,
     GLOBAL_INDEX,
     MIN_CONTEXT_SLOTS,
 
@@ -328,9 +327,6 @@ class Context: public FixedArray {
   }
   void set_global(GlobalObject* global) { set(GLOBAL_INDEX, global); }
 
-  JSObject *qml_global() { return reinterpret_cast<JSObject *>(get(QML_GLOBAL_INDEX)); }
-  void set_qml_global(JSObject *qml_global) { set(QML_GLOBAL_INDEX, qml_global); }
-
   // Returns a JSGlobalProxy object or null.
   JSObject* global_proxy();
   void set_global_proxy(JSObject* global);
@@ -401,7 +397,7 @@ class Context: public FixedArray {
   GLOBAL_CONTEXT_FIELDS(GLOBAL_CONTEXT_FIELD_ACCESSORS)
 #undef GLOBAL_CONTEXT_FIELD_ACCESSORS
 
-  // Lookup the the slot called name, starting with the current context.
+  // Lookup the slot called name, starting with the current context.
   // There are three possibilities:
   //
   // 1) result->IsContext():

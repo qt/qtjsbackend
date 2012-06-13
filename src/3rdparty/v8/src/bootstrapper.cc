@@ -484,8 +484,8 @@ Handle<JSFunction> Genesis::CreateEmptyFunction(Isolate* isolate) {
 
     global_context()->set_initial_object_prototype(*prototype);
     SetPrototype(object_fun, prototype);
-    object_function_map->
-      set_instance_descriptors(heap->empty_descriptor_array());
+    object_function_map->set_instance_descriptors(
+        heap->empty_descriptor_array());
   }
 
   // Allocate the empty function as the prototype for function ECMAScript
@@ -516,12 +516,10 @@ Handle<JSFunction> Genesis::CreateEmptyFunction(Isolate* isolate) {
   function_instance_map_writable_prototype_->set_prototype(*empty_function);
 
   // Allocate the function map first and then patch the prototype later
-  Handle<Map> empty_fm = factory->CopyMapDropDescriptors(
-      function_without_prototype_map);
-  empty_fm->set_instance_descriptors(
-      function_without_prototype_map->instance_descriptors());
-  empty_fm->set_prototype(global_context()->object_function()->prototype());
-  empty_function->set_map(*empty_fm);
+  Handle<Map> empty_function_map = CreateFunctionMap(DONT_ADD_PROTOTYPE);
+  empty_function_map->set_prototype(
+      global_context()->object_function()->prototype());
+  empty_function->set_map(*empty_function_map);
   return empty_function;
 }
 
@@ -811,7 +809,6 @@ void Genesis::HookUpInnerGlobal(Handle<GlobalObject> inner_global) {
   Handle<JSBuiltinsObject> builtins_global(global_context_->builtins());
   global_context_->set_extension(*inner_global);
   global_context_->set_global(*inner_global);
-  global_context_->set_qml_global(*inner_global);
   global_context_->set_security_token(*inner_global);
   static const PropertyAttributes attributes =
       static_cast<PropertyAttributes>(READ_ONLY | DONT_DELETE);
@@ -837,7 +834,6 @@ bool Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
   // Set extension and global object.
   global_context()->set_extension(*inner_global);
   global_context()->set_global(*inner_global);
-  global_context()->set_qml_global(*inner_global);
   // Security setup: Set the security token of the global object to
   // its the inner global. This makes the security check between two
   // different contexts fail by default even in case of global
@@ -1013,7 +1009,7 @@ bool Genesis::InitializeGlobal(Handle<GlobalObject> inner_global,
     proto_map->set_prototype(global_context()->initial_object_prototype());
     Handle<JSObject> proto = factory->NewJSObjectFromMap(proto_map);
     proto->InObjectPropertyAtPut(JSRegExp::kSourceFieldIndex,
-                                 heap->empty_string());
+                                 heap->query_colon_symbol());
     proto->InObjectPropertyAtPut(JSRegExp::kGlobalFieldIndex,
                                  heap->false_value());
     proto->InObjectPropertyAtPut(JSRegExp::kIgnoreCaseFieldIndex,
@@ -2161,7 +2157,7 @@ void Genesis::TransferNamedProperties(Handle<JSObject> from,
     Handle<DescriptorArray> descs =
         Handle<DescriptorArray>(from->map()->instance_descriptors());
     for (int i = 0; i < descs->number_of_descriptors(); i++) {
-      PropertyDetails details = PropertyDetails(descs->GetDetails(i));
+      PropertyDetails details = descs->GetDetails(i);
       switch (details.type()) {
         case FIELD: {
           HandleScope inner;

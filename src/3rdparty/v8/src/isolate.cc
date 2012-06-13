@@ -97,7 +97,6 @@ void ThreadLocalTop::InitializeInternal() {
   thread_id_ = ThreadId::Invalid();
   external_caught_exception_ = false;
   failed_access_check_callback_ = NULL;
-  user_object_comparison_callback_ = NULL;
   save_context_ = NULL;
   catcher_ = NULL;
   top_lookup_result_ = NULL;
@@ -742,12 +741,6 @@ void Isolate::PrintStack(StringStream* accumulator) {
 void Isolate::SetFailedAccessCheckCallback(
     v8::FailedAccessCheckCallback callback) {
   thread_local_top()->failed_access_check_callback_ = callback;
-}
-
- 
-void Isolate::SetUserObjectComparisonCallback(
-    v8::UserObjectComparisonCallback callback) {
-  thread_local_top()->user_object_comparison_callback_ = callback;
 }
 
 
@@ -1437,6 +1430,7 @@ void Isolate::ThreadDataTable::RemoveAllThreads(Isolate* isolate) {
 
 Isolate::Isolate()
     : state_(UNINITIALIZED),
+      embedder_data_(NULL),
       entry_stack_(NULL),
       stack_trace_nesting_level_(0),
       incomplete_message_(NULL),
@@ -1479,7 +1473,6 @@ Isolate::Isolate()
       string_tracker_(NULL),
       regexp_stack_(NULL),
       date_cache_(NULL),
-      embedder_data_(NULL),
       context_exit_happened_(false) {
   TRACE_ISOLATE(constructor);
 
@@ -1849,6 +1842,9 @@ bool Isolate::Init(Deserializer* des) {
   // stack guard.
   heap_.SetStackLimits();
 
+  // Quiet the heap NaN if needed on target platform.
+  if (des != NULL) Assembler::QuietNaN(heap_.nan_value());
+
   deoptimizer_data_ = new DeoptimizerData;
   runtime_profiler_ = new RuntimeProfiler(this);
   runtime_profiler_->SetUp();
@@ -1860,6 +1856,13 @@ bool Isolate::Init(Deserializer* des) {
     LOG(this, LogCodeObjects());
     LOG(this, LogCompiledFunctions());
   }
+
+  CHECK_EQ(static_cast<int>(OFFSET_OF(Isolate, state_)),
+           Internals::kIsolateStateOffset);
+  CHECK_EQ(static_cast<int>(OFFSET_OF(Isolate, embedder_data_)),
+           Internals::kIsolateEmbedderDataOffset);
+  CHECK_EQ(static_cast<int>(OFFSET_OF(Isolate, heap_.roots_)),
+           Internals::kIsolateRootsOffset);
 
   state_ = INITIALIZED;
   time_millis_at_init_ = OS::TimeCurrentMillis();

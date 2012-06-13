@@ -126,15 +126,9 @@ class Scope: public ZoneObject {
   // Declare the function variable for a function literal. This variable
   // is in an intermediate scope between this function scope and the the
   // outer scope. Only possible for function scopes; at most one variable.
-  template<class Visitor>
-  Variable* DeclareFunctionVar(Handle<String> name,
-                               VariableMode mode,
-                               AstNodeFactory<Visitor>* factory) {
-    ASSERT(is_function_scope() && function_ == NULL);
-    Variable* function_var = new Variable(
-        this, name, mode, true, Variable::NORMAL, kCreatedInitialized);
-    function_ = factory->NewVariableProxy(function_var);
-    return function_var;
+  void DeclareFunctionVar(VariableDeclaration* declaration) {
+    ASSERT(is_function_scope());
+    function_ = declaration;
   }
 
   // Declare a parameter in this scope.  When there are duplicated
@@ -230,11 +224,6 @@ class Scope: public ZoneObject {
     language_mode_ = language_mode;
   }
 
-  // Enable qml mode for this scope
-  void EnableQmlModeFlag() {
-    qml_mode_flag_ = kQmlMode;
-  }
-
   // Position in the source where this scope begins and ends.
   //
   // * For the scope of a with statement
@@ -289,7 +278,6 @@ class Scope: public ZoneObject {
   bool is_strict_or_extended_eval_scope() const {
     return is_eval_scope() && !is_classic_mode();
   }
-  bool is_qml_mode() const { return qml_mode_flag() == kQmlMode; }
 
   // Information about which scopes calls eval.
   bool calls_eval() const { return scope_calls_eval_; }
@@ -314,16 +302,12 @@ class Scope: public ZoneObject {
   // The language mode of this scope.
   LanguageMode language_mode() const { return language_mode_; }
 
-  // The strict mode of this scope.
-  QmlModeFlag qml_mode_flag() const { return qml_mode_flag_; }
-
   // The variable corresponding the 'this' value.
   Variable* receiver() { return receiver_; }
 
   // The variable holding the function literal for named function
-  // literals, or NULL.
-  // Only valid for function scopes.
-  VariableProxy* function() const {
+  // literals, or NULL.  Only valid for function scopes.
+  VariableDeclaration* function() const {
     ASSERT(is_function_scope());
     return function_;
   }
@@ -378,12 +362,15 @@ class Scope: public ZoneObject {
   bool AllowsLazyCompilation() const;
 
   // True if we can lazily recompile functions with this scope.
-  bool allows_lazy_recompilation() const {
-    return !force_eager_compilation_;
-  }
+  bool AllowsLazyRecompilation() const;
 
   // True if the outer context of this scope is always the global context.
   bool HasTrivialOuterContext() const;
+
+  // True if this scope is inside a with scope and all declaration scopes
+  // between them have empty contexts. Such declaration scopes become
+  // invisible during scope info deserialization.
+  bool TrivialDeclarationScopesBeforeWithScope() const;
 
   // The number of contexts between this and scope; zero if this == scope.
   int ContextChainLength(Scope* scope);
@@ -455,7 +442,7 @@ class Scope: public ZoneObject {
   // Convenience variable.
   Variable* receiver_;
   // Function variable, if any; function scopes only.
-  VariableProxy* function_;
+  VariableDeclaration* function_;
   // Convenience variable; function scopes only.
   Variable* arguments_;
   // Interface; module scopes only.
@@ -475,8 +462,6 @@ class Scope: public ZoneObject {
   bool scope_calls_eval_;
   // The language mode of this scope.
   LanguageMode language_mode_;
-  // This scope is a qml mode scope.
-  QmlModeFlag qml_mode_flag_;
   // Source positions.
   int start_position_;
   int end_position_;

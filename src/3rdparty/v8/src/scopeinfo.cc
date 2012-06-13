@@ -53,7 +53,7 @@ Handle<ScopeInfo> ScopeInfo::Create(Scope* scope) {
   FunctionVariableInfo function_name_info;
   VariableMode function_variable_mode;
   if (scope->is_function_scope() && scope->function() != NULL) {
-    Variable* var = scope->function()->var();
+    Variable* var = scope->function()->proxy()->var();
     if (!var->is_used()) {
       function_name_info = UNUSED;
     } else if (var->IsContextSlot()) {
@@ -80,7 +80,6 @@ Handle<ScopeInfo> ScopeInfo::Create(Scope* scope) {
   int flags = TypeField::encode(scope->type()) |
       CallsEvalField::encode(scope->calls_eval()) |
       LanguageModeField::encode(scope->language_mode()) |
-      QmlModeField::encode(scope->is_qml_mode()) |
       FunctionVariableField::encode(function_name_info) |
       FunctionVariableMode::encode(function_variable_mode);
   scope_info->SetFlags(flags);
@@ -130,8 +129,8 @@ Handle<ScopeInfo> ScopeInfo::Create(Scope* scope) {
   // If present, add the function variable name and its index.
   ASSERT(index == scope_info->FunctionNameEntryIndex());
   if (has_function_name) {
-    int var_index = scope->function()->var()->index();
-    scope_info->set(index++, *scope->function()->name());
+    int var_index = scope->function()->proxy()->var()->index();
+    scope_info->set(index++, *scope->function()->proxy()->name());
     scope_info->set(index++, Smi::FromInt(var_index));
     ASSERT(function_name_info != STACK ||
            (var_index == scope_info->StackLocalCount() &&
@@ -143,7 +142,9 @@ Handle<ScopeInfo> ScopeInfo::Create(Scope* scope) {
   ASSERT(index == scope_info->length());
   ASSERT(scope->num_parameters() == scope_info->ParameterCount());
   ASSERT(scope->num_stack_slots() == scope_info->StackSlotCount());
-  ASSERT(scope->num_heap_slots() == scope_info->ContextLength());
+  ASSERT(scope->num_heap_slots() == scope_info->ContextLength() ||
+         (scope->num_heap_slots() == kVariablePartIndex &&
+          scope_info->ContextLength() == 0));
   return scope_info;
 }
 
@@ -169,11 +170,6 @@ LanguageMode ScopeInfo::language_mode() {
 }
 
 
-bool ScopeInfo::IsQmlMode() {
-  return length() > 0 && QmlModeField::decode(Flags());
-}
-
-
 int ScopeInfo::LocalCount() {
   return StackLocalCount() + ContextLocalCount();
 }
@@ -189,7 +185,7 @@ int ScopeInfo::StackSlotCount() {
 }
 
 
-int ScopeInfo::ContextLength(bool qml_function) {
+int ScopeInfo::ContextLength() {
   if (length() > 0) {
     int context_locals = ContextLocalCount();
     bool function_name_context_slot =
@@ -198,9 +194,7 @@ int ScopeInfo::ContextLength(bool qml_function) {
         function_name_context_slot ||
         Type() == WITH_SCOPE ||
         (Type() == FUNCTION_SCOPE && CallsEval());
-
-    // TODO: The QML mode should be checked in the has_context expression.
-    if (has_context || qml_function) {
+    if (has_context) {
       return Context::MIN_CONTEXT_SLOTS + context_locals +
           (function_name_context_slot ? 1 : 0);
     }

@@ -9,7 +9,6 @@
 #include "macro-assembler.h"
 #include "global-handles.h"
 #include "cctest.h"
-#include "snapshot.h"
 
 using namespace v8::internal;
 
@@ -1215,7 +1214,9 @@ TEST(TestSizeOfObjects) {
   // The heap size should go back to initial size after a full GC, even
   // though sweeping didn't finish yet.
   HEAP->CollectAllGarbage(Heap::kNoGCFlags);
-  CHECK(!HEAP->old_pointer_space()->IsSweepingComplete());
+
+  // Normally sweeping would not be complete here, but no guarantees.
+
   CHECK_EQ(initial_size, static_cast<int>(HEAP->SizeOfObjects()));
 
   // Advancing the sweeper step-wise should not change the heap size.
@@ -1276,6 +1277,13 @@ TEST(GrowAndShrinkNewSpace) {
   InitializeVM();
   NewSpace* new_space = HEAP->new_space();
 
+  if (HEAP->ReservedSemiSpaceSize() == HEAP->InitialSemiSpaceSize()) {
+    // The max size cannot exceed the reserved size, since semispaces must be
+    // always within the reserved space.  We can't test new space growing and
+    // shrinking if the reserved size is the same as the minimum (initial) size.
+    return;
+  }
+
   // Explicitly growing should double the space capacity.
   intptr_t old_capacity, new_capacity;
   old_capacity = new_space->Capacity();
@@ -1316,6 +1324,14 @@ TEST(GrowAndShrinkNewSpace) {
 
 TEST(CollectingAllAvailableGarbageShrinksNewSpace) {
   InitializeVM();
+
+  if (HEAP->ReservedSemiSpaceSize() == HEAP->InitialSemiSpaceSize()) {
+    // The max size cannot exceed the reserved size, since semispaces must be
+    // always within the reserved space.  We can't test new space growing and
+    // shrinking if the reserved size is the same as the minimum (initial) size.
+    return;
+  }
+
   v8::HandleScope scope;
   NewSpace* new_space = HEAP->new_space();
   intptr_t old_capacity, new_capacity;
@@ -1344,14 +1360,13 @@ static int NumberOfGlobalObjects() {
 // optimized code.
 TEST(LeakGlobalContextViaMap) {
   i::FLAG_allow_natives_syntax = true;
-  bool snapshot_enabled = i::Snapshot::IsEnabled();
   v8::HandleScope outer_scope;
   v8::Persistent<v8::Context> ctx1 = v8::Context::New();
   v8::Persistent<v8::Context> ctx2 = v8::Context::New();
   ctx1->Enter();
 
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ((snapshot_enabled ? 6 : 4), NumberOfGlobalObjects());
+  CHECK_EQ(4, NumberOfGlobalObjects());
 
   {
     v8::HandleScope inner_scope;
@@ -1371,7 +1386,7 @@ TEST(LeakGlobalContextViaMap) {
     ctx1.Dispose();
   }
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ((snapshot_enabled ? 3 : 2), NumberOfGlobalObjects());
+  CHECK_EQ(2, NumberOfGlobalObjects());
   ctx2.Dispose();
   HEAP->CollectAllAvailableGarbage();
   CHECK_EQ(0, NumberOfGlobalObjects());
@@ -1382,14 +1397,13 @@ TEST(LeakGlobalContextViaMap) {
 // optimized code.
 TEST(LeakGlobalContextViaFunction) {
   i::FLAG_allow_natives_syntax = true;
-  bool snapshot_enabled = i::Snapshot::IsEnabled();
   v8::HandleScope outer_scope;
   v8::Persistent<v8::Context> ctx1 = v8::Context::New();
   v8::Persistent<v8::Context> ctx2 = v8::Context::New();
   ctx1->Enter();
 
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ((snapshot_enabled ? 6 : 4), NumberOfGlobalObjects());
+  CHECK_EQ(4, NumberOfGlobalObjects());
 
   {
     v8::HandleScope inner_scope;
@@ -1409,7 +1423,7 @@ TEST(LeakGlobalContextViaFunction) {
     ctx1.Dispose();
   }
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ((snapshot_enabled ? 3 : 2), NumberOfGlobalObjects());
+  CHECK_EQ(2, NumberOfGlobalObjects());
   ctx2.Dispose();
   HEAP->CollectAllAvailableGarbage();
   CHECK_EQ(0, NumberOfGlobalObjects());
@@ -1418,14 +1432,13 @@ TEST(LeakGlobalContextViaFunction) {
 
 TEST(LeakGlobalContextViaMapKeyed) {
   i::FLAG_allow_natives_syntax = true;
-  bool snapshot_enabled = i::Snapshot::IsEnabled();
   v8::HandleScope outer_scope;
   v8::Persistent<v8::Context> ctx1 = v8::Context::New();
   v8::Persistent<v8::Context> ctx2 = v8::Context::New();
   ctx1->Enter();
 
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ((snapshot_enabled ? 6 : 4), NumberOfGlobalObjects());
+  CHECK_EQ(4, NumberOfGlobalObjects());
 
   {
     v8::HandleScope inner_scope;
@@ -1445,7 +1458,7 @@ TEST(LeakGlobalContextViaMapKeyed) {
     ctx1.Dispose();
   }
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ((snapshot_enabled ? 3 : 2), NumberOfGlobalObjects());
+  CHECK_EQ(2, NumberOfGlobalObjects());
   ctx2.Dispose();
   HEAP->CollectAllAvailableGarbage();
   CHECK_EQ(0, NumberOfGlobalObjects());
@@ -1454,14 +1467,13 @@ TEST(LeakGlobalContextViaMapKeyed) {
 
 TEST(LeakGlobalContextViaMapProto) {
   i::FLAG_allow_natives_syntax = true;
-  bool snapshot_enabled = i::Snapshot::IsEnabled();
   v8::HandleScope outer_scope;
   v8::Persistent<v8::Context> ctx1 = v8::Context::New();
   v8::Persistent<v8::Context> ctx2 = v8::Context::New();
   ctx1->Enter();
 
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ((snapshot_enabled ? 6 : 4), NumberOfGlobalObjects());
+  CHECK_EQ(4, NumberOfGlobalObjects());
 
   {
     v8::HandleScope inner_scope;
@@ -1485,7 +1497,7 @@ TEST(LeakGlobalContextViaMapProto) {
     ctx1.Dispose();
   }
   HEAP->CollectAllAvailableGarbage();
-  CHECK_EQ((snapshot_enabled ? 3 : 2), NumberOfGlobalObjects());
+  CHECK_EQ(2, NumberOfGlobalObjects());
   ctx2.Dispose();
   HEAP->CollectAllAvailableGarbage();
   CHECK_EQ(0, NumberOfGlobalObjects());
@@ -1639,6 +1651,15 @@ TEST(ResetSharedFunctionInfoCountersDuringIncrementalMarking) {
   while (!marking->IsStopped() && !marking->IsComplete()) {
     marking->Step(1 * MB, IncrementalMarking::NO_GC_VIA_STACK_GUARD);
   }
+  if (!marking->IsStopped() || marking->should_hurry()) {
+    // We don't normally finish a GC via Step(), we normally finish by
+    // setting the stack guard and then do the final steps in the stack
+    // guard interrupt.  But here we didn't ask for that, and there is no
+    // JS code running to trigger the interrupt, so we explicitly finalize
+    // here.
+    HEAP->CollectAllGarbage(Heap::kNoGCFlags,
+                            "Test finalizing incremental mark-sweep");
+  }
 
   CHECK_EQ(HEAP->global_ic_age(), f->shared()->ic_age());
   CHECK_EQ(0, f->shared()->opt_count());
@@ -1713,4 +1734,61 @@ TEST(OptimizedAllocationAlwaysInNewSpace) {
       v8::Utils::OpenHandle(*v8::Handle<v8::Object>::Cast(res));
 
   CHECK(HEAP->InNewSpace(*o));
+}
+
+
+static int CountMapTransitions(Map* map) {
+  int result = 0;
+  DescriptorArray* descs = map->instance_descriptors();
+  for (int i = 0; i < descs->number_of_descriptors(); i++) {
+    if (descs->IsTransitionOnly(i)) {
+      result++;
+    }
+  }
+  return result;
+}
+
+
+// Test that map transitions are cleared and maps are collected with
+// incremental marking as well.
+TEST(Regress1465) {
+  i::FLAG_allow_natives_syntax = true;
+  i::FLAG_trace_incremental_marking = true;
+  InitializeVM();
+  v8::HandleScope scope;
+
+  #define TRANSITION_COUNT 256
+  for (int i = 0; i < TRANSITION_COUNT; i++) {
+    EmbeddedVector<char, 64> buffer;
+    OS::SNPrintF(buffer, "var o = new Object; o.prop%d = %d;", i, i);
+    CompileRun(buffer.start());
+  }
+  CompileRun("var root = new Object;");
+  Handle<JSObject> root =
+      v8::Utils::OpenHandle(
+          *v8::Handle<v8::Object>::Cast(
+              v8::Context::GetCurrent()->Global()->Get(v8_str("root"))));
+
+  // Count number of live transitions before marking.
+  int transitions_before = CountMapTransitions(root->map());
+  CompileRun("%DebugPrint(root);");
+  CHECK_EQ(TRANSITION_COUNT, transitions_before);
+
+  // Go through all incremental marking steps in one swoop.
+  IncrementalMarking* marking = HEAP->incremental_marking();
+  CHECK(marking->IsStopped());
+  marking->Start();
+  CHECK(marking->IsMarking());
+  while (!marking->IsComplete()) {
+    marking->Step(MB, IncrementalMarking::NO_GC_VIA_STACK_GUARD);
+  }
+  CHECK(marking->IsComplete());
+  HEAP->CollectAllGarbage(Heap::kNoGCFlags);
+  CHECK(marking->IsStopped());
+
+  // Count number of live transitions after marking.  Note that one transition
+  // is left, because 'o' still holds an instance of one transition target.
+  int transitions_after = CountMapTransitions(root->map());
+  CompileRun("%DebugPrint(root);");
+  CHECK_EQ(1, transitions_after);
 }

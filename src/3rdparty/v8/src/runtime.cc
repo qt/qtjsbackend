@@ -1272,112 +1272,96 @@ static Failure* ThrowRedeclarationError(Isolate* isolate,
 RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareGlobals) {
   ASSERT(args.length() == 3);
   HandleScope scope(isolate);
+  Handle<GlobalObject> global = Handle<GlobalObject>(
+      isolate->context()->global());
 
   Handle<Context> context = args.at<Context>(0);
   CONVERT_ARG_HANDLE_CHECKED(FixedArray, pairs, 1);
   CONVERT_SMI_ARG_CHECKED(flags, 2);
 
-  Handle<JSObject> js_global = Handle<JSObject>(isolate->context()->global());
-  Handle<JSObject> qml_global = Handle<JSObject>(isolate->context()->qml_global());
-
   // Traverse the name/value pairs and set the properties.
   int length = pairs->length();
-  for (int i = 0; i < length; i += 3) {
+  for (int i = 0; i < length; i += 2) {
     HandleScope scope(isolate);
     Handle<String> name(String::cast(pairs->get(i)));
     Handle<Object> value(pairs->get(i + 1), isolate);
-    Handle<Smi> is_qml_global(Smi::cast(pairs->get(i + 2)));
-
-    Handle<JSObject> global = is_qml_global->value()?qml_global:js_global;
 
     // We have to declare a global const property. To capture we only
     // assign to it when evaluating the assignment for "const x =
     // <expr>" the initial value is the hole.
-    bool is_const_property = value->IsTheHole();
-    bool is_function_declaration = false;
-    if (value->IsUndefined() || is_const_property) {
+    bool is_var = value->IsUndefined();
+    bool is_const = value->IsTheHole();
+    bool is_function = value->IsSharedFunctionInfo();
+    bool is_module = value->IsJSModule();
+    ASSERT(is_var + is_const + is_function + is_module == 1);
+
+    if (is_var || is_const) {
       // Lookup the property in the global object, and don't set the
       // value of the variable if the property is already there.
+      // Do the lookup locally only, see ES5 errata.
       LookupResult lookup(isolate);
-      global->Lookup(*name, &lookup, true);
+      if (FLAG_es52_globals)
+        global->LocalLookup(*name, &lookup);
+      else
+        global->Lookup(*name, &lookup);
       if (lookup.IsProperty()) {
         // We found an existing property. Unless it was an interceptor
         // that claims the property is absent, skip this declaration.
-        if (lookup.type() != INTERCEPTOR) {
-          continue;
-        }
+        if (lookup.type() != INTERCEPTOR) continue;
         PropertyAttributes attributes = global->GetPropertyAttribute(*name);
-        if (attributes != ABSENT) {
-          continue;
-        }
+        if (attributes != ABSENT) continue;
         // Fall-through and introduce the absent property by using
         // SetProperty.
       }
-    } else {
-      is_function_declaration = true;
+    } else if (is_function) {
       // Copy the function and update its context. Use it as value.
       Handle<SharedFunctionInfo> shared =
           Handle<SharedFunctionInfo>::cast(value);
       Handle<JSFunction> function =
-          isolate->factory()->NewFunctionFromSharedFunctionInfo(shared,
-                                                                context,
-                                                                TENURED);
+          isolate->factory()->NewFunctionFromSharedFunctionInfo(
+              shared, context, TENURED);
       value = function;
     }
 
     LookupResult lookup(isolate);
-    global->LocalLookup(*name, &lookup, true);
+    global->LocalLookup(*name, &lookup);
 
-    // Compute the property attributes. According to ECMA-262, section
-    // 13, page 71, the property must be read-only and
-    // non-deletable. However, neither SpiderMonkey nor KJS creates the
-    // property as read-only, so we don't either.
+    // Compute the property attributes. According to ECMA-262,
+    // the property must be non-configurable except in eval.
     int attr = NONE;
-    if (!DeclareGlobalsEvalFlag::decode(flags)) {
+    bool is_eval = DeclareGlobalsEvalFlag::decode(flags);
+    if (!is_eval || is_module) {
       attr |= DONT_DELETE;
     }
     bool is_native = DeclareGlobalsNativeFlag::decode(flags);
-    if (is_const_property || (is_native && is_function_declaration)) {
+    if (is_const || is_module || (is_native && is_function)) {
       attr |= READ_ONLY;
     }
 
     LanguageMode language_mode = DeclareGlobalsLanguageMode::decode(flags);
 
-    // Safari does not allow the invocation of callback setters for
-    // function declarations. To mimic this behavior, we do not allow
-    // the invocation of setters for function values. This makes a
-    // difference for global functions with the same names as event
-    // handlers such as "function onload() {}". Firefox does call the
-    // onload setter in those case and Safari does not. We follow
-    // Safari for compatibility.
-    if (is_function_declaration) {
-      if (lookup.IsProperty() && (lookup.type() != INTERCEPTOR)) {
-        // Do not overwrite READ_ONLY properties.
-        if (lookup.GetAttributes() & READ_ONLY) {
-          if (language_mode != CLASSIC_MODE) {
-            Handle<Object> args[] = { name };
-            return isolate->Throw(*isolate->factory()->NewTypeError(
-                "strict_cannot_assign", HandleVector(args, ARRAY_SIZE(args))));
-          }
-          continue;
+    if (!lookup.IsProperty() || is_function || is_module) {
+      // If the local property exists, check that we can reconfigure it
+      // as required for function declarations.
+      if (lookup.IsProperty() && lookup.IsDontDelete()) {
+        if (lookup.IsReadOnly() || lookup.IsDontEnum() ||
+            lookup.type() == CALLBACKS) {
+          return ThrowRedeclarationError(
+              isolate, is_function ? "function" : "module", name);
         }
-        // Do not change DONT_DELETE to false from true.
-        attr |= lookup.GetAttributes() & DONT_DELETE;
+        // If the existing property is not configurable, keep its attributes.
+        attr = lookup.GetAttributes();
       }
-      PropertyAttributes attributes = static_cast<PropertyAttributes>(attr);
-
-      RETURN_IF_EMPTY_HANDLE(
-          isolate,
-          JSObject::SetLocalPropertyIgnoreAttributes(global, name, value,
-                                                     attributes));
+      // Define or redefine own property.
+      RETURN_IF_EMPTY_HANDLE(isolate,
+          JSObject::SetLocalPropertyIgnoreAttributes(
+              global, name, value, static_cast<PropertyAttributes>(attr)));
     } else {
-      RETURN_IF_EMPTY_HANDLE(
-          isolate,
-          JSReceiver::SetProperty(global, name, value,
-                                  static_cast<PropertyAttributes>(attr),
-                                  language_mode == CLASSIC_MODE
-                                      ? kNonStrictMode : kStrictMode,
-                                  true));
+      // Do a [[Put]] on the existing (own) property.
+      RETURN_IF_EMPTY_HANDLE(isolate,
+          JSObject::SetProperty(
+              global, name, value, static_cast<PropertyAttributes>(attr),
+              language_mode == CLASSIC_MODE ? kNonStrictMode : kStrictMode));
     }
   }
 
@@ -1410,6 +1394,8 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareContextSlot) {
 
   if (attributes != ABSENT) {
     // The name was declared before; check for conflicting re-declarations.
+    // Note: this is actually inconsistent with what happens for globals (where
+    // we silently ignore such declarations).
     if (((attributes & READ_ONLY) != 0) || (mode == READ_ONLY)) {
       // Functions are not read-only.
       ASSERT(mode != READ_ONLY || initial_value->IsTheHole());
@@ -1472,9 +1458,14 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeclareContextSlot) {
         return ThrowRedeclarationError(isolate, "const", name);
       }
     }
-    RETURN_IF_EMPTY_HANDLE(
-        isolate,
-        JSReceiver::SetProperty(object, name, value, mode, kNonStrictMode));
+    if (object->IsJSGlobalObject()) {
+      // Define own property on the global object.
+      RETURN_IF_EMPTY_HANDLE(isolate,
+         JSObject::SetLocalPropertyIgnoreAttributes(object, name, value, mode));
+    } else {
+      RETURN_IF_EMPTY_HANDLE(isolate,
+         JSReceiver::SetProperty(object, name, value, mode, kNonStrictMode));
+    }
   }
 
   return isolate->heap()->undefined_value();
@@ -1485,24 +1476,19 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   NoHandleAllocation nha;
   // args[0] == name
   // args[1] == language_mode
-  // args[2] == qml_mode
-  // args[3] == value (optional)
+  // args[2] == value (optional)
 
   // Determine if we need to assign to the variable if it already
   // exists (based on the number of arguments).
-  RUNTIME_ASSERT(args.length() == 3 || args.length() == 4);
-  bool assign = args.length() == 4;
+  RUNTIME_ASSERT(args.length() == 2 || args.length() == 3);
+  bool assign = args.length() == 3;
 
   CONVERT_ARG_HANDLE_CHECKED(String, name, 0);
+  GlobalObject* global = isolate->context()->global();
   RUNTIME_ASSERT(args[1]->IsSmi());
   CONVERT_LANGUAGE_MODE_ARG(language_mode, 1);
   StrictModeFlag strict_mode_flag = (language_mode == CLASSIC_MODE)
       ? kNonStrictMode : kStrictMode;
-
-  RUNTIME_ASSERT(args[2]->IsSmi());
-  int qml_mode = Smi::cast(args[2])->value();
-
-  JSObject* global = qml_mode?isolate->context()->qml_global():isolate->context()->global();
 
   // According to ECMA-262, section 12.2, page 62, the property must
   // not be deletable.
@@ -1520,7 +1506,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   while (object->IsJSObject() &&
          JSObject::cast(object)->map()->is_hidden_prototype()) {
     JSObject* raw_holder = JSObject::cast(object);
-    raw_holder->LocalLookup(*name, &lookup, true);
+    raw_holder->LocalLookup(*name, &lookup);
     if (lookup.IsFound() && lookup.type() == INTERCEPTOR) {
       HandleScope handle_scope(isolate);
       Handle<JSObject> holder(raw_holder);
@@ -1531,7 +1517,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
         // Found an interceptor that's not read only.
         if (assign) {
           return raw_holder->SetProperty(
-              &lookup, *name, args[3], attributes, strict_mode_flag);
+              &lookup, *name, args[2], attributes, strict_mode_flag);
         } else {
           return isolate->heap()->undefined_value();
         }
@@ -1541,10 +1527,9 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeVarGlobal) {
   }
 
   // Reload global in case the loop above performed a GC.
-  global = qml_mode?isolate->context()->qml_global():isolate->context()->global();
+  global = isolate->context()->global();
   if (assign) {
-    return global->SetProperty(
-        *name, args[3], attributes, strict_mode_flag, true);
+    return global->SetProperty(*name, args[2], attributes, strict_mode_flag);
   }
   return isolate->heap()->undefined_value();
 }
@@ -1554,15 +1539,12 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeConstGlobal) {
   // All constants are declared with an initial value. The name
   // of the constant is the first argument and the initial value
   // is the second.
-  RUNTIME_ASSERT(args.length() == 3);
+  RUNTIME_ASSERT(args.length() == 2);
   CONVERT_ARG_HANDLE_CHECKED(String, name, 0);
   Handle<Object> value = args.at<Object>(1);
 
-  RUNTIME_ASSERT(args[2]->IsSmi());
-  int qml_mode = Smi::cast(args[2])->value();
-
   // Get the current global object from top.
-  JSObject* global = qml_mode?isolate->context()->qml_global():isolate->context()->global();
+  GlobalObject* global = isolate->context()->global();
 
   // According to ECMA-262, section 12.2, page 62, the property must
   // not be deletable. Since it's a const, it must be READ_ONLY too.
@@ -1586,7 +1568,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_InitializeConstGlobal) {
     // Restore global object from context (in case of GC) and continue
     // with setting the value.
     HandleScope handle_scope(isolate);
-    Handle<JSObject> global(qml_mode?isolate->context()->qml_global():isolate->context()->global());
+    Handle<GlobalObject> global(isolate->context()->global());
 
     // BUG 1213575: Handle the case where we have to set a read-only
     // property through an interceptor and only do it if it's
@@ -1801,6 +1783,9 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_RegExpInitializeObject) {
   ASSERT(args.length() == 5);
   CONVERT_ARG_CHECKED(JSRegExp, regexp, 0);
   CONVERT_ARG_CHECKED(String, source, 1);
+  // If source is the empty string we set it to "(?:)" instead as
+  // suggested by ECMA-262, 5th, section 15.10.4.1.
+  if (source->length() == 0) source = isolate->heap()->query_colon_symbol();
 
   Object* global = args[2];
   if (!global->IsTrue()) global = isolate->heap()->false_value();
@@ -2115,7 +2100,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_FunctionSetReadOnlyPrototype) {
     DescriptorArray* instance_desc = function->map()->instance_descriptors();
     int index = instance_desc->Search(name);
     ASSERT(index != DescriptorArray::kNotFound);
-    PropertyDetails details(instance_desc->GetDetails(index));
+    PropertyDetails details = instance_desc->GetDetails(index);
     CallbacksDescriptor new_desc(name,
         instance_desc->GetValue(index),
         static_cast<PropertyAttributes>(details.attributes() | READ_ONLY),
@@ -2900,12 +2885,79 @@ void FindStringIndicesDispatch(Isolate* isolate,
 }
 
 
+// Two smis before and after the match, for very long strings.
+const int kMaxBuilderEntriesPerRegExpMatch = 5;
+
+
+static void SetLastMatchInfoNoCaptures(Handle<String> subject,
+                                       Handle<JSArray> last_match_info,
+                                       int match_start,
+                                       int match_end) {
+  // Fill last_match_info with a single capture.
+  last_match_info->EnsureSize(2 + RegExpImpl::kLastMatchOverhead);
+  AssertNoAllocation no_gc;
+  FixedArray* elements = FixedArray::cast(last_match_info->elements());
+  RegExpImpl::SetLastCaptureCount(elements, 2);
+  RegExpImpl::SetLastInput(elements, *subject);
+  RegExpImpl::SetLastSubject(elements, *subject);
+  RegExpImpl::SetCapture(elements, 0, match_start);
+  RegExpImpl::SetCapture(elements, 1, match_end);
+}
+
+
+template <typename SubjectChar, typename PatternChar>
+static bool SearchStringMultiple(Isolate* isolate,
+                                 Vector<const SubjectChar> subject,
+                                 Vector<const PatternChar> pattern,
+                                 String* pattern_string,
+                                 FixedArrayBuilder* builder,
+                                 int* match_pos) {
+  int pos = *match_pos;
+  int subject_length = subject.length();
+  int pattern_length = pattern.length();
+  int max_search_start = subject_length - pattern_length;
+  StringSearch<PatternChar, SubjectChar> search(isolate, pattern);
+  while (pos <= max_search_start) {
+    if (!builder->HasCapacity(kMaxBuilderEntriesPerRegExpMatch)) {
+      *match_pos = pos;
+      return false;
+    }
+    // Position of end of previous match.
+    int match_end = pos + pattern_length;
+    int new_pos = search.Search(subject, match_end);
+    if (new_pos >= 0) {
+      // A match.
+      if (new_pos > match_end) {
+        ReplacementStringBuilder::AddSubjectSlice(builder,
+            match_end,
+            new_pos);
+      }
+      pos = new_pos;
+      builder->Add(pattern_string);
+    } else {
+      break;
+    }
+  }
+
+  if (pos < max_search_start) {
+    ReplacementStringBuilder::AddSubjectSlice(builder,
+                                              pos + pattern_length,
+                                              subject_length);
+  }
+  *match_pos = pos;
+  return true;
+}
+
+
+
+
 template<typename ResultSeqString>
-MUST_USE_RESULT static MaybeObject* StringReplaceStringWithString(
+MUST_USE_RESULT static MaybeObject* StringReplaceAtomRegExpWithString(
     Isolate* isolate,
     Handle<String> subject,
     Handle<JSRegExp> pattern_regexp,
-    Handle<String> replacement) {
+    Handle<String> replacement,
+    Handle<JSArray> last_match_info) {
   ASSERT(subject->IsFlat());
   ASSERT(replacement->IsFlat());
 
@@ -2964,6 +3016,12 @@ MUST_USE_RESULT static MaybeObject* StringReplaceStringWithString(
                         subject_pos,
                         subject_len);
   }
+
+  SetLastMatchInfoNoCaptures(subject,
+                             last_match_info,
+                             indices.at(matches - 1),
+                             indices.at(matches - 1) + pattern_len);
+
   return *result;
 }
 
@@ -3012,11 +3070,19 @@ MUST_USE_RESULT static MaybeObject* StringReplaceRegExpWithString(
       compiled_replacement.simple_hint()) {
     if (subject_handle->HasOnlyAsciiChars() &&
         replacement_handle->HasOnlyAsciiChars()) {
-      return StringReplaceStringWithString<SeqAsciiString>(
-          isolate, subject_handle, regexp_handle, replacement_handle);
+      return StringReplaceAtomRegExpWithString<SeqAsciiString>(
+          isolate,
+          subject_handle,
+          regexp_handle,
+          replacement_handle,
+          last_match_info_handle);
     } else {
-      return StringReplaceStringWithString<SeqTwoByteString>(
-          isolate, subject_handle, regexp_handle, replacement_handle);
+      return StringReplaceAtomRegExpWithString<SeqTwoByteString>(
+          isolate,
+          subject_handle,
+          regexp_handle,
+          replacement_handle,
+          last_match_info_handle);
     }
   }
 
@@ -3105,21 +3171,29 @@ MUST_USE_RESULT static MaybeObject* StringReplaceRegExpWithEmptyString(
 
   Handle<String> subject_handle(subject);
   Handle<JSRegExp> regexp_handle(regexp);
+  Handle<JSArray> last_match_info_handle(last_match_info);
 
   // Shortcut for simple non-regexp global replacements
   if (regexp_handle->GetFlags().is_global() &&
       regexp_handle->TypeTag() == JSRegExp::ATOM) {
     Handle<String> empty_string_handle(HEAP->empty_string());
     if (subject_handle->HasOnlyAsciiChars()) {
-      return StringReplaceStringWithString<SeqAsciiString>(
-          isolate, subject_handle, regexp_handle, empty_string_handle);
+      return StringReplaceAtomRegExpWithString<SeqAsciiString>(
+          isolate,
+          subject_handle,
+          regexp_handle,
+          empty_string_handle,
+          last_match_info_handle);
     } else {
-      return StringReplaceStringWithString<SeqTwoByteString>(
-          isolate, subject_handle, regexp_handle, empty_string_handle);
+      return StringReplaceAtomRegExpWithString<SeqTwoByteString>(
+          isolate,
+          subject_handle,
+          regexp_handle,
+          empty_string_handle,
+          last_match_info_handle);
     }
   }
 
-  Handle<JSArray> last_match_info_handle(last_match_info);
   Handle<Object> match = RegExpImpl::Exec(regexp_handle,
                                           subject_handle,
                                           0,
@@ -3139,6 +3213,10 @@ MUST_USE_RESULT static MaybeObject* StringReplaceRegExpWithEmptyString(
     end = RegExpImpl::GetCapture(match_info_array, 1);
   }
 
+  bool global = regexp_handle->GetFlags().is_global();
+
+  if (start == end && !global) return *subject_handle;
+
   int length = subject_handle->length();
   int new_length = length - (end - start);
   if (new_length == 0) {
@@ -3154,7 +3232,7 @@ MUST_USE_RESULT static MaybeObject* StringReplaceRegExpWithEmptyString(
   }
 
   // If the regexp isn't global, only match once.
-  if (!regexp_handle->GetFlags().is_global()) {
+  if (!global) {
     if (start > 0) {
       String::WriteToFlat(*subject_handle,
                           answer->GetChars(),
@@ -3653,70 +3731,6 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_StringMatch) {
 }
 
 
-// Two smis before and after the match, for very long strings.
-const int kMaxBuilderEntriesPerRegExpMatch = 5;
-
-
-static void SetLastMatchInfoNoCaptures(Handle<String> subject,
-                                       Handle<JSArray> last_match_info,
-                                       int match_start,
-                                       int match_end) {
-  // Fill last_match_info with a single capture.
-  last_match_info->EnsureSize(2 + RegExpImpl::kLastMatchOverhead);
-  AssertNoAllocation no_gc;
-  FixedArray* elements = FixedArray::cast(last_match_info->elements());
-  RegExpImpl::SetLastCaptureCount(elements, 2);
-  RegExpImpl::SetLastInput(elements, *subject);
-  RegExpImpl::SetLastSubject(elements, *subject);
-  RegExpImpl::SetCapture(elements, 0, match_start);
-  RegExpImpl::SetCapture(elements, 1, match_end);
-}
-
-
-template <typename SubjectChar, typename PatternChar>
-static bool SearchStringMultiple(Isolate* isolate,
-                                 Vector<const SubjectChar> subject,
-                                 Vector<const PatternChar> pattern,
-                                 String* pattern_string,
-                                 FixedArrayBuilder* builder,
-                                 int* match_pos) {
-  int pos = *match_pos;
-  int subject_length = subject.length();
-  int pattern_length = pattern.length();
-  int max_search_start = subject_length - pattern_length;
-  StringSearch<PatternChar, SubjectChar> search(isolate, pattern);
-  while (pos <= max_search_start) {
-    if (!builder->HasCapacity(kMaxBuilderEntriesPerRegExpMatch)) {
-      *match_pos = pos;
-      return false;
-    }
-    // Position of end of previous match.
-    int match_end = pos + pattern_length;
-    int new_pos = search.Search(subject, match_end);
-    if (new_pos >= 0) {
-      // A match.
-      if (new_pos > match_end) {
-        ReplacementStringBuilder::AddSubjectSlice(builder,
-            match_end,
-            new_pos);
-      }
-      pos = new_pos;
-      builder->Add(pattern_string);
-    } else {
-      break;
-    }
-  }
-
-  if (pos < max_search_start) {
-    ReplacementStringBuilder::AddSubjectSlice(builder,
-                                              pos + pattern_length,
-                                              subject_length);
-  }
-  *match_pos = pos;
-  return true;
-}
-
-
 static bool SearchStringMultiple(Isolate* isolate,
                                  Handle<String> subject,
                                  Handle<String> pattern,
@@ -3856,6 +3870,8 @@ static RegExpImpl::IrregexpResult SearchRegExpNoCaptureMultiple(
 }
 
 
+// Only called from Runtime_RegExpExecMultiple so it doesn't need to maintain
+// separate last match info.  See comment on that function.
 static RegExpImpl::IrregexpResult SearchRegExpMultiple(
     Isolate* isolate,
     Handle<String> subject,
@@ -3884,10 +3900,6 @@ static RegExpImpl::IrregexpResult SearchRegExpMultiple(
   // End of previous match. Differs from pos if match was empty.
   int match_end = 0;
   if (result == RegExpImpl::RE_SUCCESS) {
-    // Need to keep a copy of the previous match for creating last_match_info
-    // at the end, so we have two vectors that we swap between.
-    OffsetsVector registers2(required_registers, isolate);
-    Vector<int> prev_register_vector(registers2.vector(), registers2.length());
     bool first = true;
     do {
       int match_start = register_vector[0];
@@ -3940,11 +3952,6 @@ static RegExpImpl::IrregexpResult SearchRegExpMultiple(
         elements->set(capture_count + 2, *subject);
         builder->Add(*isolate->factory()->NewJSArrayWithElements(elements));
       }
-      // Swap register vectors, so the last successful match is in
-      // prev_register_vector.
-      Vector<int32_t> tmp = prev_register_vector;
-      prev_register_vector = register_vector;
-      register_vector = tmp;
 
       if (match_end > match_start) {
         pos = match_end;
@@ -3976,12 +3983,12 @@ static RegExpImpl::IrregexpResult SearchRegExpMultiple(
       last_match_array->EnsureSize(last_match_array_size);
       AssertNoAllocation no_gc;
       FixedArray* elements = FixedArray::cast(last_match_array->elements());
+      // We have to set this even though the rest of the last match array is
+      // ignored.
       RegExpImpl::SetLastCaptureCount(elements, last_match_capture_count);
+      // These are also read without consulting the override.
       RegExpImpl::SetLastSubject(elements, *subject);
       RegExpImpl::SetLastInput(elements, *subject);
-      for (int i = 0; i < last_match_capture_count; i++) {
-        RegExpImpl::SetCapture(elements, i, prev_register_vector[i]);
-      }
       return RegExpImpl::RE_SUCCESS;
     }
   }
@@ -3990,6 +3997,9 @@ static RegExpImpl::IrregexpResult SearchRegExpMultiple(
 }
 
 
+// This is only called for StringReplaceGlobalRegExpWithFunction.  This sets
+// lastMatchInfoOverride to maintain the last match info, so we don't need to
+// set any other last match array info.
 RUNTIME_FUNCTION(MaybeObject*, Runtime_RegExpExecMultiple) {
   ASSERT(args.length() == 4);
   HandleScope handles(isolate);
@@ -4714,6 +4724,36 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_StoreArrayLiteralElement) {
     object_array->set(store_index, *value);
   }
   return *object;
+}
+
+
+// Check whether debugger and is about to step into the callback that is passed
+// to a built-in function such as Array.forEach.
+RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugCallbackSupportsStepping) {
+  if (!isolate->IsDebuggerActive()) return isolate->heap()->false_value();
+  CONVERT_ARG_CHECKED(Object, callback, 0);
+  // We do not step into the callback if it's a builtin or not even a function.
+  if (!callback->IsJSFunction() || JSFunction::cast(callback)->IsBuiltin()) {
+    return isolate->heap()->false_value();
+  }
+  return isolate->heap()->true_value();
+}
+
+
+// Set one shot breakpoints for the callback function that is passed to a
+// built-in function such as Array.forEach to enable stepping into the callback.
+RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugPrepareStepInIfStepping) {
+  Debug* debug = isolate->debug();
+  if (!debug->IsStepping()) return NULL;
+  CONVERT_ARG_CHECKED(Object, callback, 0);
+  HandleScope scope(isolate);
+  Handle<SharedFunctionInfo> shared_info(JSFunction::cast(callback)->shared());
+  // When leaving the callback, step out has been activated, but not performed
+  // if we do not leave the builtin.  To be able to step into the callback
+  // again, we need to clear the step out at this point.
+  debug->ClearStepOut();
+  debug->FloodWithOneShot(shared_info);
+  return NULL;
 }
 
 
@@ -7135,29 +7175,6 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_StringEquals) {
 }
 
 
-RUNTIME_FUNCTION(MaybeObject*, Runtime_UserObjectEquals) {
-  NoHandleAllocation ha;
-  ASSERT(args.length() == 2);
-
-  CONVERT_ARG_CHECKED(JSObject, lhs, 1);
-  CONVERT_ARG_CHECKED(JSObject, rhs, 0);
-
-  bool result;
-
-  v8::UserObjectComparisonCallback callback = isolate->UserObjectComparisonCallback();
-  if (callback) {
-      HandleScope scope(isolate);
-      Handle<JSObject> lhs_handle(lhs);
-      Handle<JSObject> rhs_handle(rhs);
-      result = callback(v8::Utils::ToLocal(lhs_handle), v8::Utils::ToLocal(rhs_handle));
-  } else {
-      result = (lhs == rhs);
-  }
-
-  return Smi::FromInt(result?0:1);
-}
-
-
 RUNTIME_FUNCTION(MaybeObject*, Runtime_NumberCompare) {
   NoHandleAllocation ha;
   ASSERT(args.length() == 3);
@@ -8163,6 +8180,14 @@ static void MaterializeArgumentsObjectInFrame(Isolate* isolate,
         ASSERT(*arguments != isolate->heap()->undefined_value());
       }
       frame->SetExpression(i, *arguments);
+      if (FLAG_trace_deopt) {
+        PrintF("Materializing arguments object for frame %p - %p: %p ",
+               reinterpret_cast<void*>(frame->sp()),
+               reinterpret_cast<void*>(frame->fp()),
+               reinterpret_cast<void*>(*arguments));
+        arguments->ShortPrint();
+        PrintF("\n");
+      }
     }
   }
 }
@@ -8252,6 +8277,19 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DeoptimizeFunction) {
 }
 
 
+RUNTIME_FUNCTION(MaybeObject*, Runtime_ClearFunctionTypeFeedback) {
+  HandleScope scope(isolate);
+  ASSERT(args.length() == 1);
+  CONVERT_ARG_HANDLE_CHECKED(JSFunction, function, 0);
+  Code* unoptimized = function->shared()->code();
+  if (unoptimized->kind() == Code::FUNCTION) {
+    unoptimized->ClearInlineCaches();
+    unoptimized->ClearTypeFeedbackCells(isolate->heap());
+  }
+  return isolate->heap()->undefined_value();
+}
+
+
 RUNTIME_FUNCTION(MaybeObject*, Runtime_RunningInSimulator) {
 #if defined(USE_SIMULATOR)
   return isolate->heap()->true_value();
@@ -8291,10 +8329,13 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_GetOptimizationStatus) {
   if (!V8::UseCrankshaft()) {
     return Smi::FromInt(4);  // 4 == "never".
   }
-  if (FLAG_always_opt) {
-    return Smi::FromInt(3);  // 3 == "always".
-  }
   CONVERT_ARG_HANDLE_CHECKED(JSFunction, function, 0);
+  if (FLAG_always_opt) {
+    // We may have always opt, but that is more best-effort than a real
+    // promise, so we still say "no" if it is not optimized.
+    return function->IsOptimized() ? Smi::FromInt(3)   // 3 == "always".
+                                   : Smi::FromInt(2);  // 2 == "no".
+  }
   return function->IsOptimized() ? Smi::FromInt(1)   // 1 == "yes".
                                  : Smi::FromInt(2);  // 2 == "no".
 }
@@ -8435,6 +8476,12 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CheckIsBootstrapping) {
 }
 
 
+RUNTIME_FUNCTION(MaybeObject*, Runtime_GetRootNaN) {
+  RUNTIME_ASSERT(isolate->bootstrapper()->IsActive());
+  return isolate->heap()->nan_value();
+}
+
+
 RUNTIME_FUNCTION(MaybeObject*, Runtime_Call) {
   HandleScope scope(isolate);
   ASSERT(args.length() >= 2);
@@ -8527,10 +8574,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_NewFunctionContext) {
   ASSERT(args.length() == 1);
 
   CONVERT_ARG_CHECKED(JSFunction, function, 0);
-  SharedFunctionInfo* shared = function->shared();
-  // TODO: The QML mode should be checked in the ContextLength function.
-  int length = shared->scope_info()->ContextLength(shared->qml_mode());
-
+  int length = function->shared()->scope_info()->ContextLength();
   Object* result;
   { MaybeObject* maybe_result =
         isolate->heap()->AllocateFunctionContext(length, function);
@@ -8633,6 +8677,25 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_PushBlockContext) {
                                             scope_info);
   if (!maybe_context->To(&context)) return maybe_context;
   isolate->set_context(context);
+  return context;
+}
+
+
+RUNTIME_FUNCTION(MaybeObject*, Runtime_PushModuleContext) {
+  NoHandleAllocation ha;
+  ASSERT(args.length() == 2);
+  CONVERT_ARG_CHECKED(ScopeInfo, scope_info, 0);
+  CONVERT_ARG_HANDLE_CHECKED(JSModule, instance, 1);
+
+  Context* context;
+  MaybeObject* maybe_context =
+      isolate->heap()->AllocateModuleContext(isolate->context(),
+                                             scope_info);
+  if (!maybe_context->To(&context)) return maybe_context;
+  // Also initialize the context slot of the instance object.
+  instance->set_context(context);
+  isolate->set_context(context);
+
   return context;
 }
 
@@ -9190,7 +9253,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_CompileString) {
 
   // Compile source string in the global context.
   Handle<SharedFunctionInfo> shared = Compiler::CompileEval(
-      source, context, true, CLASSIC_MODE, RelocInfo::kNoPosition, false);
+      source, context, true, CLASSIC_MODE, RelocInfo::kNoPosition);
   if (shared.is_null()) return Failure::Exception();
   Handle<JSFunction> fun =
       isolate->factory()->NewFunctionFromSharedFunctionInfo(shared,
@@ -9204,8 +9267,7 @@ static ObjectPair CompileGlobalEval(Isolate* isolate,
                                     Handle<String> source,
                                     Handle<Object> receiver,
                                     LanguageMode language_mode,
-                                    int scope_position,
-                                    bool qml_mode) {
+                                    int scope_position) {
   Handle<Context> context = Handle<Context>(isolate->context());
   Handle<Context> global_context = Handle<Context>(context->global_context());
 
@@ -9225,8 +9287,7 @@ static ObjectPair CompileGlobalEval(Isolate* isolate,
       Handle<Context>(isolate->context()),
       context->IsGlobalContext(),
       language_mode,
-      scope_position,
-      qml_mode);
+      scope_position);
   if (shared.is_null()) return MakePair(Failure::Exception(), NULL);
   Handle<JSFunction> compiled =
       isolate->factory()->NewFunctionFromSharedFunctionInfo(
@@ -9236,7 +9297,7 @@ static ObjectPair CompileGlobalEval(Isolate* isolate,
 
 
 RUNTIME_FUNCTION(ObjectPair, Runtime_ResolvePossiblyDirectEval) {
-  ASSERT(args.length() == 6);
+  ASSERT(args.length() == 5);
 
   HandleScope scope(isolate);
   Handle<Object> callee = args.at<Object>(0);
@@ -9257,8 +9318,7 @@ RUNTIME_FUNCTION(ObjectPair, Runtime_ResolvePossiblyDirectEval) {
                            args.at<String>(1),
                            args.at<Object>(2),
                            language_mode,
-                           args.smi_at(4),
-                           Smi::cast(args[5])->value());
+                           args.smi_at(4));
 }
 
 
@@ -9963,36 +10023,6 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_EstimateNumberOfElements) {
   } else {
     return Smi::FromInt(FixedArray::cast(elements)->length());
   }
-}
-
-
-RUNTIME_FUNCTION(MaybeObject*, Runtime_SwapElements) {
-  HandleScope handle_scope(isolate);
-
-  ASSERT_EQ(3, args.length());
-
-  CONVERT_ARG_HANDLE_CHECKED(JSObject, object, 0);
-  Handle<Object> key1 = args.at<Object>(1);
-  Handle<Object> key2 = args.at<Object>(2);
-
-  uint32_t index1, index2;
-  if (!key1->ToArrayIndex(&index1)
-      || !key2->ToArrayIndex(&index2)) {
-    return isolate->ThrowIllegalOperation();
-  }
-
-  Handle<JSObject> jsobject = Handle<JSObject>::cast(object);
-  Handle<Object> tmp1 = Object::GetElement(jsobject, index1);
-  RETURN_IF_EMPTY_HANDLE(isolate, tmp1);
-  Handle<Object> tmp2 = Object::GetElement(jsobject, index2);
-  RETURN_IF_EMPTY_HANDLE(isolate, tmp2);
-
-  RETURN_IF_EMPTY_HANDLE(
-      isolate, JSObject::SetElement(jsobject, index1, tmp2, NONE, kStrictMode));
-  RETURN_IF_EMPTY_HANDLE(
-      isolate, JSObject::SetElement(jsobject, index2, tmp1, NONE, kStrictMode));
-
-  return isolate->heap()->undefined_value();
 }
 
 
@@ -10971,10 +11001,10 @@ static Handle<JSObject> MaterializeModuleScope(
 }
 
 
-// Iterate over the actual scopes visible from a stack frame. The iteration
-// proceeds from the innermost visible nested scope outwards. All scopes are
-// backed by an actual context except the local scope, which is inserted
-// "artificially" in the context chain.
+// Iterate over the actual scopes visible from a stack frame or from a closure.
+// The iteration proceeds from the innermost visible nested scope outwards.
+// All scopes are backed by an actual context except the local scope,
+// which is inserted "artificially" in the context chain.
 class ScopeIterator {
  public:
   enum ScopeType {
@@ -11072,6 +11102,18 @@ class ScopeIterator {
         // completely stack allocated scopes or stack allocated locals.
         UNREACHABLE();
       }
+    }
+  }
+
+  ScopeIterator(Isolate* isolate,
+                Handle<JSFunction> function)
+    : isolate_(isolate),
+      frame_(NULL),
+      inlined_jsframe_index_(0),
+      function_(function),
+      context_(function->context()) {
+    if (function->IsBuiltin()) {
+      context_ = Handle<Context>();
     }
   }
 
@@ -11295,6 +11337,22 @@ static const int kScopeDetailsTypeIndex = 0;
 static const int kScopeDetailsObjectIndex = 1;
 static const int kScopeDetailsSize = 2;
 
+
+static MaybeObject* MaterializeScopeDetails(Isolate* isolate,
+    ScopeIterator* it) {
+  // Calculate the size of the result.
+  int details_size = kScopeDetailsSize;
+  Handle<FixedArray> details = isolate->factory()->NewFixedArray(details_size);
+
+  // Fill in scope details.
+  details->set(kScopeDetailsTypeIndex, Smi::FromInt(it->Type()));
+  Handle<JSObject> scope_object = it->ScopeObject();
+  RETURN_IF_EMPTY_HANDLE(isolate, scope_object);
+  details->set(kScopeDetailsObjectIndex, *scope_object);
+
+  return *isolate->factory()->NewJSArrayWithElements(details);
+}
+
 // Return an array with scope details
 // args[0]: number: break id
 // args[1]: number: frame index
@@ -11332,18 +11390,46 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_GetScopeDetails) {
   if (it.Done()) {
     return isolate->heap()->undefined_value();
   }
+  return MaterializeScopeDetails(isolate, &it);
+}
 
-  // Calculate the size of the result.
-  int details_size = kScopeDetailsSize;
-  Handle<FixedArray> details = isolate->factory()->NewFixedArray(details_size);
 
-  // Fill in scope details.
-  details->set(kScopeDetailsTypeIndex, Smi::FromInt(it.Type()));
-  Handle<JSObject> scope_object = it.ScopeObject();
-  RETURN_IF_EMPTY_HANDLE(isolate, scope_object);
-  details->set(kScopeDetailsObjectIndex, *scope_object);
+RUNTIME_FUNCTION(MaybeObject*, Runtime_GetFunctionScopeCount) {
+  HandleScope scope(isolate);
+  ASSERT(args.length() == 1);
 
-  return *isolate->factory()->NewJSArrayWithElements(details);
+  // Check arguments.
+  CONVERT_ARG_HANDLE_CHECKED(JSFunction, fun, 0);
+
+  // Count the visible scopes.
+  int n = 0;
+  for (ScopeIterator it(isolate, fun); !it.Done(); it.Next()) {
+    n++;
+  }
+
+  return Smi::FromInt(n);
+}
+
+
+RUNTIME_FUNCTION(MaybeObject*, Runtime_GetFunctionScopeDetails) {
+  HandleScope scope(isolate);
+  ASSERT(args.length() == 2);
+
+  // Check arguments.
+  CONVERT_ARG_HANDLE_CHECKED(JSFunction, fun, 0);
+  CONVERT_NUMBER_CHECKED(int, index, Int32, args[1]);
+
+  // Find the requested scope.
+  int n = 0;
+  ScopeIterator it(isolate, fun);
+  for (; !it.Done() && n < index; it.Next()) {
+    n++;
+  }
+  if (it.Done()) {
+    return isolate->heap()->undefined_value();
+  }
+
+  return MaterializeScopeDetails(isolate, &it);
 }
 
 
@@ -11472,12 +11558,6 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_GetBreakLocations) {
   // Return array as JS array
   return *isolate->factory()->NewJSArrayWithElements(
       Handle<FixedArray>::cast(break_locations));
-}
-
-
-// Return the value of breakpoint_relocation flag
-RUNTIME_FUNCTION(MaybeObject*, Runtime_AllowBreakPointRelocation) {
-  return Smi::FromInt(FLAG_breakpoint_relocation);
 }
 
 
@@ -11875,7 +11955,6 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluate) {
   FrameInspector frame_inspector(frame, inlined_jsframe_index, isolate);
   Handle<JSFunction> function(JSFunction::cast(frame_inspector.GetFunction()));
   Handle<ScopeInfo> scope_info(function->shared()->scope_info());
-  bool qml_mode = function->shared()->qml_mode();
 
   // Traverse the saved contexts chain to find the active context for the
   // selected frame.
@@ -11947,8 +12026,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluate) {
                             context,
                             context->IsGlobalContext(),
                             CLASSIC_MODE,
-                            RelocInfo::kNoPosition,
-                            qml_mode);
+                            RelocInfo::kNoPosition);
   if (shared.is_null()) return Failure::Exception();
   Handle<JSFunction> compiled_function =
       isolate->factory()->NewFunctionFromSharedFunctionInfo(shared, context);
@@ -11958,8 +12036,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluate) {
   Handle<Object> receiver(frame->receiver(), isolate);
   Handle<Object> evaluation_function =
       Execution::Call(compiled_function, receiver, 0, NULL,
-                      &has_pending_exception, false,
-                      Handle<Object>(function->context()->qml_global()));
+                      &has_pending_exception);
   if (has_pending_exception) return Failure::Exception();
 
   Handle<Object> arguments = GetArgumentsObject(isolate,
@@ -12042,8 +12119,7 @@ RUNTIME_FUNCTION(MaybeObject*, Runtime_DebugEvaluateGlobal) {
                             context,
                             is_global,
                             CLASSIC_MODE,
-                            RelocInfo::kNoPosition,
-                            false);
+                            RelocInfo::kNoPosition);
   if (shared.is_null()) return Failure::Exception();
   Handle<JSFunction> compiled_function =
       Handle<JSFunction>(

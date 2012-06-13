@@ -118,7 +118,7 @@ bool CompilationInfo::ShouldSelfOptimize() {
       FLAG_crankshaft &&
       !function()->flags()->Contains(kDontSelfOptimize) &&
       !function()->flags()->Contains(kDontOptimize) &&
-      function()->scope()->allows_lazy_recompilation() &&
+      function()->scope()->AllowsLazyRecompilation() &&
       (shared_info().is_null() || !shared_info()->optimization_disabled());
 }
 
@@ -475,8 +475,7 @@ Handle<SharedFunctionInfo> Compiler::Compile(Handle<String> source,
                                              v8::Extension* extension,
                                              ScriptDataImpl* pre_data,
                                              Handle<Object> script_data,
-                                             NativesFlag natives,
-                                             v8::Script::CompileFlags compile_flags) {
+                                             NativesFlag natives) {
   Isolate* isolate = source->GetIsolate();
   int source_length = source->length();
   isolate->counters()->total_load_size()->Increment(source_length);
@@ -508,7 +507,7 @@ Handle<SharedFunctionInfo> Compiler::Compile(Handle<String> source,
 
     // Create a script object describing the script to be compiled.
     Handle<Script> script = FACTORY->NewScript(source);
-    if (natives == NATIVES_CODE || compile_flags & v8::Script::NativeMode) {
+    if (natives == NATIVES_CODE) {
       script->set_type(Smi::FromInt(Script::TYPE_NATIVE));
     }
     if (!script_name.is_null()) {
@@ -528,7 +527,6 @@ Handle<SharedFunctionInfo> Compiler::Compile(Handle<String> source,
     if (FLAG_use_strict) {
       info.SetLanguageMode(FLAG_harmony_scoping ? EXTENDED_MODE : STRICT_MODE);
     }
-    if (compile_flags & v8::Script::QmlMode) info.MarkAsQmlMode();
     result = MakeFunctionInfo(&info);
     if (extension == NULL && !result.is_null()) {
       compilation_cache->PutScript(source, result);
@@ -548,8 +546,7 @@ Handle<SharedFunctionInfo> Compiler::CompileEval(Handle<String> source,
                                                  Handle<Context> context,
                                                  bool is_global,
                                                  LanguageMode language_mode,
-                                                 int scope_position,
-                                                 bool qml_mode) {
+                                                 int scope_position) {
   Isolate* isolate = source->GetIsolate();
   int source_length = source->length();
   isolate->counters()->total_eval_size()->Increment(source_length);
@@ -575,7 +572,6 @@ Handle<SharedFunctionInfo> Compiler::CompileEval(Handle<String> source,
     info.MarkAsEval();
     if (is_global) info.MarkAsGlobal();
     info.SetLanguageMode(language_mode);
-    if (qml_mode) info.MarkAsQmlMode();
     info.SetCallingContext(context);
     result = MakeFunctionInfo(&info);
     if (!result.is_null()) {
@@ -629,12 +625,6 @@ bool Compiler::CompileLazy(CompilationInfo* info) {
     LanguageMode language_mode = info->function()->language_mode();
     info->SetLanguageMode(language_mode);
     shared->set_language_mode(language_mode);
-
-    // After parsing we know function's qml mode. Remember it.
-    if (info->function()->qml_mode()) {
-      shared->set_qml_mode(true);
-      info->MarkAsQmlMode();
-    }
 
     // Compile the code.
     if (!MakeCode(info)) {
@@ -785,7 +775,6 @@ void Compiler::SetFunctionInfo(Handle<SharedFunctionInfo> function_info,
       *lit->this_property_assignments());
   function_info->set_allows_lazy_compilation(lit->AllowsLazyCompilation());
   function_info->set_language_mode(lit->language_mode());
-  function_info->set_qml_mode(lit->qml_mode());
   function_info->set_uses_arguments(lit->scope()->arguments() != NULL);
   function_info->set_has_duplicate_parameters(lit->has_duplicate_parameters());
   function_info->set_ast_node_count(lit->ast_node_count());

@@ -73,8 +73,7 @@ Variable::Variable(Scope* scope,
     force_context_allocation_(false),
     is_used_(false),
     initialization_flag_(initialization_flag),
-    interface_(interface),
-    is_qml_global_(false) {
+    interface_(interface) {
   // Names must be canonicalized for fast equality checks.
   ASSERT(name->IsSymbol());
   // Var declared variables never need initialization.

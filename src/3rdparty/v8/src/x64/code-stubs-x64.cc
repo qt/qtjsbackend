@@ -139,10 +139,6 @@ void FastNewContextStub::Generate(MacroAssembler* masm) {
   __ movq(rbx, Operand(rsi, Context::SlotOffset(Context::GLOBAL_INDEX)));
   __ movq(Operand(rax, Context::SlotOffset(Context::GLOBAL_INDEX)), rbx);
 
-  // Copy the qmlglobal object from the previous context.
-  __ movq(rbx, Operand(rsi, Context::SlotOffset(Context::QML_GLOBAL_INDEX)));
-  __ movq(Operand(rax, Context::SlotOffset(Context::QML_GLOBAL_INDEX)), rbx);
-
   // Initialize the rest of the slots to undefined.
   __ LoadRoot(rbx, Heap::kUndefinedValueRootIndex);
   for (int i = Context::MIN_CONTEXT_SLOTS; i < length; i++) {
@@ -206,10 +202,6 @@ void FastNewBlockContextStub::Generate(MacroAssembler* masm) {
   // Copy the global object from the previous context.
   __ movq(rbx, ContextOperand(rsi, Context::GLOBAL_INDEX));
   __ movq(ContextOperand(rax, Context::GLOBAL_INDEX), rbx);
-
-  // Copy the qmlglobal object from the previous context.
-  __ movq(rbx, ContextOperand(rsi, Context::QML_GLOBAL_INDEX));
-  __ movq(ContextOperand(rax, Context::QML_GLOBAL_INDEX), rbx);
 
   // Initialize the rest of the slots to the hole value.
   __ LoadRoot(rbx, Heap::kTheHoleValueRootIndex);
@@ -3328,37 +3320,6 @@ void CompareStub::Generate(MacroAssembler* masm) {
   // NOTICE! This code is only reached after a smi-fast-case check, so
   // it is certain that at least one operand isn't a smi.
 
-  {
-    Label not_user_equal, user_equal;
-    __ JumpIfSmi(rax, &not_user_equal);
-    __ JumpIfSmi(rdx, &not_user_equal);
-
-    __ CmpObjectType(rax, JS_OBJECT_TYPE, rbx);
-    __ j(not_equal, &not_user_equal);
-
-    __ CmpObjectType(rdx, JS_OBJECT_TYPE, rcx);
-    __ j(not_equal, &not_user_equal);
-
-    __ testb(FieldOperand(rbx, Map::kBitField2Offset),
-             Immediate(1 << Map::kUseUserObjectComparison));
-    __ j(not_zero, &user_equal);
-    __ testb(FieldOperand(rcx, Map::kBitField2Offset),
-             Immediate(1 << Map::kUseUserObjectComparison));
-    __ j(not_zero, &user_equal);
-
-    __ jmp(&not_user_equal);
-
-    __ bind(&user_equal);
-   
-    __ pop(rbx); // Return address.
-    __ push(rax);
-    __ push(rdx);
-    __ push(rbx);
-    __ TailCallRuntime(Runtime::kUserObjectEquals, 2, 1);
-   
-    __ bind(&not_user_equal);
-  }
-
   // Two identical objects are equal unless they are both NaN or undefined.
   {
     Label not_identical;
@@ -3667,8 +3628,9 @@ static void GenerateRecordCallTarget(MacroAssembler* masm) {
 
 
 void CallFunctionStub::Generate(MacroAssembler* masm) {
-  // rdi : the function to call
   // rbx : cache cell for call target
+  // rdi : the function to call
+  Isolate* isolate = masm->isolate();
   Label slow, non_function;
 
   // The receiver might implicitly be the global object. This is
@@ -3683,9 +3645,9 @@ void CallFunctionStub::Generate(MacroAssembler* masm) {
     __ CompareRoot(rax, Heap::kTheHoleValueRootIndex);
     __ j(not_equal, &call, Label::kNear);
     // Patch the receiver on the stack with the global receiver object.
-    __ movq(rbx, GlobalObjectOperand());
-    __ movq(rbx, FieldOperand(rbx, GlobalObject::kGlobalReceiverOffset));
-    __ movq(Operand(rsp, (argc_ + 1) * kPointerSize), rbx);
+    __ movq(rcx, GlobalObjectOperand());
+    __ movq(rcx, FieldOperand(rcx, GlobalObject::kGlobalReceiverOffset));
+    __ movq(Operand(rsp, (argc_ + 1) * kPointerSize), rcx);
     __ bind(&call);
   }
 
@@ -3694,6 +3656,10 @@ void CallFunctionStub::Generate(MacroAssembler* masm) {
   // Goto slow case if we do not have a function.
   __ CmpObjectType(rdi, JS_FUNCTION_TYPE, rcx);
   __ j(not_equal, &slow);
+
+  if (RecordCallTarget()) {
+    GenerateRecordCallTarget(masm);
+  }
 
   // Fast-case: Just invoke the function.
   ParameterCount actual(argc_);
@@ -3717,6 +3683,13 @@ void CallFunctionStub::Generate(MacroAssembler* masm) {
 
   // Slow-case: Non-function called.
   __ bind(&slow);
+  if (RecordCallTarget()) {
+    // If there is a call target cache, mark it megamorphic in the
+    // non-function case.  MegamorphicSentinel is an immortal immovable
+    // object (undefined) so no write barrier is needed.
+    __ Move(FieldOperand(rbx, JSGlobalPropertyCell::kValueOffset),
+            TypeFeedbackCells::MegamorphicSentinel(isolate));
+  }
   // Check for function proxy.
   __ CmpInstanceType(rcx, JS_FUNCTION_PROXY_TYPE);
   __ j(not_equal, &non_function);
@@ -5151,56 +5124,24 @@ void SubStringStub::Generate(MacroAssembler* masm) {
   // rax: string
   // rbx: instance type
   // Calculate length of sub string using the smi values.
-  Label result_longer_than_two;
   __ movq(rcx, Operand(rsp, kToOffset));
   __ movq(rdx, Operand(rsp, kFromOffset));
   __ JumpUnlessBothNonNegativeSmi(rcx, rdx, &runtime);
 
   __ SmiSub(rcx, rcx, rdx);  // Overflow doesn't happen.
-  __ cmpq(FieldOperand(rax, String::kLengthOffset), rcx);
+  __ cmpq(rcx, FieldOperand(rax, String::kLengthOffset));
   Label not_original_string;
-  __ j(not_equal, &not_original_string, Label::kNear);
+  // Shorter than original string's length: an actual substring.
+  __ j(below, &not_original_string, Label::kNear);
+  // Longer than original string's length or negative: unsafe arguments.
+  __ j(above, &runtime);
+  // Return original string.
   Counters* counters = masm->isolate()->counters();
   __ IncrementCounter(counters->sub_string_native(), 1);
   __ ret(kArgumentsSize);
   __ bind(&not_original_string);
-  // Special handling of sub-strings of length 1 and 2. One character strings
-  // are handled in the runtime system (looked up in the single character
-  // cache). Two character strings are looked for in the symbol cache.
   __ SmiToInteger32(rcx, rcx);
-  __ cmpl(rcx, Immediate(2));
-  __ j(greater, &result_longer_than_two);
-  __ j(less, &runtime);
 
-  // Sub string of length 2 requested.
-  // rax: string
-  // rbx: instance type
-  // rcx: sub string length (value is 2)
-  // rdx: from index (smi)
-  __ JumpIfInstanceTypeIsNotSequentialAscii(rbx, rbx, &runtime);
-
-  // Get the two characters forming the sub string.
-  __ SmiToInteger32(rdx, rdx);  // From index is no longer smi.
-  __ movzxbq(rbx, FieldOperand(rax, rdx, times_1, SeqAsciiString::kHeaderSize));
-  __ movzxbq(rdi,
-             FieldOperand(rax, rdx, times_1, SeqAsciiString::kHeaderSize + 1));
-
-  // Try to lookup two character string in symbol table.
-  Label make_two_character_string;
-  StringHelper::GenerateTwoCharacterSymbolTableProbe(
-      masm, rbx, rdi, r9, r11, r14, r15, &make_two_character_string);
-  __ IncrementCounter(counters->sub_string_native(), 1);
-  __ ret(3 * kPointerSize);
-
-  __ bind(&make_two_character_string);
-  // Set up registers for allocating the two character string.
-  __ movzxwq(rbx, FieldOperand(rax, rdx, times_1, SeqAsciiString::kHeaderSize));
-  __ AllocateAsciiString(rax, rcx, r11, r14, r15, &runtime);
-  __ movw(FieldOperand(rax, SeqAsciiString::kHeaderSize), rbx);
-  __ IncrementCounter(counters->sub_string_native(), 1);
-  __ ret(3 * kPointerSize);
-
-  __ bind(&result_longer_than_two);
   // rax: string
   // rbx: instance type
   // rcx: sub string length
@@ -5756,14 +5697,8 @@ void ICCompareStub::GenerateObjects(MacroAssembler* masm) {
 
   __ CmpObjectType(rax, JS_OBJECT_TYPE, rcx);
   __ j(not_equal, &miss, Label::kNear);
-  __ testb(FieldOperand(rcx, Map::kBitField2Offset),
-           Immediate(1 << Map::kUseUserObjectComparison));
-  __ j(not_zero, &miss, Label::kNear);
   __ CmpObjectType(rdx, JS_OBJECT_TYPE, rcx);
   __ j(not_equal, &miss, Label::kNear);
-  __ testb(FieldOperand(rcx, Map::kBitField2Offset),
-           Immediate(1 << Map::kUseUserObjectComparison));
-  __ j(not_zero, &miss, Label::kNear);
 
   ASSERT(GetCondition() == equal);
   __ subq(rax, rdx);
@@ -5783,14 +5718,8 @@ void ICCompareStub::GenerateKnownObjects(MacroAssembler* masm) {
   __ movq(rbx, FieldOperand(rdx, HeapObject::kMapOffset));
   __ Cmp(rcx, known_map_);
   __ j(not_equal, &miss, Label::kNear);
-  __ testb(FieldOperand(rcx, Map::kBitField2Offset),
-           Immediate(1 << Map::kUseUserObjectComparison));
-  __ j(not_zero, &miss, Label::kNear);
   __ Cmp(rbx, known_map_);
   __ j(not_equal, &miss, Label::kNear);
-  __ testb(FieldOperand(rbx, Map::kBitField2Offset),
-           Immediate(1 << Map::kUseUserObjectComparison));
-  __ j(not_zero, &miss, Label::kNear);
 
   __ subq(rax, rdx);
   __ ret(0);

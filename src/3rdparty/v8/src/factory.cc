@@ -291,6 +291,15 @@ Handle<Context> Factory::NewGlobalContext() {
 }
 
 
+Handle<Context> Factory::NewModuleContext(Handle<Context> previous,
+                                          Handle<ScopeInfo> scope_info) {
+  CALL_HEAP_FUNCTION(
+      isolate(),
+      isolate()->heap()->AllocateModuleContext(*previous, *scope_info),
+      Context);
+}
+
+
 Handle<Context> Factory::NewFunctionContext(int length,
                                             Handle<JSFunction> function) {
   CALL_HEAP_FUNCTION(
@@ -324,10 +333,9 @@ Handle<Context> Factory::NewWithContext(Handle<JSFunction> function,
 }
 
 
-Handle<Context> Factory::NewBlockContext(
-    Handle<JSFunction> function,
-    Handle<Context> previous,
-    Handle<ScopeInfo> scope_info) {
+Handle<Context> Factory::NewBlockContext(Handle<JSFunction> function,
+                                         Handle<Context> previous,
+                                         Handle<ScopeInfo> scope_info) {
   CALL_HEAP_FUNCTION(
       isolate(),
       isolate()->heap()->AllocateBlockContext(*function,
@@ -928,6 +936,13 @@ Handle<JSObject> Factory::NewJSObject(Handle<JSFunction> constructor,
 }
 
 
+Handle<JSModule> Factory::NewJSModule() {
+  CALL_HEAP_FUNCTION(
+      isolate(),
+      isolate()->heap()->AllocateJSModule(), JSModule);
+}
+
+
 Handle<GlobalObject> Factory::NewGlobalObject(
     Handle<JSFunction> constructor) {
   CALL_HEAP_FUNCTION(isolate(),
@@ -1219,24 +1234,15 @@ Handle<JSFunction> Factory::CreateApiFunction(
   Handle<Code> construct_stub = isolate()->builtins()->JSConstructStubApi();
 
   int internal_field_count = 0;
-  bool has_external_resource = false;
-  bool use_user_object_comparison = false;
-
   if (!obj->instance_template()->IsUndefined()) {
     Handle<ObjectTemplateInfo> instance_template =
         Handle<ObjectTemplateInfo>(
             ObjectTemplateInfo::cast(obj->instance_template()));
     internal_field_count =
         Smi::cast(instance_template->internal_field_count())->value();
-    has_external_resource =
-        !instance_template->has_external_resource()->IsUndefined();
-    use_user_object_comparison =
-        !instance_template->use_user_object_comparison()->IsUndefined();
   }
 
   int instance_size = kPointerSize * internal_field_count;
-  if (has_external_resource) instance_size += kPointerSize;
-
   InstanceType type = INVALID_TYPE;
   switch (instance_type) {
     case JavaScriptObject:
@@ -1271,16 +1277,6 @@ Handle<JSFunction> Factory::CreateApiFunction(
 
   Handle<Map> map = Handle<Map>(result->initial_map());
 
-  // Mark as having external data object if needed
-  if (has_external_resource) {
-    map->set_has_external_resource(true);
-  }
-
-  // Mark as using user object comparison if needed
-  if (use_user_object_comparison) {
-    map->set_use_user_object_comparison(true);
-  }
-
   // Mark as undetectable if needed.
   if (obj->undetectable()) {
     map->set_is_undetectable();
@@ -1299,10 +1295,6 @@ Handle<JSFunction> Factory::CreateApiFunction(
   // Set interceptor information in the map.
   if (!obj->named_property_handler()->IsUndefined()) {
     map->set_has_named_interceptor();
-    InterceptorInfo *nph = InterceptorInfo::cast(obj->named_property_handler());
-    bool is_fallback =
-        nph->is_fallback()->IsUndefined()?false:nph->is_fallback()->value();
-    map->set_named_interceptor_is_fallback(is_fallback);
   }
   if (!obj->indexed_property_handler()->IsUndefined()) {
     map->set_has_indexed_interceptor();

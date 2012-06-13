@@ -59,6 +59,7 @@
 //           - JSWeakMap
 //           - JSRegExp
 //           - JSFunction
+//           - JSModule
 //           - GlobalObject
 //             - JSGlobalObject
 //             - JSBuiltinsObject
@@ -306,6 +307,7 @@ const int kVariableSizeSentinel = 0;
   V(JS_DATE_TYPE)                                                              \
   V(JS_OBJECT_TYPE)                                                            \
   V(JS_CONTEXT_EXTENSION_OBJECT_TYPE)                                          \
+  V(JS_MODULE_TYPE)                                                            \
   V(JS_GLOBAL_OBJECT_TYPE)                                                     \
   V(JS_BUILTINS_OBJECT_TYPE)                                                   \
   V(JS_GLOBAL_PROXY_TYPE)                                                      \
@@ -626,6 +628,7 @@ enum InstanceType {
   JS_DATE_TYPE,
   JS_OBJECT_TYPE,
   JS_CONTEXT_EXTENSION_OBJECT_TYPE,
+  JS_MODULE_TYPE,
   JS_GLOBAL_OBJECT_TYPE,
   JS_BUILTINS_OBJECT_TYPE,
   JS_GLOBAL_PROXY_TYPE,
@@ -677,6 +680,7 @@ const int kExternalArrayTypeCount =
 
 STATIC_CHECK(JS_OBJECT_TYPE == Internals::kJSObjectType);
 STATIC_CHECK(FIRST_NONSTRING_TYPE == Internals::kFirstNonstringType);
+STATIC_CHECK(ODDBALL_TYPE == Internals::kOddballType);
 STATIC_CHECK(FOREIGN_TYPE == Internals::kForeignType);
 
 
@@ -803,6 +807,7 @@ class MaybeObject BASE_EMBEDDED {
   V(JSReceiver)                                \
   V(JSObject)                                  \
   V(JSContextExtensionObject)                  \
+  V(JSModule)                                  \
   V(Map)                                       \
   V(DescriptorArray)                           \
   V(DeoptimizationInputData)                   \
@@ -812,6 +817,7 @@ class MaybeObject BASE_EMBEDDED {
   V(FixedDoubleArray)                          \
   V(Context)                                   \
   V(GlobalContext)                             \
+  V(ModuleContext)                             \
   V(ScopeInfo)                                 \
   V(JSFunction)                                \
   V(Code)                                      \
@@ -1393,14 +1399,12 @@ class JSReceiver: public HeapObject {
                                     Handle<String> key,
                                     Handle<Object> value,
                                     PropertyAttributes attributes,
-                                    StrictModeFlag strict_mode,
-                                    bool skip_fallback_interceptor = false);
+                                    StrictModeFlag strict_mode);
   // Can cause GC.
   MUST_USE_RESULT MaybeObject* SetProperty(String* key,
                                            Object* value,
                                            PropertyAttributes attributes,
-                                           StrictModeFlag strict_mode,
-                                           bool skip_fallback_interceptor = false);
+                                           StrictModeFlag strict_mode);
   MUST_USE_RESULT MaybeObject* SetProperty(LookupResult* result,
                                            String* key,
                                            Object* value,
@@ -1453,12 +1457,8 @@ class JSReceiver: public HeapObject {
 
   // Lookup a property.  If found, the result is valid and has
   // detailed information.
-  void LocalLookup(String* name,
-                   LookupResult* result,
-                   bool skip_fallback_interceptor = false);
-  void Lookup(String* name,
-              LookupResult* result,
-              bool skip_fallback_interceptor = false);
+  void LocalLookup(String* name, LookupResult* result);
+  void Lookup(String* name, LookupResult* result);
 
  protected:
   Smi* GenerateIdentityHash();
@@ -1857,9 +1857,6 @@ class JSObject: public JSReceiver {
   inline void SetInternalField(int index, Object* value);
   inline void SetInternalField(int index, Smi* value);
 
-  inline void SetExternalResourceObject(Object *);
-  inline Object *GetExternalResourceObject();
-
   // The following lookup functions skip interceptors.
   void LocalLookupRealNamedProperty(String* name, LookupResult* result);
   void LookupRealNamedProperty(String* name, LookupResult* result);
@@ -2195,6 +2192,7 @@ class JSObject: public JSReceiver {
       Object* getter,
       Object* setter,
       PropertyAttributes attributes);
+  MUST_USE_RESULT MaybeObject* CreateAccessorPairFor(String* name);
   MUST_USE_RESULT MaybeObject* DefinePropertyAccessor(
       String* name,
       Object* getter,
@@ -2476,7 +2474,7 @@ class DescriptorArray: public FixedArray {
   // Accessors for fetching instance descriptor at descriptor number.
   inline String* GetKey(int descriptor_number);
   inline Object* GetValue(int descriptor_number);
-  inline Smi* GetDetails(int descriptor_number);
+  inline PropertyDetails GetDetails(int descriptor_number);
   inline PropertyType GetType(int descriptor_number);
   inline int GetFieldIndex(int descriptor_number);
   inline JSFunction* GetConstantFunction(int descriptor_number);
@@ -2485,7 +2483,6 @@ class DescriptorArray: public FixedArray {
   inline bool IsProperty(int descriptor_number);
   inline bool IsTransitionOnly(int descriptor_number);
   inline bool IsNullDescriptor(int descriptor_number);
-  inline bool IsDontEnum(int descriptor_number);
 
   class WhitenessWitness {
    public:
@@ -2603,6 +2600,9 @@ class DescriptorArray: public FixedArray {
   // Is the descriptor array sorted and without duplicates?
   bool IsSortedNoDuplicates();
 
+  // Is the descriptor array consistent with the back pointers in targets?
+  bool IsConsistentWithBackPointers(Map* current_map);
+
   // Are two DescriptorArrays equal?
   bool IsEqualTo(DescriptorArray* other);
 #endif
@@ -2639,10 +2639,6 @@ class DescriptorArray: public FixedArray {
     return descriptor_number << 1;
   }
 
-  bool is_null_descriptor(int descriptor_number) {
-    return PropertyDetails(GetDetails(descriptor_number)).type() ==
-        NULL_DESCRIPTOR;
-  }
   // Swap operation on FixedArray without using write barriers.
   static inline void NoIncrementalWriteBarrierSwap(
       FixedArray* array, int first, int second);
@@ -3348,9 +3344,6 @@ class ScopeInfo : public FixedArray {
   // Return the language mode of this scope.
   LanguageMode language_mode();
 
-  // Is this scope a qml mode scope?
-  bool IsQmlMode();
-
   // Does this scope make a non-strict eval call?
   bool CallsNonStrictEval() {
     return CallsEval() && (language_mode() == CLASSIC_MODE);
@@ -3373,7 +3366,7 @@ class ScopeInfo : public FixedArray {
   //  3. One context slot for the function name if it is context allocated.
   // Parameters allocated in the context count as context allocated locals. If
   // no contexts are allocated for this scope ContextLength returns 0.
-  int ContextLength(bool qml_function = false);
+  int ContextLength();
 
   // Is this scope the scope of a named function expression?
   bool HasFunctionName();
@@ -3425,8 +3418,8 @@ class ScopeInfo : public FixedArray {
   // otherwise returns a value < 0. The name must be a symbol (canonicalized).
   int ParameterIndex(String* name);
 
-  // Lookup support for serialized scope info. Returns the
-  // function context slot index if the function name is present (named
+  // Lookup support for serialized scope info. Returns the function context
+  // slot index if the function name is present and context-allocated (named
   // function expressions, only), otherwise returns a value < 0. The name
   // must be a symbol (canonicalized).
   int FunctionContextSlotIndex(String* name, VariableMode* mode);
@@ -3522,9 +3515,8 @@ class ScopeInfo : public FixedArray {
   class TypeField:             public BitField<ScopeType,            0, 3> {};
   class CallsEvalField:        public BitField<bool,                 3, 1> {};
   class LanguageModeField:     public BitField<LanguageMode,         4, 2> {};
-  class QmlModeField:          public BitField<bool,                 6, 1> {};
-  class FunctionVariableField: public BitField<FunctionVariableInfo, 7, 2> {};
-  class FunctionVariableMode:  public BitField<VariableMode,         9, 3> {};
+  class FunctionVariableField: public BitField<FunctionVariableInfo, 6, 2> {};
+  class FunctionVariableMode:  public BitField<VariableMode,         8, 3> {};
 
   // BitFields representing the encoded information for context locals in the
   // ContextLocalInfoEntries part.
@@ -4302,6 +4294,11 @@ class Code: public HeapObject {
   inline byte compare_state();
   inline void set_compare_state(byte value);
 
+  // [compare_operation]: For kind COMPARE_IC tells what compare operation the
+  // stub was generated for.
+  inline byte compare_operation();
+  inline void set_compare_operation(byte value);
+
   // [to_boolean_foo]: For kind TO_BOOLEAN_IC tells what state the stub is in.
   inline byte to_boolean_state();
   inline void set_to_boolean_state(byte value);
@@ -4437,6 +4434,7 @@ class Code: public HeapObject {
   void CodeVerify();
 #endif
   void ClearInlineCaches();
+  void ClearTypeFeedbackCells(Heap* heap);
 
   // Max loop nesting marker used to postpose OSR. We don't take loop
   // nesting that is deeper than 5 levels into account.
@@ -4484,6 +4482,8 @@ class Code: public HeapObject {
   class FullCodeFlagsIsCompiledOptimizable: public BitField<bool, 2, 1> {};
 
   static const int kBinaryOpReturnTypeOffset = kBinaryOpTypeOffset + 1;
+
+  static const int kCompareOperationOffset = kCompareStateOffset + 1;
 
   static const int kAllowOSRAtLoopNestingLevelOffset = kFullCodeFlags + 1;
   static const int kProfilerTicksOffset = kAllowOSRAtLoopNestingLevelOffset + 1;
@@ -4614,11 +4614,11 @@ class Map: public HeapObject {
 
   // Tells whether the instance has a call-as-function handler.
   inline void set_has_instance_call_handler() {
-    set_bit_field3(bit_field3() | (1 << kHasInstanceCallHandler));
+    set_bit_field(bit_field() | (1 << kHasInstanceCallHandler));
   }
 
   inline bool has_instance_call_handler() {
-    return ((1 << kHasInstanceCallHandler) & bit_field3()) != 0;
+    return ((1 << kHasInstanceCallHandler) & bit_field()) != 0;
   }
 
   inline void set_is_extensible(bool value);
@@ -4691,20 +4691,6 @@ class Map: public HeapObject {
   inline void set_is_access_check_needed(bool access_check_needed);
   inline bool is_access_check_needed();
 
-  // Whether the named interceptor is a fallback interceptor or not
-  inline void set_named_interceptor_is_fallback(bool value);
-  inline bool named_interceptor_is_fallback();
-
-  // Tells whether the instance has the space for an external resource
-  // object
-  inline void set_has_external_resource(bool value);
-  inline bool has_external_resource();
-
-  // Tells whether the user object comparison callback should be used for
-  // comparisons involving this object
-  inline void set_use_user_object_comparison(bool value);
-  inline bool use_user_object_comparison();
-  
   // [prototype]: implicit prototype object.
   DECL_ACCESSORS(prototype, Object)
 
@@ -4727,19 +4713,30 @@ class Map: public HeapObject {
   // [stub cache]: contains stubs compiled for this map.
   DECL_ACCESSORS(code_cache, Object)
 
+  // [back pointer]: points back to the parent map from which a transition
+  // leads to this map. The field overlaps with prototype transitions and the
+  // back pointer will be moved into the prototype transitions array if
+  // required.
+  inline Object* GetBackPointer();
+  inline void SetBackPointer(Object* value,
+                             WriteBarrierMode mode = UPDATE_WRITE_BARRIER);
+
   // [prototype transitions]: cache of prototype transitions.
   // Prototype transition is a transition that happens
   // when we change object's prototype to a new one.
   // Cache format:
   //    0: finger - index of the first free cell in the cache
-  //    1 + 2 * i: prototype
-  //    2 + 2 * i: target map
+  //    1: back pointer that overlaps with prototype transitions field.
+  //    2 + 2 * i: prototype
+  //    3 + 2 * i: target map
   DECL_ACCESSORS(prototype_transitions, FixedArray)
 
-  inline FixedArray* unchecked_prototype_transitions();
+  inline void init_prototype_transitions(Object* undefined);
+  inline HeapObject* unchecked_prototype_transitions();
 
-  static const int kProtoTransitionHeaderSize = 1;
+  static const int kProtoTransitionHeaderSize = 2;
   static const int kProtoTransitionNumberOfEntriesOffset = 0;
+  static const int kProtoTransitionBackPointerOffset = 1;
   static const int kProtoTransitionElementsPerEntry = 2;
   static const int kProtoTransitionPrototypeOffset = 0;
   static const int kProtoTransitionMapOffset = 1;
@@ -4811,25 +4808,10 @@ class Map: public HeapObject {
   // Removes a code object from the code cache at the given index.
   void RemoveFromCodeCache(String* name, Code* code, int index);
 
-  // For every transition in this map, makes the transition's
-  // target's prototype pointer point back to this map.
-  // This is undone in MarkCompactCollector::ClearNonLiveTransitions().
-  void CreateBackPointers();
-
-  void CreateOneBackPointer(Object* transition_target);
-
-  // Set all map transitions from this map to dead maps to null.
-  // Also, restore the original prototype on the targets of these
-  // transitions, so that we do not process this map again while
-  // following back pointers.
-  void ClearNonLiveTransitions(Heap* heap, Object* real_prototype);
-
-  // Restore a possible back pointer in the prototype field of object.
-  // Return true in that case and false otherwise. Set *keep_entry to
-  // true when a live map transition has been found.
-  bool RestoreOneBackPointer(Object* object,
-                             Object* real_prototype,
-                             bool* keep_entry);
+  // Set all map transitions from this map to dead maps to null.  Also clear
+  // back pointers in transition targets so that we do not process this map
+  // again while following back pointers.
+  void ClearNonLiveTransitions(Heap* heap);
 
   // Computes a hash value for this map, to be used in HashTables and such.
   int Hash();
@@ -4864,6 +4846,14 @@ class Map: public HeapObject {
   Handle<Map> FindTransitionedMap(MapHandleList* candidates);
   Map* FindTransitionedMap(MapList* candidates);
 
+  // Zaps the contents of backing data structures in debug mode. Note that the
+  // heap verifier (i.e. VerifyMarkingVisitor) relies on zapping of objects
+  // holding weak references when incremental marking is used, because it also
+  // iterates over objects that are otherwise unreachable.
+#ifdef DEBUG
+  void ZapInstanceDescriptors();
+  void ZapPrototypeTransitions();
+#endif
 
   // Dispatched behavior.
 #ifdef OBJECT_PRINT
@@ -4911,16 +4901,17 @@ class Map: public HeapObject {
       kConstructorOffset + kPointerSize;
   static const int kCodeCacheOffset =
       kInstanceDescriptorsOrBitField3Offset + kPointerSize;
-  static const int kPrototypeTransitionsOffset =
+  static const int kPrototypeTransitionsOrBackPointerOffset =
       kCodeCacheOffset + kPointerSize;
-  static const int kPadStart = kPrototypeTransitionsOffset + kPointerSize;
+  static const int kPadStart =
+      kPrototypeTransitionsOrBackPointerOffset + kPointerSize;
   static const int kSize = MAP_POINTER_ALIGN(kPadStart);
 
   // Layout of pointer fields. Heap iteration code relies on them
   // being continuously allocated.
   static const int kPointerFieldsBeginOffset = Map::kPrototypeOffset;
   static const int kPointerFieldsEndOffset =
-      Map::kPrototypeTransitionsOffset + kPointerSize;
+      kPrototypeTransitionsOrBackPointerOffset + kPointerSize;
 
   // Byte offsets within kInstanceSizesOffset.
   static const int kInstanceSizeOffset = kInstanceSizesOffset + 0;
@@ -4948,14 +4939,14 @@ class Map: public HeapObject {
   static const int kHasNamedInterceptor = 3;
   static const int kHasIndexedInterceptor = 4;
   static const int kIsUndetectable = 5;
-  static const int kHasExternalResource = 6;
+  static const int kHasInstanceCallHandler = 6;
   static const int kIsAccessCheckNeeded = 7;
 
   // Bit positions for bit field 2
   static const int kIsExtensible = 0;
   static const int kFunctionWithPrototype = 1;
   static const int kStringWrapperSafeForDefaultValueOf = 2;
-  static const int kUseUserObjectComparison = 3;
+  static const int kAttachedToSharedFunctionInfo = 3;
   // No bits can be used after kElementsKindFirstBit, they are all reserved for
   // storing ElementKind.
   static const int kElementsKindShift = 4;
@@ -4972,9 +4963,6 @@ class Map: public HeapObject {
 
   // Bit positions for bit field 3
   static const int kIsShared = 0;
-  static const int kNamedInterceptorIsFallback = 1;
-  static const int kHasInstanceCallHandler = 2;
-  static const int kAttachedToSharedFunctionInfo = 3;
 
   // Layout of the default cache. It holds alternating name and code objects.
   static const int kCodeCacheEntrySize = 2;
@@ -5362,6 +5350,8 @@ class SharedFunctionInfo: public HeapObject {
   inline int deopt_counter();
   inline void set_deopt_counter(int counter);
 
+  inline int profiler_ticks();
+
   // Inline cache age is used to infer whether the function survived a context
   // disposal or not. In the former case we reset the opt_count.
   inline int ic_age();
@@ -5412,9 +5402,6 @@ class SharedFunctionInfo: public HeapObject {
 
   // Indicates whether the language mode of this function is EXTENDED_MODE.
   inline bool is_extended_mode();
-
-  // Indicates whether the function is a qml mode function.
-  DECL_BOOLEAN_ACCESSORS(qml_mode)
 
   // False if the function definitely does not allocate an arguments object.
   DECL_BOOLEAN_ACCESSORS(uses_arguments)
@@ -5658,7 +5645,6 @@ class SharedFunctionInfo: public HeapObject {
     kOptimizationDisabled = kCodeAgeShift + kCodeAgeSize,
     kStrictModeFunction,
     kExtendedModeFunction,
-    kQmlModeFunction,
     kUsesArguments,
     kHasDuplicateParameters,
     kNative,
@@ -5721,6 +5707,35 @@ class SharedFunctionInfo: public HeapObject {
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(SharedFunctionInfo);
+};
+
+
+// Representation for module instance objects.
+class JSModule: public JSObject {
+ public:
+  // [context]: the context holding the module's locals, or undefined if none.
+  DECL_ACCESSORS(context, Object)
+
+  // Casting.
+  static inline JSModule* cast(Object* obj);
+
+  // Dispatched behavior.
+#ifdef OBJECT_PRINT
+  inline void JSModulePrint() {
+    JSModulePrint(stdout);
+  }
+  void JSModulePrint(FILE* out);
+#endif
+#ifdef DEBUG
+  void JSModuleVerify();
+#endif
+
+  // Layout description.
+  static const int kContextOffset = JSObject::kHeaderSize;
+  static const int kSize = kContextOffset + kPointerSize;
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(JSModule);
 };
 
 
@@ -6123,7 +6138,7 @@ class JSDate: public JSObject {
 
   // Returns the date field with the specified index.
   // See FieldIndex for the list of date fields.
-  static MaybeObject* GetField(Object* date, Smi* index);
+  static Object* GetField(Object* date, Smi* index);
 
   void SetValue(Object* value, bool is_value_nan);
 
@@ -6872,7 +6887,7 @@ class String: public HeapObject {
   inline void Set(int index, uint16_t value);
   // Get individual two byte char in the string.  Repeated calls
   // to this method are not efficient unless the string is flat.
-  inline uint16_t Get(int index);
+  INLINE(uint16_t Get(int index));
 
   // Try to flatten the string.  Checks first inline to see if it is
   // necessary.  Does nothing if the string is not a cons string.
@@ -6921,9 +6936,6 @@ class String: public HeapObject {
   bool IsEqualTo(Vector<const char> str);
   bool IsAsciiEqualTo(Vector<const char> str);
   bool IsTwoByteEqualTo(Vector<const uc16> str);
-
-  bool SlowEqualsExternal(uc16 *string, int length);
-  bool SlowEqualsExternal(char *string, int length);
 
   // Return a UTF8 representation of the string.  The string is null
   // terminated but may optionally contain nulls.  Length is returned
@@ -7180,13 +7192,8 @@ class SeqString: public String {
   // Casting.
   static inline SeqString* cast(Object* obj);
 
-  // Get and set the symbol id of the string
-  inline int symbol_id();
-  inline void set_symbol_id(int value);
-
   // Layout description.
-  static const int kSymbolIdOffset = String::kSize;
-  static const int kHeaderSize = kSymbolIdOffset + kPointerSize;
+  static const int kHeaderSize = String::kSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(SeqString);
@@ -7647,6 +7654,10 @@ class Oddball: public HeapObject {
   typedef FixedBodyDescriptor<kToStringOffset,
                               kToNumberOffset + kPointerSize,
                               kSize> BodyDescriptor;
+
+  STATIC_CHECK(kKindOffset == Internals::kOddballKindOffset);
+  STATIC_CHECK(kNull == Internals::kNullOddballKind);
+  STATIC_CHECK(kUndefined == Internals::kUndefinedOddballKind);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(Oddball);
@@ -8182,7 +8193,6 @@ class InterceptorInfo: public Struct {
   DECL_ACCESSORS(deleter, Object)
   DECL_ACCESSORS(enumerator, Object)
   DECL_ACCESSORS(data, Object)
-  DECL_ACCESSORS(is_fallback, Smi)
 
   static inline InterceptorInfo* cast(Object* obj);
 
@@ -8202,8 +8212,7 @@ class InterceptorInfo: public Struct {
   static const int kDeleterOffset = kQueryOffset + kPointerSize;
   static const int kEnumeratorOffset = kDeleterOffset + kPointerSize;
   static const int kDataOffset = kEnumeratorOffset + kPointerSize;
-  static const int kFallbackOffset = kDataOffset + kPointerSize;
-  static const int kSize = kFallbackOffset + kPointerSize;
+  static const int kSize = kDataOffset + kPointerSize;
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(InterceptorInfo);
@@ -8326,8 +8335,6 @@ class ObjectTemplateInfo: public TemplateInfo {
  public:
   DECL_ACCESSORS(constructor, Object)
   DECL_ACCESSORS(internal_field_count, Object)
-  DECL_ACCESSORS(has_external_resource, Object)
-  DECL_ACCESSORS(use_user_object_comparison, Object)
 
   static inline ObjectTemplateInfo* cast(Object* obj);
 
@@ -8344,9 +8351,7 @@ class ObjectTemplateInfo: public TemplateInfo {
   static const int kConstructorOffset = TemplateInfo::kHeaderSize;
   static const int kInternalFieldCountOffset =
       kConstructorOffset + kPointerSize;
-  static const int kHasExternalResourceOffset = kInternalFieldCountOffset + kPointerSize;
-  static const int kUseUserObjectComparisonOffset = kHasExternalResourceOffset + kPointerSize;
-  static const int kSize = kUseUserObjectComparisonOffset + kPointerSize;
+  static const int kSize = kInternalFieldCountOffset + kPointerSize;
 };
 
 

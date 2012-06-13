@@ -1338,6 +1338,7 @@ void HeapObject::IterateBody(InstanceType type, int object_size,
       break;
     case JS_OBJECT_TYPE:
     case JS_CONTEXT_EXTENSION_OBJECT_TYPE:
+    case JS_MODULE_TYPE:
     case JS_VALUE_TYPE:
     case JS_DATE_TYPE:
     case JS_ARRAY_TYPE:
@@ -1603,6 +1604,7 @@ MaybeObject* JSObject::AddFastProperty(String* name,
   // We have now allocated all the necessary objects.
   // All the changes can be applied at once, so they are atomic.
   map()->set_instance_descriptors(old_descriptors);
+  new_map->SetBackPointer(map());
   new_map->set_instance_descriptors(DescriptorArray::cast(new_descriptors));
   set_map(new_map);
   return FastPropertyAtPut(index, value);
@@ -1663,6 +1665,7 @@ MaybeObject* JSObject::AddConstantFunctionProperty(
     }
   }
   old_map->set_instance_descriptors(DescriptorArray::cast(new_descriptors));
+  Map::cast(new_map)->SetBackPointer(old_map);
 
   return function;
 }
@@ -1823,6 +1826,7 @@ MaybeObject* JSObject::ConvertDescriptorToFieldAndMapTransition(
     }
   }
   old_map->set_instance_descriptors(DescriptorArray::cast(new_descriptors));
+  map()->SetBackPointer(old_map);
   return result;
 }
 
@@ -1936,11 +1940,9 @@ Handle<Object> JSReceiver::SetProperty(Handle<JSReceiver> object,
                                        Handle<String> key,
                                        Handle<Object> value,
                                        PropertyAttributes attributes,
-                                       StrictModeFlag strict_mode,
-                                       bool skip_fallback_interceptor) {
+                                       StrictModeFlag strict_mode) {
   CALL_HEAP_FUNCTION(object->GetIsolate(),
-                     object->SetProperty(*key, *value, attributes, strict_mode,
-                                         skip_fallback_interceptor),
+                     object->SetProperty(*key, *value, attributes, strict_mode),
                      Object);
 }
 
@@ -1948,10 +1950,9 @@ Handle<Object> JSReceiver::SetProperty(Handle<JSReceiver> object,
 MaybeObject* JSReceiver::SetProperty(String* name,
                                      Object* value,
                                      PropertyAttributes attributes,
-                                     StrictModeFlag strict_mode,
-                                     bool skip_fallback_interceptor) {
+                                     StrictModeFlag strict_mode) {
   LookupResult result(GetIsolate());
-  LocalLookup(name, &result, skip_fallback_interceptor);
+  LocalLookup(name, &result);
   return SetProperty(&result, name, value, attributes, strict_mode);
 }
 
@@ -2324,7 +2325,7 @@ Object* Map::GetDescriptorContents(String* sentinel_name,
   }
   // If the transition already exists, return its descriptor.
   if (index != DescriptorArray::kNotFound) {
-    PropertyDetails details(descriptors->GetDetails(index));
+    PropertyDetails details = descriptors->GetDetails(index);
     if (details.type() == ELEMENTS_TRANSITION) {
       return descriptors->GetValue(index);
     } else {
@@ -2410,6 +2411,7 @@ MaybeObject* Map::AddElementsTransition(ElementsKind elements_kind,
     return maybe_new_descriptors;
   }
   set_instance_descriptors(DescriptorArray::cast(new_descriptors));
+  transitioned_map->SetBackPointer(this);
   return this;
 }
 
@@ -3028,7 +3030,6 @@ MaybeObject* JSObject::SetLocalPropertyIgnoreAttributes(
     String* name,
     Object* value,
     PropertyAttributes attributes) {
-
   // Make sure that the top context does not change when doing callbacks or
   // interceptor calls.
   AssertNoContextChange ncc;
@@ -3097,7 +3098,6 @@ MaybeObject* JSObject::SetLocalPropertyIgnoreAttributes(
       return ConvertDescriptorToFieldAndMapTransition(name, value, attributes);
     case HANDLER:
       UNREACHABLE();
-      return value;
   }
   UNREACHABLE();  // keep the compiler happy
   return value;
@@ -3348,7 +3348,7 @@ MaybeObject* JSObject::NormalizeProperties(PropertyNormalizationMode mode,
 
   DescriptorArray* descs = map_of_this->instance_descriptors();
   for (int i = 0; i < descs->number_of_descriptors(); i++) {
-    PropertyDetails details(descs->GetDetails(i));
+    PropertyDetails details = descs->GetDetails(i);
     switch (details.type()) {
       case CONSTANT_FUNCTION: {
         PropertyDetails d =
@@ -4210,7 +4210,7 @@ int Map::NumberOfDescribedProperties(PropertyAttributes filter) {
   int result = 0;
   DescriptorArray* descs = instance_descriptors();
   for (int i = 0; i < descs->number_of_descriptors(); i++) {
-    PropertyDetails details(descs->GetDetails(i));
+    PropertyDetails details = descs->GetDetails(i);
     if (descs->IsProperty(i) && (details.attributes() & filter) == 0) {
       result++;
     }
@@ -4254,8 +4254,7 @@ AccessorDescriptor* Map::FindAccessor(String* name) {
 }
 
 
-void JSReceiver::LocalLookup(String* name, LookupResult* result,
-                             bool skip_fallback_interceptor) {
+void JSReceiver::LocalLookup(String* name, LookupResult* result) {
   ASSERT(name->IsString());
 
   Heap* heap = GetHeap();
@@ -4287,33 +4286,23 @@ void JSReceiver::LocalLookup(String* name, LookupResult* result,
   }
 
   // Check for lookup interceptor except when bootstrapping.
-  bool wouldIntercept = js_object->HasNamedInterceptor() &&
-                        !heap->isolate()->bootstrapper()->IsActive();
-  if (wouldIntercept && !map()->named_interceptor_is_fallback()) {
+  if (js_object->HasNamedInterceptor() &&
+      !heap->isolate()->bootstrapper()->IsActive()) {
     result->InterceptorResult(js_object);
     return;
   }
 
   js_object->LocalLookupRealNamedProperty(name, result);
-
-  if (wouldIntercept && !skip_fallback_interceptor && !result->IsProperty() &&
-      map()->named_interceptor_is_fallback()) {
-    result->InterceptorResult(js_object);
-    return;
-  }
 }
 
 
-void JSReceiver::Lookup(String* name, LookupResult* result,
-                        bool skip_fallback_interceptor) {
+void JSReceiver::Lookup(String* name, LookupResult* result) {
   // Ecma-262 3rd 8.6.2.4
   Heap* heap = GetHeap();
   for (Object* current = this;
        current != heap->null_value();
        current = JSObject::cast(current)->GetPrototype()) {
-    JSReceiver::cast(current)->LocalLookup(name,
-                                           result,
-                                           skip_fallback_interceptor);
+    JSReceiver::cast(current)->LocalLookup(name, result);
     if (result->IsProperty()) return;
   }
   result->NotFound();
@@ -4424,37 +4413,29 @@ MaybeObject* JSObject::DefineElementAccessor(uint32_t index,
 }
 
 
+MaybeObject* JSObject::CreateAccessorPairFor(String* name) {
+  LookupResult result(GetHeap()->isolate());
+  LocalLookupRealNamedProperty(name, &result);
+  if (result.IsProperty() && result.type() == CALLBACKS) {
+    ASSERT(!result.IsDontDelete());
+    Object* obj = result.GetCallbackObject();
+    if (obj->IsAccessorPair()) {
+      return AccessorPair::cast(obj)->CopyWithoutTransitions();
+    }
+  }
+  return GetHeap()->AllocateAccessorPair();
+}
+
+
 MaybeObject* JSObject::DefinePropertyAccessor(String* name,
                                               Object* getter,
                                               Object* setter,
                                               PropertyAttributes attributes) {
-  // Lookup the name.
-  LookupResult result(GetHeap()->isolate());
-  LocalLookupRealNamedProperty(name, &result);
-  if (result.IsFound()) {
-    if (result.type() == CALLBACKS) {
-      ASSERT(!result.IsDontDelete());
-      Object* obj = result.GetCallbackObject();
-      // Need to preserve old getters/setters.
-      if (obj->IsAccessorPair()) {
-        AccessorPair* copy;
-        { MaybeObject* maybe_copy =
-              AccessorPair::cast(obj)->CopyWithoutTransitions();
-          if (!maybe_copy->To(&copy)) return maybe_copy;
-        }
-        copy->SetComponents(getter, setter);
-        // Use set to update attributes.
-        return SetPropertyCallback(name, copy, attributes);
-      }
-    }
-  }
-
   AccessorPair* accessors;
-  { MaybeObject* maybe_accessors = GetHeap()->AllocateAccessorPair();
+  { MaybeObject* maybe_accessors = CreateAccessorPairFor(name);
     if (!maybe_accessors->To(&accessors)) return maybe_accessors;
   }
   accessors->SetComponents(getter, setter);
-
   return SetPropertyCallback(name, accessors, attributes);
 }
 
@@ -4982,7 +4963,7 @@ class IntrusiveMapTransitionIterator {
 // underlying array while it is running.
 class IntrusivePrototypeTransitionIterator {
  public:
-  explicit IntrusivePrototypeTransitionIterator(FixedArray* proto_trans)
+  explicit IntrusivePrototypeTransitionIterator(HeapObject* proto_trans)
       : proto_trans_(proto_trans) { }
 
   void Start() {
@@ -5007,7 +4988,7 @@ class IntrusivePrototypeTransitionIterator {
 
  private:
   bool HasTransitions() {
-    return proto_trans_->length() >= Map::kProtoTransitionHeaderSize;
+    return proto_trans_->map()->IsSmi() || proto_trans_->IsFixedArray();
   }
 
   Object** Header() {
@@ -5015,12 +4996,16 @@ class IntrusivePrototypeTransitionIterator {
   }
 
   int NumberOfTransitions() {
-    Object* num = proto_trans_->get(Map::kProtoTransitionNumberOfEntriesOffset);
+    ASSERT(HasTransitions());
+    FixedArray* proto_trans = reinterpret_cast<FixedArray*>(proto_trans_);
+    Object* num = proto_trans->get(Map::kProtoTransitionNumberOfEntriesOffset);
     return Smi::cast(num)->value();
   }
 
   Map* GetTransition(int transitionNumber) {
-    return Map::cast(proto_trans_->get(IndexFor(transitionNumber)));
+    ASSERT(HasTransitions());
+    FixedArray* proto_trans = reinterpret_cast<FixedArray*>(proto_trans_);
+    return Map::cast(proto_trans->get(IndexFor(transitionNumber)));
   }
 
   int IndexFor(int transitionNumber) {
@@ -5029,7 +5014,7 @@ class IntrusivePrototypeTransitionIterator {
         transitionNumber * Map::kProtoTransitionElementsPerEntry;
   }
 
-  FixedArray* proto_trans_;
+  HeapObject* proto_trans_;
 };
 
 
@@ -5710,7 +5695,7 @@ MaybeObject* DescriptorArray::CopyFrom(int dst_index,
                                        int src_index,
                                        const WhitenessWitness& witness) {
   Object* value = src->GetValue(src_index);
-  PropertyDetails details(src->GetDetails(src_index));
+  PropertyDetails details = src->GetDetails(src_index);
   if (details.type() == CALLBACKS && value->IsAccessorPair()) {
     MaybeObject* maybe_copy =
         AccessorPair::cast(value)->CopyWithoutTransitions();
@@ -5753,7 +5738,7 @@ MaybeObject* DescriptorArray::CopyInsert(Descriptor* descriptor,
   if (replacing) {
     // We are replacing an existing descriptor.  We keep the enumeration
     // index of a visible property.
-    PropertyType t = PropertyDetails(GetDetails(index)).type();
+    PropertyType t = GetDetails(index).type();
     if (t == CONSTANT_FUNCTION ||
         t == FIELD ||
         t == CALLBACKS ||
@@ -5780,8 +5765,7 @@ MaybeObject* DescriptorArray::CopyInsert(Descriptor* descriptor,
   int enumeration_index = NextEnumerationIndex();
   if (!descriptor->ContainsTransition()) {
     if (keep_enumeration_index) {
-      descriptor->SetEnumerationIndex(
-          PropertyDetails(GetDetails(index)).index());
+      descriptor->SetEnumerationIndex(GetDetails(index).index());
     } else {
       descriptor->SetEnumerationIndex(enumeration_index);
       ++enumeration_index;
@@ -5925,10 +5909,10 @@ int DescriptorArray::BinarySearch(String* name, int low, int high) {
     ASSERT(hash == mid_hash);
     // There might be more, so we find the first one and
     // check them all to see if we have a match.
-    if (name == mid_name  && !is_null_descriptor(mid)) return mid;
+    if (name == mid_name  && !IsNullDescriptor(mid)) return mid;
     while ((mid > low) && (GetKey(mid - 1)->Hash() == hash)) mid--;
     for (; (mid <= high) && (GetKey(mid)->Hash() == hash); mid++) {
-      if (GetKey(mid)->Equals(name) && !is_null_descriptor(mid)) return mid;
+      if (GetKey(mid)->Equals(name) && !IsNullDescriptor(mid)) return mid;
     }
     break;
   }
@@ -5942,7 +5926,7 @@ int DescriptorArray::LinearSearch(String* name, int len) {
     String* entry = GetKey(number);
     if ((entry->Hash() == hash) &&
         name->Equals(entry) &&
-        !is_null_descriptor(number)) {
+        !IsNullDescriptor(number)) {
       return number;
     }
   }
@@ -6870,72 +6854,6 @@ static inline bool CompareStringContentsPartial(Isolate* isolate,
 }
 
 
-bool String::SlowEqualsExternal(uc16 *string, int length) {
-  int len = this->length();
-  if (len != length) return false;
-  if (len == 0) return true;
-
-  // We know the strings are both non-empty. Compare the first chars
-  // before we try to flatten the strings.
-  if (this->Get(0) != string[0]) return false;
-
-  String* lhs = this->TryFlattenGetString();
-
-  if (lhs->IsFlat()) {
-    String::FlatContent lhs_content = lhs->GetFlatContent();
-    if (lhs->IsAsciiRepresentation()) {
-      Vector<const char> vec1 = lhs_content.ToAsciiVector();
-      VectorIterator<char> buf1(vec1);
-      VectorIterator<uc16> ib(string, length);
-      return CompareStringContents(&buf1, &ib);
-    } else {
-      Vector<const uc16> vec1 = lhs_content.ToUC16Vector();
-      Vector<const uc16> vec2(string, length);
-      return CompareRawStringContents(vec1, vec2);
-    }
-  } else {
-    Isolate* isolate = GetIsolate();
-    isolate->objects_string_compare_buffer_a()->Reset(0, lhs);
-    VectorIterator<uc16> ib(string, length);
-    return CompareStringContents(isolate->objects_string_compare_buffer_a(),
-                                 &ib);
-  }
-}
-
-
-bool String::SlowEqualsExternal(char *string, int length) {
-  int len = this->length();
-  if (len != length) return false;
-  if (len == 0) return true;
-
-  // We know the strings are both non-empty. Compare the first chars
-  // before we try to flatten the strings.
-  if (this->Get(0) != string[0]) return false;
-
-  String* lhs = this->TryFlattenGetString();
-
-  if (StringShape(lhs).IsSequentialAscii()) {
-      const char* str1 = SeqAsciiString::cast(lhs)->GetChars();
-      return CompareRawStringContents(Vector<const char>(str1, len),
-                                      Vector<const char>(string, len));
-  }
-
-  if (lhs->IsFlat()) {
-    String::FlatContent lhs_content = lhs->GetFlatContent();
-    Vector<const uc16> vec1 = lhs_content.ToUC16Vector();
-    VectorIterator<const uc16> buf1(vec1);
-    VectorIterator<char> buf2(string, length);
-    return CompareStringContents(&buf1, &buf2);
-  } else {
-    Isolate* isolate = GetIsolate();
-    isolate->objects_string_compare_buffer_a()->Reset(0, lhs);
-    VectorIterator<char> ib(string, length);
-    return CompareStringContents(isolate->objects_string_compare_buffer_a(),
-                                 &ib);
-  }
-}
-
-
 bool String::SlowEquals(String* other) {
   // Fast check: negative check with lengths.
   int len = length();
@@ -7258,85 +7176,23 @@ void String::PrintOn(FILE* file) {
 }
 
 
-void Map::CreateOneBackPointer(Object* transition_target) {
-  if (!transition_target->IsMap()) return;
-  Map* target = Map::cast(transition_target);
-#ifdef DEBUG
-  // Verify target.
-  Object* source_prototype = prototype();
-  Object* target_prototype = target->prototype();
-  ASSERT(source_prototype->IsJSReceiver() ||
-         source_prototype->IsMap() ||
-         source_prototype->IsNull());
-  ASSERT(target_prototype->IsJSReceiver() ||
-         target_prototype->IsNull());
-  ASSERT(source_prototype->IsMap() ||
-         source_prototype == target_prototype);
-#endif
-  // Point target back to source.  set_prototype() will not let us set
-  // the prototype to a map, as we do here.
-  *RawField(target, kPrototypeOffset) = this;
-}
-
-
-void Map::CreateBackPointers() {
-  DescriptorArray* descriptors = instance_descriptors();
-  for (int i = 0; i < descriptors->number_of_descriptors(); i++) {
-    switch (descriptors->GetType(i)) {
-      case MAP_TRANSITION:
-      case CONSTANT_TRANSITION:
-        CreateOneBackPointer(descriptors->GetValue(i));
-        break;
-      case ELEMENTS_TRANSITION: {
-        Object* object = descriptors->GetValue(i);
-        if (object->IsMap()) {
-          CreateOneBackPointer(object);
-        } else {
-          FixedArray* array = FixedArray::cast(object);
-          for (int i = 0; i < array->length(); ++i) {
-            CreateOneBackPointer(array->get(i));
-          }
-        }
-        break;
-      }
-      case CALLBACKS: {
-        Object* object = descriptors->GetValue(i);
-        if (object->IsAccessorPair()) {
-          AccessorPair* accessors = AccessorPair::cast(object);
-          CreateOneBackPointer(accessors->getter());
-          CreateOneBackPointer(accessors->setter());
-        }
-        break;
-      }
-      case NORMAL:
-      case FIELD:
-      case CONSTANT_FUNCTION:
-      case HANDLER:
-      case INTERCEPTOR:
-      case NULL_DESCRIPTOR:
-        break;
-    }
-  }
-}
-
-
-bool Map::RestoreOneBackPointer(Object* object,
-                                Object* real_prototype,
-                                bool* keep_entry) {
-  if (!object->IsMap()) return false;
-  Map* map = Map::cast(object);
+// Clear a possible back pointer in case the transition leads to a dead map.
+// Return true in case a back pointer has been cleared and false otherwise.
+// Set *keep_entry to true when a live map transition has been found.
+static bool ClearBackPointer(Heap* heap, Object* target, bool* keep_entry) {
+  if (!target->IsMap()) return false;
+  Map* map = Map::cast(target);
   if (Marking::MarkBitFrom(map).Get()) {
     *keep_entry = true;
     return false;
+  } else {
+    map->SetBackPointer(heap->undefined_value(), SKIP_WRITE_BARRIER);
+    return true;
   }
-  ASSERT(map->prototype() == this || map->prototype() == real_prototype);
-  // Getter prototype() is read-only, set_prototype() has side effects.
-  *RawField(map, Map::kPrototypeOffset) = real_prototype;
-  return true;
 }
 
 
-void Map::ClearNonLiveTransitions(Heap* heap, Object* real_prototype) {
+void Map::ClearNonLiveTransitions(Heap* heap) {
   DescriptorArray* d = DescriptorArray::cast(
       *RawField(this, Map::kInstanceDescriptorsOrBitField3Offset));
   if (d->IsEmpty()) return;
@@ -7349,24 +7205,22 @@ void Map::ClearNonLiveTransitions(Heap* heap, Object* real_prototype) {
     // If the pair (value, details) is a map transition, check if the target is
     // live. If not, null the descriptor. Also drop the back pointer for that
     // map transition, so that this map is not reached again by following a back
-    // pointer from a non-live object.
+    // pointer from that non-live map.
     bool keep_entry = false;
     PropertyDetails details(Smi::cast(contents->get(i + 1)));
     switch (details.type()) {
       case MAP_TRANSITION:
       case CONSTANT_TRANSITION:
-        RestoreOneBackPointer(contents->get(i), real_prototype, &keep_entry);
+        ClearBackPointer(heap, contents->get(i), &keep_entry);
         break;
       case ELEMENTS_TRANSITION: {
         Object* object = contents->get(i);
         if (object->IsMap()) {
-          RestoreOneBackPointer(object, real_prototype, &keep_entry);
+          ClearBackPointer(heap, object, &keep_entry);
         } else {
           FixedArray* array = FixedArray::cast(object);
           for (int j = 0; j < array->length(); ++j) {
-            if (RestoreOneBackPointer(array->get(j),
-                                      real_prototype,
-                                      &keep_entry)) {
+            if (ClearBackPointer(heap, array->get(j), &keep_entry)) {
               array->set_undefined(j);
             }
           }
@@ -7377,14 +7231,10 @@ void Map::ClearNonLiveTransitions(Heap* heap, Object* real_prototype) {
         Object* object = contents->get(i);
         if (object->IsAccessorPair()) {
           AccessorPair* accessors = AccessorPair::cast(object);
-          if (RestoreOneBackPointer(accessors->getter(),
-                                    real_prototype,
-                                    &keep_entry)) {
+          if (ClearBackPointer(heap, accessors->getter(), &keep_entry)) {
             accessors->set_getter(heap->the_hole_value());
           }
-          if (RestoreOneBackPointer(accessors->setter(),
-                                    real_prototype,
-                                    &keep_entry)) {
+          if (ClearBackPointer(heap, accessors->setter(), &keep_entry)) {
             accessors->set_setter(heap->the_hole_value());
           }
         } else {
@@ -7914,8 +7764,8 @@ void SharedFunctionInfo::DetachInitialMap() {
   Map* map = reinterpret_cast<Map*>(initial_map());
 
   // Make the map remember to restore the link if it survives the GC.
-  map->set_bit_field3(
-      map->bit_field3() | (1 << Map::kAttachedToSharedFunctionInfo));
+  map->set_bit_field2(
+      map->bit_field2() | (1 << Map::kAttachedToSharedFunctionInfo));
 
   // Undo state changes made by StartInobjectTracking (except the
   // construction_count). This way if the initial map does not survive the GC
@@ -7935,8 +7785,8 @@ void SharedFunctionInfo::DetachInitialMap() {
 
 // Called from GC, hence reinterpret_cast and unchecked accessors.
 void SharedFunctionInfo::AttachInitialMap(Map* map) {
-  map->set_bit_field3(
-      map->bit_field3() & ~(1 << Map::kAttachedToSharedFunctionInfo));
+  map->set_bit_field2(
+      map->bit_field2() & ~(1 << Map::kAttachedToSharedFunctionInfo));
 
   // Resume inobject slack tracking.
   set_initial_map(map);
@@ -8232,6 +8082,20 @@ void Code::ClearInlineCaches() {
 }
 
 
+void Code::ClearTypeFeedbackCells(Heap* heap) {
+  Object* raw_info = type_feedback_info();
+  if (raw_info->IsTypeFeedbackInfo()) {
+    TypeFeedbackCells* type_feedback_cells =
+        TypeFeedbackInfo::cast(raw_info)->type_feedback_cells();
+    for (int i = 0; i < type_feedback_cells->CellCount(); i++) {
+      ASSERT(type_feedback_cells->AstId(i)->IsSmi());
+      JSGlobalPropertyCell* cell = type_feedback_cells->Cell(i);
+      cell->set_value(TypeFeedbackCells::RawUninitializedSentinel(heap));
+    }
+  }
+}
+
+
 #ifdef ENABLE_DISASSEMBLER
 
 void DeoptimizationInputData::DeoptimizationInputDataPrint(FILE* out) {
@@ -8464,6 +8328,14 @@ void Code::Disassemble(const char* name, FILE* out) {
     if (is_call_stub() || is_keyed_call_stub()) {
       PrintF(out, "argc = %d\n", arguments_count());
     }
+    if (is_compare_ic_stub()) {
+      CompareIC::State state = CompareIC::ComputeState(this);
+      PrintF(out, "compare_state = %s\n", CompareIC::GetStateName(state));
+    }
+    if (is_compare_ic_stub() && major_key() == CodeStub::CompareIC) {
+      Token::Value op = CompareIC::ComputeOperation(this);
+      PrintF(out, "compare_operation = %s\n", Token::Name(op));
+    }
   }
   if ((name != NULL) && (name[0] != '\0')) {
     PrintF(out, "name = %s\n", name);
@@ -8569,8 +8441,10 @@ MaybeObject* JSObject::SetFastElementsCapacityAndLength(
   ElementsKind to_kind = (elements_kind == FAST_SMI_ONLY_ELEMENTS)
       ? FAST_SMI_ONLY_ELEMENTS
       : FAST_ELEMENTS;
-  //  int copy_size = Min(old_elements_raw->length(), new_elements->length());
-  accessor->CopyElements(this, new_elements, to_kind);
+  { MaybeObject* maybe_obj =
+        accessor->CopyElements(this, new_elements, to_kind);
+    if (maybe_obj->IsFailure()) return maybe_obj;
+  }
   if (elements_kind != NON_STRICT_ARGUMENTS_ELEMENTS) {
     set_map_and_elements(new_map, new_elements);
   } else {
@@ -8599,7 +8473,7 @@ MaybeObject* JSObject::SetFastDoubleElementsCapacityAndLength(
   // We should never end in here with a pixel or external array.
   ASSERT(!HasExternalArrayElements());
 
-  FixedDoubleArray* elems;
+  FixedArrayBase* elems;
   { MaybeObject* maybe_obj =
         heap->AllocateUninitializedFixedDoubleArray(capacity);
     if (!maybe_obj->To(&elems)) return maybe_obj;
@@ -8614,7 +8488,10 @@ MaybeObject* JSObject::SetFastDoubleElementsCapacityAndLength(
   FixedArrayBase* old_elements = elements();
   ElementsKind elements_kind = GetElementsKind();
   ElementsAccessor* accessor = ElementsAccessor::ForKind(elements_kind);
-  accessor->CopyElements(this, elems, FAST_DOUBLE_ELEMENTS);
+  { MaybeObject* maybe_obj =
+        accessor->CopyElements(this, elems, FAST_DOUBLE_ELEMENTS);
+    if (maybe_obj->IsFailure()) return maybe_obj;
+  }
   if (elements_kind != NON_STRICT_ARGUMENTS_ELEMENTS) {
     set_map_and_elements(new_map, elems);
   } else {
@@ -9750,9 +9627,10 @@ MaybeObject* JSObject::TransitionElementsKind(ElementsKind to_kind) {
   ElementsKind from_kind = map()->elements_kind();
 
   Isolate* isolate = GetIsolate();
-  if (from_kind == FAST_SMI_ONLY_ELEMENTS &&
-      (to_kind == FAST_ELEMENTS ||
-       elements() == isolate->heap()->empty_fixed_array())) {
+  if ((from_kind == FAST_SMI_ONLY_ELEMENTS ||
+      elements() == isolate->heap()->empty_fixed_array()) &&
+      to_kind == FAST_ELEMENTS) {
+    ASSERT(from_kind != FAST_ELEMENTS);
     MaybeObject* maybe_new_map = GetElementsTransitionMap(isolate, to_kind);
     Map* new_map;
     if (!maybe_new_map->To(&new_map)) return maybe_new_map;
@@ -10796,27 +10674,9 @@ class AsciiSymbolKey : public SequentialSymbolKey<char> {
 
   MaybeObject* AsObject() {
     if (hash_field_ == 0) Hash();
-    MaybeObject *result = HEAP->AllocateAsciiSymbol(string_, hash_field_);
-    if (!result->IsFailure() && result->ToObjectUnchecked()->IsSeqString()) {
-        while (true) {
-            Atomic32 my_symbol_id = next_symbol_id;
-            if (my_symbol_id > Smi::kMaxValue)
-                break;
-            if (my_symbol_id == NoBarrier_CompareAndSwap(&next_symbol_id,
-                                                         my_symbol_id,
-                                                         my_symbol_id + 1)) {
-                SeqString::cast(result->ToObjectUnchecked())->
-                    set_symbol_id(my_symbol_id);
-                break;
-            }
-        }
-    }
-    return result;
+    return HEAP->AllocateAsciiSymbol(string_, hash_field_);
   }
-
-  static Atomic32 next_symbol_id;
 };
-Atomic32 AsciiSymbolKey::next_symbol_id = 1;
 
 
 class SubStringAsciiSymbolKey : public HashTableKey {
@@ -11166,7 +11026,6 @@ template class Dictionary<SeededNumberDictionaryShape, uint32_t>;
 
 template class Dictionary<UnseededNumberDictionaryShape, uint32_t>;
 
-#ifndef __INTEL_COMPILER
 template MaybeObject* Dictionary<SeededNumberDictionaryShape, uint32_t>::
     Allocate(int at_least_space_for);
 
@@ -11259,7 +11118,7 @@ int Dictionary<StringDictionaryShape, String*>::NumberOfEnumElements();
 
 template
 int HashTable<SeededNumberDictionaryShape, uint32_t>::FindEntry(uint32_t);
-#endif
+
 
 // Collates undefined and unexisting elements below limit from position
 // zero of the elements. The object stays in Dictionary mode.
@@ -12949,7 +12808,7 @@ int BreakPointInfo::GetBreakPointCount() {
 #endif  // ENABLE_DEBUGGER_SUPPORT
 
 
-MaybeObject* JSDate::GetField(Object* object, Smi* index) {
+Object* JSDate::GetField(Object* object, Smi* index) {
   return JSDate::cast(object)->DoGetField(
       static_cast<FieldIndex>(index->value()));
 }

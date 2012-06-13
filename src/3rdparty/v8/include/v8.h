@@ -1,4 +1,4 @@
-// Copyright 2011 the V8 project authors. All rights reserved.
+// Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
 // met:
@@ -62,11 +62,13 @@
 
 #else  // _WIN32
 
-// Setup for Linux shared library export. There is no need to distinguish
-// between building or using the V8 shared library, but we should not
-// export symbols when we are building a static library.
+// Setup for Linux shared library export.
 #if defined(__GNUC__) && (__GNUC__ >= 4) && defined(V8_SHARED)
+#ifdef BUILDING_V8_SHARED
 #define V8EXPORT __attribute__ ((visibility("default")))
+#else
+#define V8EXPORT
+#endif
 #else  // defined(__GNUC__) && (__GNUC__ >= 4)
 #define V8EXPORT
 #endif  // defined(__GNUC__) && (__GNUC__ >= 4)
@@ -107,6 +109,7 @@ class Data;
 class AccessorInfo;
 class StackTrace;
 class StackFrame;
+class Isolate;
 
 namespace internal {
 
@@ -587,12 +590,6 @@ class ScriptOrigin {
  */
 class V8EXPORT Script {
  public:
-  enum CompileFlags {
-      Default    = 0x00,
-      QmlMode    = 0x01,
-      NativeMode = 0x02
-  };
-
   /**
    * Compiles the specified script (context-independent).
    *
@@ -611,8 +608,7 @@ class V8EXPORT Script {
   static Local<Script> New(Handle<String> source,
                            ScriptOrigin* origin = NULL,
                            ScriptData* pre_data = NULL,
-                           Handle<String> script_data = Handle<String>(),
-                           CompileFlags = Default);
+                           Handle<String> script_data = Handle<String>());
 
   /**
    * Compiles the specified script using the specified file name
@@ -625,8 +621,7 @@ class V8EXPORT Script {
    *   will use the currently entered context).
    */
   static Local<Script> New(Handle<String> source,
-                           Handle<Value> file_name,
-                           CompileFlags = Default);
+                           Handle<Value> file_name);
 
   /**
    * Compiles the specified script (bound to current context).
@@ -647,8 +642,7 @@ class V8EXPORT Script {
   static Local<Script> Compile(Handle<String> source,
                                ScriptOrigin* origin = NULL,
                                ScriptData* pre_data = NULL,
-                               Handle<String> script_data = Handle<String>(),
-                               CompileFlags = Default);
+                               Handle<String> script_data = Handle<String>());
 
   /**
    * Compiles the specified script using the specified file name
@@ -665,8 +659,7 @@ class V8EXPORT Script {
    */
   static Local<Script> Compile(Handle<String> source,
                                Handle<Value> file_name,
-                               Handle<String> script_data = Handle<String>(),
-                               CompileFlags = Default);
+                               Handle<String> script_data = Handle<String>());
 
   /**
    * Runs the script returning the resulting value.  If the script is
@@ -676,7 +669,6 @@ class V8EXPORT Script {
    * compiled.
    */
   Local<Value> Run();
-  Local<Value> Run(Handle<Object> qml);
 
   /**
    * Returns the script id value.
@@ -873,13 +865,13 @@ class Value : public Data {
    * Returns true if this value is the undefined value.  See ECMA-262
    * 4.3.10.
    */
-  V8EXPORT bool IsUndefined() const;
+  inline bool IsUndefined() const;
 
   /**
    * Returns true if this value is the null value.  See ECMA-262
    * 4.3.11.
    */
-  V8EXPORT bool IsNull() const;
+  inline bool IsNull() const;
 
    /**
    * Returns true if this value is true.
@@ -967,11 +959,6 @@ class Value : public Data {
    */
   V8EXPORT bool IsRegExp() const;
 
-  /**
-   * Returns true if this value is an Error.
-   */
-  V8EXPORT bool IsError() const;
-
   V8EXPORT Local<Boolean> ToBoolean() const;
   V8EXPORT Local<Number> ToNumber() const;
   V8EXPORT Local<String> ToString() const;
@@ -998,7 +985,11 @@ class Value : public Data {
   V8EXPORT bool StrictEquals(Handle<Value> that) const;
 
  private:
+  inline bool QuickIsUndefined() const;
+  inline bool QuickIsNull() const;
   inline bool QuickIsString() const;
+  V8EXPORT bool FullIsUndefined() const;
+  V8EXPORT bool FullIsNull() const;
   V8EXPORT bool FullIsString() const;
 };
 
@@ -1045,51 +1036,6 @@ class String : public Primitive {
   V8EXPORT bool MayContainNonAscii() const;
 
   /**
-   * Returns the hash of this string.
-   */
-  V8EXPORT uint32_t Hash() const;
-
-  struct CompleteHashData {
-    CompleteHashData() : length(0), hash(0), symbol_id(0) {}
-    int length;
-    uint32_t hash;
-    uint32_t symbol_id;
-  };
-
-  /**
-   * Returns the "complete" hash of the string.  This is
-   * all the information about the string needed to implement
-   * a very efficient hash keyed on the string.
-   *
-   * The members of CompleteHashData are:
-   *    length: The length of the string.  Equivalent to Length()
-   *    hash: The hash of the string.  Equivalent to Hash()
-   *    symbol_id: If the string is a sequential symbol, the symbol
-   *        id, otherwise 0.  If the symbol ids of two strings are
-   *        the same (and non-zero) the two strings are identical.
-   *        If the symbol ids are different the strings may still be
-   *        identical, but an Equals() check must be performed.
-   */
-  V8EXPORT CompleteHashData CompleteHash() const;
-
-  /**
-   * Compute a hash value for the passed UTF16 string
-   * data.
-   */
-  V8EXPORT static uint32_t ComputeHash(uint16_t *string, int length);
-  V8EXPORT static uint32_t ComputeHash(char *string, int length);
-
-  /**
-   * Returns true if this string is equal to the external
-   * string data provided.
-   */
-  V8EXPORT bool Equals(uint16_t *string, int length);
-  V8EXPORT bool Equals(char *string, int length);
-  inline bool Equals(Handle<Value> that) const {
-    return v8::Value::Equals(that);
-  }
-
-  /**
    * Write the contents of the string to an external buffer.
    * If no arguments are given, expects the buffer to be large
    * enough to hold the entire string and NULL terminator. Copies
@@ -1120,8 +1066,6 @@ class String : public Primitive {
     NO_NULL_TERMINATION = 2
   };
 
-  V8EXPORT uint16_t GetCharacter(int index);
-
   // 16-bit character codes.
   V8EXPORT int Write(uint16_t* buffer,
                      int start = 0,
@@ -1142,6 +1086,7 @@ class String : public Primitive {
    * A zero length string.
    */
   V8EXPORT static v8::Local<v8::String> Empty();
+  inline static v8::Local<v8::String> Empty(Isolate* isolate);
 
   /**
    * Returns true if the string is external
@@ -1299,8 +1244,7 @@ class String : public Primitive {
    * this function should not otherwise delete or modify the resource. Neither
    * should the underlying buffer be deallocated or modified except through the
    * destructor of the external string resource.
-   */
-  V8EXPORT static Local<String> NewExternal(
+   */ V8EXPORT static Local<String> NewExternal(
       ExternalAsciiStringResource* resource);
 
   /**
@@ -1622,25 +1566,6 @@ class Object : public Value {
 
   /** Sets a native pointer in an internal field. */
   V8EXPORT void SetPointerInInternalField(int index, void* value);
-
-  class V8EXPORT ExternalResource { // NOLINT
-   public:
-    ExternalResource() {}
-    virtual ~ExternalResource() {}
-
-   protected:
-    virtual void Dispose() { delete this; }
-
-   private:
-    // Disallow copying and assigning.
-    ExternalResource(const ExternalResource&);
-    void operator=(const ExternalResource&);
-
-    friend class v8::internal::Heap;
-  };
-
-  V8EXPORT void SetExternalResource(ExternalResource *);
-  V8EXPORT ExternalResource *GetExternalResource();
 
   // Testers for local properties.
   V8EXPORT bool HasOwnProperty(Handle<String> key);
@@ -2050,10 +1975,13 @@ class Arguments {
   inline Local<Object> Holder() const;
   inline bool IsConstructCall() const;
   inline Local<Value> Data() const;
+  inline Isolate* GetIsolate() const;
+
  private:
-  static const int kDataIndex = 0;
-  static const int kCalleeIndex = -1;
-  static const int kHolderIndex = -2;
+  static const int kIsolateIndex = 0;
+  static const int kDataIndex = -1;
+  static const int kCalleeIndex = -2;
+  static const int kHolderIndex = -3;
 
   friend class ImplementationUtilities;
   inline Arguments(internal::Object** implicit_args,
@@ -2075,9 +2003,11 @@ class V8EXPORT AccessorInfo {
  public:
   inline AccessorInfo(internal::Object** args)
       : args_(args) { }
+  inline Isolate* GetIsolate() const;
   inline Local<Value> Data() const;
   inline Local<Object> This() const;
   inline Local<Object> Holder() const;
+
  private:
   internal::Object** args_;
 };
@@ -2365,7 +2295,6 @@ class V8EXPORT FunctionTemplate : public Template {
                                        NamedPropertyQuery query,
                                        NamedPropertyDeleter remover,
                                        NamedPropertyEnumerator enumerator,
-                                       bool is_fallback,
                                        Handle<Value> data);
   void SetIndexedInstancePropertyHandler(IndexedPropertyGetter getter,
                                          IndexedPropertySetter setter,
@@ -2449,12 +2378,6 @@ class V8EXPORT ObjectTemplate : public Template {
                                NamedPropertyDeleter deleter = 0,
                                NamedPropertyEnumerator enumerator = 0,
                                Handle<Value> data = Handle<Value>());
-  void SetFallbackPropertyHandler(NamedPropertyGetter getter,
-                                  NamedPropertySetter setter = 0,
-                                  NamedPropertyQuery query = 0,
-                                  NamedPropertyDeleter deleter = 0,
-                                  NamedPropertyEnumerator enumerator = 0,
-                                  Handle<Value> data = Handle<Value>());
 
   /**
    * Sets an indexed property handler on the object template.
@@ -2526,18 +2449,6 @@ class V8EXPORT ObjectTemplate : public Template {
    */
   void SetInternalFieldCount(int value);
 
-  /**
-   * Sets whether the object can store an "external resource" object.
-   */
-  bool HasExternalResource();
-  void SetHasExternalResource(bool value);
-
-  /**
-   * Mark object instances of the template as using the user object 
-   * comparison callback.
-   */
-  void MarkAsUseUserObjectComparison();
-
  private:
   ObjectTemplate();
   static Local<ObjectTemplate> New(Handle<FunctionTemplate> constructor);
@@ -2604,7 +2515,7 @@ class V8EXPORT Extension {  // NOLINT
             int source_length = -1);
   virtual ~Extension() { }
   virtual v8::Handle<v8::FunctionTemplate>
-      GetNativeFunction(v8::Handle<v8::String>) {
+      GetNativeFunction(v8::Handle<v8::String> name) {
     return v8::Handle<v8::FunctionTemplate>();
   }
 
@@ -2652,6 +2563,11 @@ Handle<Primitive> V8EXPORT Undefined();
 Handle<Primitive> V8EXPORT Null();
 Handle<Boolean> V8EXPORT True();
 Handle<Boolean> V8EXPORT False();
+
+inline Handle<Primitive> Undefined(Isolate* isolate);
+inline Handle<Primitive> Null(Isolate* isolate);
+inline Handle<Boolean> True(Isolate* isolate);
+inline Handle<Boolean> False(Isolate* isolate);
 
 
 /**
@@ -2759,10 +2675,6 @@ typedef void (*CallCompletedCallback)();
 typedef void (*FailedAccessCheckCallback)(Local<Object> target,
                                           AccessType type,
                                           Local<Value> data);
-
-// --- User Object Comparisoa nCallback ---
-typedef bool (*UserObjectComparisonCallback)(Local<Object> lhs, 
-                                             Local<Object> rhs);
 
 // --- AllowCodeGenerationFromStrings callbacks ---
 
@@ -2907,13 +2819,13 @@ class V8EXPORT Isolate {
   /**
    * Associate embedder-specific data with the isolate
    */
-  void SetData(void* data);
+  inline void SetData(void* data);
 
   /**
-   * Retrive embedder-specific data from the isolate.
+   * Retrieve embedder-specific data from the isolate.
    * Returns NULL if SetData has never been called.
    */
-  void* GetData();
+  inline void* GetData();
 
  private:
   Isolate();
@@ -2990,7 +2902,7 @@ typedef uintptr_t (*ReturnAddressLocationResolver)(
 class V8EXPORT ExternalResourceVisitor {  // NOLINT
  public:
   virtual ~ExternalResourceVisitor() {}
-  virtual void VisitExternalString(Handle<String>) {}
+  virtual void VisitExternalString(Handle<String> string) {}
 };
 
 
@@ -3114,9 +3026,6 @@ class V8EXPORT V8 {
 
   /** Callback function for reporting failed access checks.*/
   static void SetFailedAccessCheckCallbackFunction(FailedAccessCheckCallback);
-
-  /** Callback for user object comparisons */
-  static void SetUserObjectComparisonCallbackFunction(UserObjectComparisonCallback);
 
   /**
    * Enables the host application to receive a notification before a
@@ -3261,7 +3170,8 @@ class V8EXPORT V8 {
    *   that is kept alive by JavaScript objects.
    * \returns the adjusted value.
    */
-  static int AdjustAmountOfExternalAllocatedMemory(int change_in_bytes);
+  static intptr_t AdjustAmountOfExternalAllocatedMemory(
+      intptr_t change_in_bytes);
 
   /**
    * Suspends recording of tick samples in the profiler.
@@ -3619,8 +3529,6 @@ class V8EXPORT Context {
    * JavaScript frames an empty handle is returned.
    */
   static Local<Context> GetCalling();
-  static Local<Object> GetCallingQmlGlobal();
-  static Local<Value> GetCallingScriptData();
 
   /**
    * Sets the security token for the context.  To access an object in
@@ -3846,6 +3754,12 @@ class V8EXPORT Locker {
 
 
 /**
+ * A struct for exporting HeapStats data from V8, using "push" model.
+ */
+struct HeapStatsUpdate;
+
+
+/**
  * An interface for exporting data from V8, using "push" model.
  */
 class V8EXPORT OutputStream {  // NOLINT
@@ -3870,6 +3784,14 @@ class V8EXPORT OutputStream {  // NOLINT
    * will not be called in case writing was aborted.
    */
   virtual WriteResult WriteAsciiChunk(char* data, int size) = 0;
+  /**
+   * Writes the next chunk of heap stats data into the stream. Writing
+   * can be stopped by returning kAbort as function result. EndOfStream
+   * will not be called in case writing was aborted.
+   */
+  virtual WriteResult WriteHeapStatsChunk(HeapStatsUpdate* data, int count) {
+    return kAbort;
+  };
 };
 
 
@@ -3958,18 +3880,6 @@ const uintptr_t kEncodablePointerMask =
     PlatformSmiTagging::kEncodablePointerMask;
 const int kPointerToSmiShift = PlatformSmiTagging::kPointerToSmiShift;
 
-template <size_t ptr_size> struct InternalConstants;
-
-// Internal constants for 32-bit systems.
-template <> struct InternalConstants<4> {
-  static const int kStringResourceOffset = 3 * kApiPointerSize;
-};
-
-// Internal constants for 64-bit systems.
-template <> struct InternalConstants<8> {
-  static const int kStringResourceOffset = 3 * kApiPointerSize;
-};
-
 /**
  * This class exports constants and functionality from within v8 that
  * is necessary to implement inline functions in the v8 api.  Don't
@@ -3981,17 +3891,30 @@ class Internals {
   // the implementation of v8.
   static const int kHeapObjectMapOffset = 0;
   static const int kMapInstanceTypeOffset = 1 * kApiPointerSize + kApiIntSize;
-  static const int kStringResourceOffset =
-      InternalConstants<kApiPointerSize>::kStringResourceOffset;
+  static const int kStringResourceOffset = 3 * kApiPointerSize;
 
+  static const int kOddballKindOffset = 3 * kApiPointerSize;
   static const int kForeignAddressOffset = kApiPointerSize;
   static const int kJSObjectHeaderSize = 3 * kApiPointerSize;
   static const int kFullStringRepresentationMask = 0x07;
   static const int kExternalTwoByteRepresentationTag = 0x02;
 
+  static const int kIsolateStateOffset = 0;
+  static const int kIsolateEmbedderDataOffset = 1 * kApiPointerSize;
+  static const int kIsolateRootsOffset = 3 * kApiPointerSize;
+  static const int kUndefinedValueRootIndex = 5;
+  static const int kNullValueRootIndex = 7;
+  static const int kTrueValueRootIndex = 8;
+  static const int kFalseValueRootIndex = 9;
+  static const int kEmptySymbolRootIndex = 128;
+
   static const int kJSObjectType = 0xaa;
   static const int kFirstNonstringType = 0x80;
+  static const int kOddballType = 0x82;
   static const int kForeignType = 0x85;
+
+  static const int kUndefinedOddballKind = 5;
+  static const int kNullOddballKind = 3;
 
   static inline bool HasHeapObjectTag(internal::Object* value) {
     return ((reinterpret_cast<intptr_t>(value) & kHeapObjectTagMask) ==
@@ -4010,6 +3933,11 @@ class Internals {
     typedef internal::Object O;
     O* map = ReadField<O*>(obj, kHeapObjectMapOffset);
     return ReadField<uint8_t>(map, kMapInstanceTypeOffset);
+  }
+
+  static inline int GetOddballKind(internal::Object* obj) {
+    typedef internal::Object O;
+    return SmiValue(ReadField<O*>(obj, kOddballKindOffset));
   }
 
   static inline void* GetExternalPointerFromSmi(internal::Object* value) {
@@ -4032,19 +3960,41 @@ class Internals {
     return representation == kExternalTwoByteRepresentationTag;
   }
 
+  static inline bool IsInitialized(v8::Isolate* isolate) {
+    uint8_t* addr = reinterpret_cast<uint8_t*>(isolate) + kIsolateStateOffset;
+    return *reinterpret_cast<int*>(addr) == 1;
+  }
+
+  static inline void SetEmbedderData(v8::Isolate* isolate, void* data) {
+    uint8_t* addr = reinterpret_cast<uint8_t*>(isolate) +
+        kIsolateEmbedderDataOffset;
+    *reinterpret_cast<void**>(addr) = data;
+  }
+
+  static inline void* GetEmbedderData(v8::Isolate* isolate) {
+    uint8_t* addr = reinterpret_cast<uint8_t*>(isolate) +
+        kIsolateEmbedderDataOffset;
+    return *reinterpret_cast<void**>(addr);
+  }
+
+  static inline internal::Object** GetRoot(v8::Isolate* isolate, int index) {
+    uint8_t* addr = reinterpret_cast<uint8_t*>(isolate) + kIsolateRootsOffset;
+    return reinterpret_cast<internal::Object**>(addr + index * kApiPointerSize);
+  }
+
   template <typename T>
   static inline T ReadField(Object* ptr, int offset) {
     uint8_t* addr = reinterpret_cast<uint8_t*>(ptr) + offset - kHeapObjectTag;
     return *reinterpret_cast<T*>(addr);
   }
 
-  static inline bool CanCastToHeapObject(void*) { return false; }
-  static inline bool CanCastToHeapObject(Context*) { return true; }
-  static inline bool CanCastToHeapObject(String*) { return true; }
-  static inline bool CanCastToHeapObject(Object*) { return true; }
-  static inline bool CanCastToHeapObject(Message*) { return true; }
-  static inline bool CanCastToHeapObject(StackTrace*) { return true; }
-  static inline bool CanCastToHeapObject(StackFrame*) { return true; }
+  static inline bool CanCastToHeapObject(void* o) { return false; }
+  static inline bool CanCastToHeapObject(Context* o) { return true; }
+  static inline bool CanCastToHeapObject(String* o) { return true; }
+  static inline bool CanCastToHeapObject(Object* o) { return true; }
+  static inline bool CanCastToHeapObject(Message* o) { return true; }
+  static inline bool CanCastToHeapObject(StackTrace* o) { return true; }
+  static inline bool CanCastToHeapObject(StackFrame* o) { return true; }
 };
 
 }  // namespace internal
@@ -4155,6 +4105,11 @@ Local<Object> Arguments::Holder() const {
 
 Local<Value> Arguments::Data() const {
   return Local<Value>(reinterpret_cast<Value*>(&implicit_args_[kDataIndex]));
+}
+
+
+Isolate* Arguments::GetIsolate() const {
+  return *reinterpret_cast<Isolate**>(&implicit_args_[kIsolateIndex]);
 }
 
 
@@ -4270,6 +4225,15 @@ String* String::Cast(v8::Value* value) {
 }
 
 
+Local<String> String::Empty(Isolate* isolate) {
+  typedef internal::Object* S;
+  typedef internal::Internals I;
+  if (!I::IsInitialized(isolate)) return Empty();
+  S* slot = I::GetRoot(isolate, I::kEmptySymbolRootIndex);
+  return Local<String>(reinterpret_cast<String*>(slot));
+}
+
+
 String::ExternalStringResource* String::GetExternalStringResource() const {
   typedef internal::Object O;
   typedef internal::Internals I;
@@ -4285,6 +4249,42 @@ String::ExternalStringResource* String::GetExternalStringResource() const {
   VerifyExternalStringResource(result);
 #endif
   return result;
+}
+
+
+bool Value::IsUndefined() const {
+#ifdef V8_ENABLE_CHECKS
+  return FullIsUndefined();
+#else
+  return QuickIsUndefined();
+#endif
+}
+
+bool Value::QuickIsUndefined() const {
+  typedef internal::Object O;
+  typedef internal::Internals I;
+  O* obj = *reinterpret_cast<O**>(const_cast<Value*>(this));
+  if (!I::HasHeapObjectTag(obj)) return false;
+  if (I::GetInstanceType(obj) != I::kOddballType) return false;
+  return (I::GetOddballKind(obj) == I::kUndefinedOddballKind);
+}
+
+
+bool Value::IsNull() const {
+#ifdef V8_ENABLE_CHECKS
+  return FullIsNull();
+#else
+  return QuickIsNull();
+#endif
+}
+
+bool Value::QuickIsNull() const {
+  typedef internal::Object O;
+  typedef internal::Internals I;
+  O* obj = *reinterpret_cast<O**>(const_cast<Value*>(this));
+  if (!I::HasHeapObjectTag(obj)) return false;
+  if (I::GetInstanceType(obj) != I::kOddballType) return false;
+  return (I::GetOddballKind(obj) == I::kNullOddballKind);
 }
 
 
@@ -4393,6 +4393,11 @@ External* External::Cast(v8::Value* value) {
 }
 
 
+Isolate* AccessorInfo::GetIsolate() const {
+  return *reinterpret_cast<Isolate**>(&args_[-3]);
+}
+
+
 Local<Value> AccessorInfo::Data() const {
   return Local<Value>(reinterpret_cast<Value*>(&args_[-2]));
 }
@@ -4405,6 +4410,54 @@ Local<Object> AccessorInfo::This() const {
 
 Local<Object> AccessorInfo::Holder() const {
   return Local<Object>(reinterpret_cast<Object*>(&args_[-1]));
+}
+
+
+Handle<Primitive> Undefined(Isolate* isolate) {
+  typedef internal::Object* S;
+  typedef internal::Internals I;
+  if (!I::IsInitialized(isolate)) return Undefined();
+  S* slot = I::GetRoot(isolate, I::kUndefinedValueRootIndex);
+  return Handle<Primitive>(reinterpret_cast<Primitive*>(slot));
+}
+
+
+Handle<Primitive> Null(Isolate* isolate) {
+  typedef internal::Object* S;
+  typedef internal::Internals I;
+  if (!I::IsInitialized(isolate)) return Null();
+  S* slot = I::GetRoot(isolate, I::kNullValueRootIndex);
+  return Handle<Primitive>(reinterpret_cast<Primitive*>(slot));
+}
+
+
+Handle<Boolean> True(Isolate* isolate) {
+  typedef internal::Object* S;
+  typedef internal::Internals I;
+  if (!I::IsInitialized(isolate)) return True();
+  S* slot = I::GetRoot(isolate, I::kTrueValueRootIndex);
+  return Handle<Boolean>(reinterpret_cast<Boolean*>(slot));
+}
+
+
+Handle<Boolean> False(Isolate* isolate) {
+  typedef internal::Object* S;
+  typedef internal::Internals I;
+  if (!I::IsInitialized(isolate)) return False();
+  S* slot = I::GetRoot(isolate, I::kFalseValueRootIndex);
+  return Handle<Boolean>(reinterpret_cast<Boolean*>(slot));
+}
+
+
+void Isolate::SetData(void* data) {
+  typedef internal::Internals I;
+  I::SetEmbedderData(this, data);
+}
+
+
+void* Isolate::GetData() {
+  typedef internal::Internals I;
+  return I::GetEmbedderData(this);
 }
 
 

@@ -1042,7 +1042,9 @@ class MemoryAllocator {
     return CodePageAreaEndOffset() - CodePageAreaStartOffset();
   }
 
-  static bool CommitCodePage(VirtualMemory* vm, Address start, size_t size);
+  MUST_USE_RESULT static bool CommitCodePage(VirtualMemory* vm,
+                                             Address start,
+                                             size_t size);
 
  private:
   Isolate* isolate_;
@@ -1518,6 +1520,10 @@ class PagedSpace : public Space {
     int wasted = free_list_.Free(start, size_in_bytes);
     accounting_stats_.DeallocateBytes(size_in_bytes - wasted);
     return size_in_bytes - wasted;
+  }
+
+  void ResetFreeList() {
+    free_list_.Reset();
   }
 
   // Set space allocation info.
@@ -2370,11 +2376,6 @@ class FixedSpace : public PagedSpace {
 
   // Prepares for a mark-compact GC.
   virtual void PrepareForMarkCompact();
-
- protected:
-  void ResetFreeList() {
-    free_list_.Reset();
-  }
 
  private:
   // The size of objects in this space.
