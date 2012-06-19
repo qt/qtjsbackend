@@ -7,13 +7,6 @@
 @allmoduleheadersprivate = (
     "QtV8"
 );
-%classnames = (
-    "qtv8version.h" => "QtV8Version",
-);
-%mastercontent = ();
-%modulepris = (
-    "QtV8" => "$basedir/src/modules/qt_v8.pri",
-);
 
 # Module dependencies.
 # Every module that is required to build this module should have one entry.
@@ -23,9 +16,4 @@
 #
 %dependencies = (
         "qtbase" => "refs/heads/master",
-);
-
-# compile tests
-%configtests = (
-    "hardfloat" => {},
 );

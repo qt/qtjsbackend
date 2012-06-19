@@ -1,11 +1,9 @@
-load(qt_module)
+load(qt_build_config)
 
 TARGET     = QtV8
-QPRO_PWD   = $$PWD
 QT         =
 
-CONFIG += module
-MODULE_PRI = ../modules/qt_v8.pri
+!contains(QT_CONFIG, static): MODULE_DEFINES += V8_SHARED USING_V8_SHARED
 
 win32-msvc*|win32-icc:QMAKE_LFLAGS += /BASE:0x66000000
 
@@ -20,13 +18,11 @@ INCLUDEPATH -= $$MODULE_PRIVATE_INCLUDES
 INCLUDEPATH -= $$MODULE_PRIVATE_INCLUDES/$$TARGET
 INCLUDEPATH -= $$MODULE_INCLUDES $$MODULE_INCLUDES/..
 
-HEADERS += qtv8version.h
-
 !contains(QT_CONFIG, static): DEFINES += V8_SHARED BUILDING_V8_SHARED
 
 include(v8.pri)
 
-!cross_compile:contains(QT_CONFIG, v8snapshot) {
+contains(QT_CONFIG, v8snapshot) {
     mkv8snapshot.commands = ../../bin/mkv8snapshot$$qtPlatformTargetSuffix() ${QMAKE_FILE_OUT}
     DUMMY_FILE = v8.pro
     mkv8snapshot.input = DUMMY_FILE

@@ -151,7 +151,7 @@ SOURCES += \
 
 equals(V8_TARGET_ARCH, arm) {
 DEFINES += V8_TARGET_ARCH_ARM
-contains(config_test_hardfloat, yes) {
+config_hardfloat {
     DEFINES += USE_EABI_HARDFLOAT=1
 } else {
     DEFINES += USE_EABI_HARDFLOAT=0
