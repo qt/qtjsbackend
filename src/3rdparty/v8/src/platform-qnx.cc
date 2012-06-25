@@ -1045,6 +1045,7 @@ void OS::SetUp() {
 #endif
   }
 #endif
+  SignalSender::SetUp();
 }
 
 
