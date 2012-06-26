@@ -3453,11 +3453,14 @@ class ScopeInfo : public FixedArray {
   // 3. The number of non-parameter variables allocated on the stack.
   // 4. The number of non-parameter and parameter variables allocated in the
   //    context.
+  // 5. The number of non-parameter and parameter variables allocated in the
+  //    QML context. (technically placeholder)
 #define FOR_EACH_NUMERIC_FIELD(V)          \
   V(Flags)                                 \
   V(ParameterCount)                        \
   V(StackLocalCount)                       \
-  V(ContextLocalCount)
+  V(ContextLocalCount)                     \
+  V(QmlContextLocalCount)
 
 #define FIELD_ACCESSORS(name)                            \
   void Set##name(int value) {                            \
