@@ -2,6 +2,7 @@ load(qt_build_config)
 
 TARGET     = QtV8
 QT         =
+CONFIG += internal_module
 
 !contains(QT_CONFIG, static): MODULE_DEFINES += V8_SHARED USING_V8_SHARED
 
