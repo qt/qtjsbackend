@@ -8,3 +8,4 @@ HEADERS += v8test.h
 CONFIG += parallel_test
 
 QT = core v8-private testlib
+DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0
