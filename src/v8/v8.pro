@@ -8,10 +8,10 @@ CONFIG += internal_module
 
 win32-msvc*|win32-icc:QMAKE_LFLAGS += /BASE:0x66000000
 
-load(qt_module_config)
+load(qt_module)
 CONFIG += warn_off
 
-# Remove includepaths that were added by qt_module_config.
+# Remove includepaths that were added by qt_module.
 # These cause compilation of V8 to fail because they appear before
 # 3rdparty/v8/src; 3rdparty/v8/src/v8.h will then be "shadowed" by
 # the public v8.h API header (they are not the same!).
