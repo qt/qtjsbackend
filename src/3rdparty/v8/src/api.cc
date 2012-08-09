@@ -3911,7 +3911,7 @@ String::CompleteHashData String::CompleteHash() const {
   CompleteHashData result;
   result.length = str->length();
   result.hash = str->Hash();
-  if (str->IsSeqString())
+  if (str->IsSeqAsciiString() && str->IsSymbol())
       result.symbol_id = i::SeqString::cast(*str)->symbol_id();
   return result;
 }
