@@ -62,7 +62,7 @@ int signbit(double x);
 
 
 // Windows specific stuff.
-#ifdef WIN32
+#ifdef _WIN32
 
 // Microsoft Visual C++ specific stuff.
 #ifdef _MSC_VER
@@ -76,7 +76,7 @@ int strncasecmp(const char* s1, const char* s2, int n);
 // Random is missing on both Visual Studio and MinGW.
 int random();
 
-#endif  // WIN32
+#endif  // _WIN32
 
 #include "atomicops.h"
 #include "lazy-instance.h"
