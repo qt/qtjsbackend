@@ -488,7 +488,7 @@ VirtualMemory::VirtualMemory(size_t size, size_t alignment)
   void* reservation = mmap(OS::GetRandomMmapAddr(),
                            request_size,
                            PROT_NONE,
-                           MAP_PRIVATE | MAP_ANONYMOUS,
+                           MAP_PRIVATE | MAP_ANONYMOUS | MAP_LAZY,
                            kMmapFd,
                            kMmapFdOffset);
   if (reservation == MAP_FAILED) return;
@@ -560,7 +560,7 @@ void* VirtualMemory::ReserveRegion(size_t size) {
   void* result = mmap(OS::GetRandomMmapAddr(),
                       size,
                       PROT_NONE,
-                      MAP_PRIVATE | MAP_ANONYMOUS,
+                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_LAZY,
                       kMmapFd,
                       kMmapFdOffset);
 
@@ -590,7 +590,7 @@ bool VirtualMemory::UncommitRegion(void* base, size_t size) {
   return mmap(base,
               size,
               PROT_NONE,
-              MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+              MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED | MAP_LAZY,
               kMmapFd,
               kMmapFdOffset) != MAP_FAILED;
 }
