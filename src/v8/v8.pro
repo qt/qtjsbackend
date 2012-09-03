@@ -1,5 +1,3 @@
-load(qt_build_config)
-
 TARGET     = QtV8
 QT         =
 CONFIG += internal_module
