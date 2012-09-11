@@ -1041,3 +1041,51 @@ cleanup:
 
     ENDTEST();
 }
+
+bool v8test_completehash()
+{
+#define HASH_EQUALS(str1, str2) \
+{ \
+    String::CompleteHashData hash1 = str1->CompleteHash(); \
+    String::CompleteHashData hash2 = str2->CompleteHash(); \
+    VERIFY(hash1.length == hash2.length); \
+    VERIFY(hash1.symbol_id == hash2.symbol_id || (hash1.symbol_id == 0 || hash2.symbol_id == 0)); \
+    VERIFY(hash1.hash == hash2.hash); \
+};
+
+    BEGINTEST();
+
+    HandleScope handle_scope;
+    Persistent<Context> context = Context::New();
+    Context::Scope context_scope(context);
+
+    Local<String> str;
+    Local<String> str2;
+    uint16_t input[] = { 'I', 'n', 'p', 'u', 't', 0 };
+
+    str = String::New("Input");
+    str2 = String::New("Input");
+    HASH_EQUALS(str, str2);
+
+    str = String::New(input);
+    str2 = String::New(input);
+    HASH_EQUALS(str, str2);
+
+    str = String::NewSymbol("input");
+    str2 = String::NewSymbol("input");
+    HASH_EQUALS(str, str2);
+
+    str = CompileRun("var input = \"{ \\\"abc\\\": \\\"value\\\" }\"; input")->ToString();
+    str2 = CompileRun("var input2 = \"{ \\\"abc\\\": \\\"value\\\" }\"; input2")->ToString();
+    HASH_EQUALS(str, str2);
+
+    // SubStringAsciiSymbolKey is created via the built-in JSON parser for
+    // property names.
+    str = CompileRun("JSON.parse(input)")->ToObject()->GetOwnPropertyNames()->Get(0)->ToString();
+    str2 = CompileRun("JSON.parse(input2)")->ToObject()->GetOwnPropertyNames()->Get(0)->ToString();
+    HASH_EQUALS(str, str2);
+cleanup:
+    context.Dispose();
+
+    ENDTEST();
+}

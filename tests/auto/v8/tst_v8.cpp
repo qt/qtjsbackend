@@ -66,6 +66,7 @@ private slots:
     void fallbackpropertyhandler_callbacks();
     void fallbackpropertyhandler_in_prototype();
     void fallbackpropertyhandler_nonempty();
+    void completehash();
 };
 
 void tst_v8::eval()
@@ -126,6 +127,11 @@ void tst_v8::fallbackpropertyhandler_in_prototype()
 void tst_v8::fallbackpropertyhandler_nonempty()
 {
     QVERIFY(v8test_fallbackpropertyhandler_nonempty());
+}
+
+void tst_v8::completehash()
+{
+    QVERIFY(v8test_completehash());
 }
 
 int main(int argc, char *argv[])
