@@ -40,6 +40,7 @@
 ****************************************************************************/
 
 #include "v8test.h"
+#include <private/qcalculatehash_p.h>
 
 using namespace v8;
 
@@ -1084,6 +1085,59 @@ bool v8test_completehash()
     str = CompileRun("JSON.parse(input)")->ToObject()->GetOwnPropertyNames()->Get(0)->ToString();
     str2 = CompileRun("JSON.parse(input2)")->ToObject()->GetOwnPropertyNames()->Get(0)->ToString();
     HASH_EQUALS(str, str2);
+cleanup:
+    context.Dispose();
+
+    ENDTEST();
+}
+
+bool v8test_stringhashcomparison()
+{
+    BEGINTEST();
+
+    // Initialize V8 random seed for string hashing
+    HandleScope handle_scope;
+    Persistent<Context> context = Context::New();
+    Context::Scope context_scope(context);
+
+    quint32 hash1;
+    uint32_t hash2;
+    int length, rand;
+
+    const char* text;
+    QString qtext;
+
+    char textRand[HashedString::kMaxHashCalcLength + 1];
+    QString qtextRand;
+
+    text = "tipli";
+    qtext = QString(text);
+    length = strlen(text);
+
+    hash1 = calculateHash((uint8_t*)text, length) >> HashedString::kHashShift;
+    hash2 = String::ComputeHash((char*)text, length);
+    VERIFY(hash1 == hash2);
+
+    hash1 = calculateHash<quint16>((quint16*)qtext.constData(), length) >> HashedString::kHashShift;
+    hash2 = String::ComputeHash((uint16_t*)qtext.constData(), length);
+    VERIFY(hash1 == hash2);
+
+    // Check V8 trivial hash
+    length = HashedString::kMaxHashCalcLength + 1;
+    for (int i = 0; i < length; i++) {
+        rand = qrand() % 255 + 1;
+        textRand[i] = (char)rand;
+    }
+    qtextRand = QString(textRand);
+
+    hash1 = calculateHash((uint8_t*)textRand, length) >> HashedString::kHashShift;
+    hash2 = String::ComputeHash((char*)textRand, length);
+    VERIFY(hash1 == hash2);
+
+    hash1 = calculateHash<quint16>((quint16*)qtextRand.constData(), length) >> HashedString::kHashShift;
+    hash2 = String::ComputeHash((uint16_t*)qtextRand.constData(), length);
+    VERIFY(hash1 == hash2);
+
 cleanup:
     context.Dispose();
 

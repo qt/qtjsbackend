@@ -67,6 +67,7 @@ private slots:
     void fallbackpropertyhandler_in_prototype();
     void fallbackpropertyhandler_nonempty();
     void completehash();
+    void stringhashcomparison();
 };
 
 void tst_v8::eval()
@@ -132,6 +133,11 @@ void tst_v8::fallbackpropertyhandler_nonempty()
 void tst_v8::completehash()
 {
     QVERIFY(v8test_completehash());
+}
+
+void tst_v8::stringhashcomparison()
+{
+    QVERIFY(v8test_stringhashcomparison());
 }
 
 int main(int argc, char *argv[])

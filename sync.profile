@@ -2,7 +2,7 @@
     "QtV8" => "$basedir/src/v8",
 );
 %moduleheaders = ( # restrict the module headers to those found in relative path
-    "QtV8" => "../3rdparty/v8/include",
+    "QtV8" => "../3rdparty/v8/include;../v8",
 );
 @allmoduleheadersprivate = (
     "QtV8"

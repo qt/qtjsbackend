@@ -72,6 +72,7 @@ int main(int argc, char *argv[])
     RUN_TEST(fallbackpropertyhandler_callbacks);
     RUN_TEST(fallbackpropertyhandler_in_prototype);
     RUN_TEST(fallbackpropertyhandler_nonempty);
+    RUN_TEST(stringhashcomparison);
 
     return exit_status;
 }

@@ -61,6 +61,7 @@ bool v8test_fallbackpropertyhandler_callbacks();
 bool v8test_fallbackpropertyhandler_in_prototype();
 bool v8test_fallbackpropertyhandler_nonempty();
 bool v8test_completehash();
+bool v8test_stringhashcomparison();
 
 #endif // V8TEST_H
 
