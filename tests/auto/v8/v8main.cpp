@@ -69,10 +69,11 @@ int main(int argc, char *argv[])
     RUN_TEST(getcallingqmlglobal);
     RUN_TEST(typeof);
     RUN_TEST(referenceerror);
+    RUN_TEST(qtbug_24871);
     RUN_TEST(fallbackpropertyhandler_callbacks);
     RUN_TEST(fallbackpropertyhandler_in_prototype);
     RUN_TEST(fallbackpropertyhandler_nonempty);
-    RUN_TEST(stringhashcomparison);
+    RUN_TEST(completehash);
 
     return exit_status;
 }

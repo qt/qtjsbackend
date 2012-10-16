@@ -40,7 +40,9 @@
 ****************************************************************************/
 
 #include "v8test.h"
+#ifndef NONQT_TESTING
 #include <private/qcalculatehash_p.h>
+#endif
 
 using namespace v8;
 
@@ -1091,6 +1093,7 @@ cleanup:
     ENDTEST();
 }
 
+#ifndef NONQT_TESTING
 bool v8test_stringhashcomparison()
 {
     BEGINTEST();
@@ -1143,3 +1146,4 @@ cleanup:
 
     ENDTEST();
 }
+#endif
