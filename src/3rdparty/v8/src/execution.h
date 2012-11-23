@@ -42,7 +42,8 @@ enum InterruptFlag {
   PREEMPT = 1 << 3,
   TERMINATE = 1 << 4,
   RUNTIME_PROFILER_TICK = 1 << 5,
-  GC_REQUEST = 1 << 6
+  GC_REQUEST = 1 << 6,
+  CODE_READY = 1 << 7
 };
 
 
@@ -68,14 +69,6 @@ class Execution : public AllStatic {
                              Handle<Object> argv[],
                              bool* pending_exception,
                              bool convert_receiver = false);
-
-  static Handle<Object> Call(Handle<Object> callable,
-                             Handle<Object> receiver,
-                             int argc,
-                             Handle<Object> argv[],
-                             bool* pending_exception,
-                             bool convert_receiver,
-                             Handle<Object> qml);
 
   // Construct object from function, the caller supplies an array of
   // arguments. Arguments are Object* type. After function returns,
@@ -203,6 +196,8 @@ class StackGuard {
   void TerminateExecution();
   bool IsRuntimeProfilerTick();
   void RequestRuntimeProfilerTick();
+  bool IsCodeReadyEvent();
+  void RequestCodeReadyEvent();
 #ifdef ENABLE_DEBUGGER_SUPPORT
   bool IsDebugBreak();
   void DebugBreak();

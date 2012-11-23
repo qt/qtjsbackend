@@ -60,7 +60,17 @@ function InstallFunctions(object, attributes, functions) {
   %ToFastProperties(object);
 }
 
-// Prevents changes to the prototype of a built-infunction.
+
+// Helper function to install a getter only property.
+function InstallGetter(object, name, getter) {
+  %FunctionSetName(getter, name);
+  %FunctionRemovePrototype(getter);
+  %DefineOrRedefineAccessorProperty(object, name, getter, null, DONT_ENUM);
+  %SetNativeFlag(getter);
+}
+
+
+// Prevents changes to the prototype of a built-in function.
 // The "prototype" property of the function object is made non-configurable,
 // and the prototype object is made non-extensible. The latter prevents
 // changing the __proto__ property.
@@ -337,7 +347,7 @@ function ObjectKeys(obj) {
   if (%IsJSProxy(obj)) {
     var handler = %GetHandler(obj);
     var names = CallTrap0(handler, "keys", DerivedKeysTrap);
-    return ToStringArray(names);
+    return ToStringArray(names, "keys");
   }
   return %LocalKeys(obj);
 }
@@ -963,7 +973,7 @@ function ToStringArray(obj, trap) {
   var names = {};  // TODO(rossberg): use sets once they are ready.
   for (var index = 0; index < n; index++) {
     var s = ToString(obj[index]);
-    if (s in names) {
+    if (%HasLocalProperty(names, s)) {
       throw MakeTypeError("proxy_repeated_prop_name", [obj, trap, s]);
     }
     array[index] = s;
@@ -1654,7 +1664,9 @@ function NewFunction(arg1) {  // length == 1
 
   // The call to SetNewFunctionAttributes will ensure the prototype
   // property of the resulting function is enumerable (ECMA262, 15.3.5.2).
-  var f = %CompileString(source)();
+  var global_receiver = %GlobalReceiver(global);
+  var f = %_CallFunction(global_receiver, %CompileString(source));
+
   %FunctionMarkNameShouldPrintAsAnonymous(f);
   return %SetNewFunctionAttributes(f);
 }

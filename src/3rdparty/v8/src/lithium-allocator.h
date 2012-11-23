@@ -48,7 +48,7 @@ class BitVector;
 class StringStream;
 
 class LArgument;
-class LChunk;
+class LPlatformChunk;
 class LOperand;
 class LUnallocated;
 class LConstantOperand;
@@ -455,8 +455,9 @@ class LAllocator BASE_EMBEDDED {
     return &fixed_double_live_ranges_;
   }
 
-  LChunk* chunk() const { return chunk_; }
+  LPlatformChunk* chunk() const { return chunk_; }
   HGraph* graph() const { return graph_; }
+  Zone* zone() const { return zone_; }
 
   int GetVirtualRegister() {
     if (next_virtual_register_ > LUnallocated::kMaxVirtualRegisters) {
@@ -597,7 +598,7 @@ class LAllocator BASE_EMBEDDED {
 
   Zone* zone_;
 
-  LChunk* chunk_;
+  LPlatformChunk* chunk_;
 
   // During liveness analysis keep a mapping from block id to live_in sets
   // for blocks already analyzed.

@@ -95,11 +95,14 @@ def BuildOptions():
       default=1, type="int")
   result.add_option("--time", help="Print timing information after running",
       default=False, action="store_true")
-  result.add_option("--suppress-dialogs", help="Suppress Windows dialogs for crashing tests",
-        dest="suppress_dialogs", default=True, action="store_true")
-  result.add_option("--no-suppress-dialogs", help="Display Windows dialogs for crashing tests",
-        dest="suppress_dialogs", action="store_false")
-  result.add_option("--isolates", help="Whether to test isolates", default=False, action="store_true")
+  result.add_option("--suppress-dialogs",
+      help="Suppress Windows dialogs for crashing tests",
+      dest="suppress_dialogs", default=True, action="store_true")
+  result.add_option("--no-suppress-dialogs",
+      help="Display Windows dialogs for crashing tests",
+      dest="suppress_dialogs", action="store_false")
+  result.add_option("--isolates", help="Whether to test isolates",
+      default=False, action="store_true")
   result.add_option("--store-unexpected-output",
       help="Store the temporary JS files from tests that fails",
       dest="store_unexpected_output", default=True, action="store_true")
@@ -111,9 +114,6 @@ def BuildOptions():
                     default=False, action="store_true")
   result.add_option("--nostress",
                     help="Don't run crankshaft --always-opt --stress-op test",
-                    default=False, action="store_true")
-  result.add_option("--crankshaft",
-                    help="Run with the --crankshaft flag",
                     default=False, action="store_true")
   result.add_option("--shard-count",
                     help="Split testsuites into this number of shards",
@@ -151,7 +151,8 @@ def ProcessOptions(options):
       print "Unknown mode %s" % mode
       return False
   for arch in options.arch:
-    if not arch in ['ia32', 'x64', 'arm', 'mips']:
+    if not arch in ['ia32', 'x64', 'arm', 'mipsel', 'android_arm',
+                    'android_ia32']:
       print "Unknown architecture %s" % arch
       return False
   if options.buildbot:
@@ -199,8 +200,6 @@ def PassOnOptions(options):
     result += ['--stress-only']
   if options.nostress:
     result += ['--nostress']
-  if options.crankshaft:
-    result += ['--crankshaft']
   if options.shard_count != 1:
     result += ['--shard-count=%s' % options.shard_count]
   if options.shard_run != 1:
@@ -222,9 +221,11 @@ def Main():
 
   if not options.no_presubmit:
     print ">>> running presubmit tests"
-    returncodes += subprocess.call([workspace + '/tools/presubmit.py'])
+    returncodes += subprocess.call([sys.executable,
+                                    workspace + '/tools/presubmit.py'])
 
-  args_for_children = [workspace + '/tools/test.py'] + PassOnOptions(options)
+  args_for_children = [sys.executable]
+  args_for_children += [workspace + '/tools/test.py'] + PassOnOptions(options)
   args_for_children += ['--no-build', '--build-system=gyp']
   for arg in args:
     args_for_children += [arg]
@@ -240,10 +241,11 @@ def Main():
         shellpath = workspace + '/' + options.outdir + '/' + arch + '.' + mode
       env['LD_LIBRARY_PATH'] = shellpath + '/lib.target'
       shell = shellpath + "/d8"
-      child = subprocess.Popen(' '.join(args_for_children +
-                                        ['--arch=' + arch] +
-                                        ['--mode=' + mode] +
-                                        ['--shell=' + shell]),
+      cmdline = ' '.join(args_for_children +
+                         ['--arch=' + arch] +
+                         ['--mode=' + mode] +
+                         ['--shell=' + shell])
+      child = subprocess.Popen(cmdline,
                                shell=True,
                                cwd=workspace,
                                env=env)

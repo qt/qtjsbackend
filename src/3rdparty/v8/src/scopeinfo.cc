@@ -38,10 +38,10 @@ namespace v8 {
 namespace internal {
 
 
-Handle<ScopeInfo> ScopeInfo::Create(Scope* scope) {
+Handle<ScopeInfo> ScopeInfo::Create(Scope* scope, Zone* zone) {
   // Collect stack and context locals.
-  ZoneList<Variable*> stack_locals(scope->StackLocalCount());
-  ZoneList<Variable*> context_locals(scope->ContextLocalCount());
+  ZoneList<Variable*> stack_locals(scope->StackLocalCount(), zone);
+  ZoneList<Variable*> context_locals(scope->ContextLocalCount(), zone);
   scope->CollectStackAndContextLocals(&stack_locals, &context_locals);
   const int stack_local_count = stack_locals.length();
   const int context_local_count = context_locals.length();
@@ -80,7 +80,6 @@ Handle<ScopeInfo> ScopeInfo::Create(Scope* scope) {
   int flags = TypeField::encode(scope->type()) |
       CallsEvalField::encode(scope->calls_eval()) |
       LanguageModeField::encode(scope->language_mode()) |
-      QmlModeField::encode(scope->is_qml_mode()) |
       FunctionVariableField::encode(function_name_info) |
       FunctionVariableMode::encode(function_variable_mode);
   scope_info->SetFlags(flags);
@@ -171,11 +170,6 @@ LanguageMode ScopeInfo::language_mode() {
 }
 
 
-bool ScopeInfo::IsQmlMode() {
-  return length() > 0 && QmlModeField::decode(Flags());
-}
-
-
 int ScopeInfo::LocalCount() {
   return StackLocalCount() + ContextLocalCount();
 }
@@ -191,7 +185,7 @@ int ScopeInfo::StackSlotCount() {
 }
 
 
-int ScopeInfo::ContextLength(bool qml_function) {
+int ScopeInfo::ContextLength() {
   if (length() > 0) {
     int context_locals = ContextLocalCount();
     bool function_name_context_slot =
@@ -199,10 +193,9 @@ int ScopeInfo::ContextLength(bool qml_function) {
     bool has_context = context_locals > 0 ||
         function_name_context_slot ||
         Type() == WITH_SCOPE ||
-        (Type() == FUNCTION_SCOPE && CallsEval());
-
-    // TODO: The QML mode should be checked in the has_context expression.
-    if (has_context || qml_function) {
+        (Type() == FUNCTION_SCOPE && CallsEval()) ||
+        Type() == MODULE_SCOPE;
+    if (has_context) {
       return Context::MIN_CONTEXT_SLOTS + context_locals +
           (function_name_context_slot ? 1 : 0);
     }
@@ -230,11 +223,7 @@ bool ScopeInfo::HasHeapAllocatedLocals() {
 
 
 bool ScopeInfo::HasContext() {
-  if (length() > 0) {
-    return ContextLength() > 0;
-  } else {
-    return false;
-  }
+  return ContextLength() > 0;
 }
 
 

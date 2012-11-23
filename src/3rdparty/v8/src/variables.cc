@@ -41,7 +41,7 @@ const char* Variable::Mode2String(VariableMode mode) {
   switch (mode) {
     case VAR: return "VAR";
     case CONST: return "CONST";
-    case CONST_HARMONY: return "CONST";
+    case CONST_HARMONY: return "CONST_HARMONY";
     case LET: return "LET";
     case DYNAMIC: return "DYNAMIC";
     case DYNAMIC_GLOBAL: return "DYNAMIC_GLOBAL";
@@ -73,8 +73,7 @@ Variable::Variable(Scope* scope,
     force_context_allocation_(false),
     is_used_(false),
     initialization_flag_(initialization_flag),
-    interface_(interface),
-    is_qml_global_(false) {
+    interface_(interface) {
   // Names must be canonicalized for fast equality checks.
   ASSERT(name->IsSymbol());
   // Var declared variables never need initialization.
@@ -82,10 +81,11 @@ Variable::Variable(Scope* scope,
 }
 
 
-bool Variable::is_global() const {
+bool Variable::IsGlobalObjectProperty() const {
   // Temporaries are never global, they must always be allocated in the
   // activation frame.
-  return mode_ != TEMPORARY && scope_ != NULL && scope_->is_global_scope();
+  return mode_ != TEMPORARY && !IsLexicalVariableMode(mode_)
+      && scope_ != NULL && scope_->is_global_scope();
 }
 
 

@@ -1502,10 +1502,15 @@ void Simulator::SoftwareInterrupt(Instruction* instr) {
             break;
         }
       }
-      double result = target(arg0, arg1, arg2, arg3);
       if (redirection->type() != ExternalReference::BUILTIN_COMPARE_CALL) {
-          SetFpResult(result);
+        SimulatorRuntimeFPCall target =
+            reinterpret_cast<SimulatorRuntimeFPCall>(external);
+        double result = target(arg0, arg1, arg2, arg3);
+        SetFpResult(result);
       } else {
+        SimulatorRuntimeCall target =
+            reinterpret_cast<SimulatorRuntimeCall>(external);
+        uint64_t result = target(arg0, arg1, arg2, arg3, arg4, arg5);
         int32_t gpreg_pair[2];
         memcpy(&gpreg_pair[0], &result, 2 * sizeof(int32_t));
         set_register(v0, gpreg_pair[0]);
@@ -2063,10 +2068,15 @@ void Simulator::DecodeTypeRegister(Instruction* instr) {
               // Rounding modes are not yet supported.
               ASSERT((FCSR_ & 3) == 0);
               // In rounding mode 0 it should behave like ROUND.
-            case ROUND_W_D:  // Round double to word.
+            case ROUND_W_D:  // Round double to word (round half to even).
               {
-                double rounded = fs > 0 ? floor(fs + 0.5) : ceil(fs - 0.5);
+                double rounded = floor(fs + 0.5);
                 int32_t result = static_cast<int32_t>(rounded);
+                if ((result & 1) != 0 && result - fs == 0.5) {
+                  // If the number is halfway between two integers,
+                  // round to the even one.
+                  result--;
+                }
                 set_fpu_register(fd_reg, result);
                 if (set_fcsr_round_error(fs, rounded)) {
                   set_fpu_register(fd_reg, kFPUInvalidResult);

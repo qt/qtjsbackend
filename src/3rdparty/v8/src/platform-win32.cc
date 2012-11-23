@@ -627,6 +627,11 @@ int OS::GetLastError() {
 }
 
 
+int OS::GetCurrentProcessId() {
+  return static_cast<int>(::GetCurrentProcessId());
+}
+
+
 // ----------------------------------------------------------------------------
 // Win32 console output.
 //
@@ -1543,6 +1548,12 @@ bool VirtualMemory::UncommitRegion(void* base, size_t size) {
 
 bool VirtualMemory::ReleaseRegion(void* base, size_t size) {
   return VirtualFree(base, 0, MEM_RELEASE) != 0;
+}
+
+
+bool VirtualMemory::HasLazyCommits() {
+  // TODO(alph): implement for the platform.
+  return false;
 }
 
 

@@ -455,6 +455,7 @@ class CpuFeatures : public AllStatic {
     ASSERT(initialized_);
     if (f == SSE2 && !FLAG_enable_sse2) return false;
     if (f == SSE3 && !FLAG_enable_sse3) return false;
+    if (f == SSE4_1 && !FLAG_enable_sse4_1) return false;
     if (f == CMOV && !FLAG_enable_cmov) return false;
     if (f == RDTSC && !FLAG_enable_rdtsc) return false;
     if (f == SAHF && !FLAG_enable_sahf) return false;
@@ -557,9 +558,6 @@ class Assembler : public AssemblerBase {
   Assembler(Isolate* isolate, void* buffer, int buffer_size);
   ~Assembler();
 
-  // Overrides the default provided by FLAG_debug_code.
-  void set_emit_debug_code(bool value) { emit_debug_code_ = value; }
-
   // GetCode emits any pending (non-emitted) code and fills the descriptor
   // desc. GetCode() is idempotent; it returns the same result if no other
   // Assembler functions are invoked in between GetCode() calls.
@@ -574,6 +572,10 @@ class Assembler : public AssemblerBase {
   // the relative displacements stored in the code.
   static inline Address target_address_at(Address pc);
   static inline void set_target_address_at(Address pc, Address target);
+
+  // Return the code target address at a call site from the return address
+  // of that call in the instruction stream.
+  static inline Address target_address_from_return_address(Address pc);
 
   // This sets the branch destination (which is in the instruction on x64).
   // This is for calls and branches within generated code.
@@ -614,6 +616,7 @@ class Assembler : public AssemblerBase {
   static const int kCallInstructionLength = 13;
   static const int kJSReturnSequenceLength = 13;
   static const int kShortCallInstructionLength = 5;
+  static const int kPatchDebugBreakSlotReturnOffset = 4;
 
   // The debug break slot must be able to contain a call instruction.
   static const int kDebugBreakSlotLength = kCallInstructionLength;
@@ -1010,6 +1013,14 @@ class Assembler : public AssemblerBase {
     shift(dst, imm8, 0x1);
   }
 
+  void rorl(Register dst, Immediate imm8) {
+    shift_32(dst, imm8, 0x1);
+  }
+
+  void rorl_cl(Register dst) {
+    shift_32(dst, 0x1);
+  }
+
   // Shifts dst:src left by cl bits, affecting only dst.
   void shld(Register dst, Register src);
 
@@ -1201,7 +1212,7 @@ class Assembler : public AssemblerBase {
   void call(Label* L);
   void call(Handle<Code> target,
             RelocInfo::Mode rmode = RelocInfo::CODE_TARGET,
-            unsigned ast_id = kNoASTId);
+            TypeFeedbackId ast_id = TypeFeedbackId::None());
 
   // Calls directly to the given address using a relative offset.
   // Should only ever be used in Code objects for calls within the
@@ -1430,9 +1441,6 @@ class Assembler : public AssemblerBase {
   byte byte_at(int pos)  { return buffer_[pos]; }
   void set_byte_at(int pos, byte value) { buffer_[pos] = value; }
 
- protected:
-  bool emit_debug_code() const { return emit_debug_code_; }
-
  private:
   byte* addr_at(int pos)  { return buffer_ + pos; }
   uint32_t long_at(int pos)  {
@@ -1451,7 +1459,7 @@ class Assembler : public AssemblerBase {
   inline void emitw(uint16_t x);
   inline void emit_code_target(Handle<Code> target,
                                RelocInfo::Mode rmode,
-                               unsigned ast_id = kNoASTId);
+                               TypeFeedbackId ast_id = TypeFeedbackId::None());
   void emit(Immediate x) { emitl(x.value_); }
 
   // Emits a REX prefix that encodes a 64-bit operand size and
@@ -1634,9 +1642,6 @@ class Assembler : public AssemblerBase {
   List< Handle<Code> > code_targets_;
 
   PositionsRecorder positions_recorder_;
-
-  bool emit_debug_code_;
-
   friend class PositionsRecorder;
 };
 

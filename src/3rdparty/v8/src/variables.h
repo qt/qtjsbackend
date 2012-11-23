@@ -55,7 +55,7 @@ class Variable: public ZoneObject {
     UNALLOCATED,
 
     // A slot in the parameter section on the stack.  index() is the
-    // parameter index, counting left-to-right.  The reciever is index -1;
+    // parameter index, counting left-to-right.  The receiver is index -1;
     // the first parameter is index 0.
     PARAMETER,
 
@@ -118,21 +118,14 @@ class Variable: public ZoneObject {
   bool IsStackAllocated() const { return IsParameter() || IsStackLocal(); }
   bool IsContextSlot() const { return location_ == CONTEXT; }
   bool IsLookupSlot() const { return location_ == LOOKUP; }
+  bool IsGlobalObjectProperty() const;
 
-  bool is_dynamic() const {
-    return (mode_ == DYNAMIC ||
-            mode_ == DYNAMIC_GLOBAL ||
-            mode_ == DYNAMIC_LOCAL);
-  }
-  bool is_const_mode() const {
-    return (mode_ == CONST ||
-            mode_ == CONST_HARMONY);
-  }
+  bool is_dynamic() const { return IsDynamicVariableMode(mode_); }
+  bool is_const_mode() const { return IsImmutableVariableMode(mode_); }
   bool binding_needs_init() const {
     return initialization_flag_ == kNeedsInitialization;
   }
 
-  bool is_global() const;
   bool is_this() const { return kind_ == THIS; }
   bool is_arguments() const { return kind_ == ARGUMENTS; }
 
@@ -164,9 +157,6 @@ class Variable: public ZoneObject {
 
   static int CompareIndex(Variable* const* v, Variable* const* w);
 
-  bool is_qml_global() const { return is_qml_global_; }
-  void set_is_qml_global(bool is_qml_global) { is_qml_global_ = is_qml_global; }
-
  private:
   Scope* scope_;
   Handle<String> name_;
@@ -192,9 +182,6 @@ class Variable: public ZoneObject {
 
   // Module type info.
   Interface* interface_;
-
-  // QML info
-  bool is_qml_global_;
 };
 
 

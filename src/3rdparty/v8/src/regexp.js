@@ -140,18 +140,15 @@ function BuildResultFromMatchInfo(lastMatchInfo, s) {
   var j = REGEXP_FIRST_CAPTURE + 2;
   for (var i = 1; i < numResults; i++) {
     start = lastMatchInfo[j++];
-    end = lastMatchInfo[j++];
-    if (end != -1) {
+    if (start != -1) {
+      end = lastMatchInfo[j];
       if (start + 1 == end) {
         result[i] = %_StringCharAt(s, start);
       } else {
         result[i] = %_SubString(s, start, end);
       }
-    } else {
-      // Make sure the element is present. Avoid reading the undefined
-      // property from the global object since this may change.
-      result[i] = void 0;
     }
+    j++;
   }
   return result;
 }
@@ -278,6 +275,10 @@ function TrimRegExp(regexp) {
 
 
 function RegExpToString() {
+  if (!IS_REGEXP(this)) {
+    throw MakeTypeError('incompatible_method_receiver',
+                        ['RegExp.prototype.toString', this]);
+  }
   var result = '/' + this.source + '/';
   if (this.global) result += 'g';
   if (this.ignoreCase) result += 'i';
@@ -423,6 +424,7 @@ function SetUpRegExp() {
     LAST_INPUT(lastMatchInfo) = ToString(string);
   };
 
+  %OptimizeObjectForAddingMultipleProperties($RegExp, 22);
   %DefineOrRedefineAccessorProperty($RegExp, 'input', RegExpGetInput,
                                     RegExpSetInput, DONT_DELETE);
   %DefineOrRedefineAccessorProperty($RegExp, '$_', RegExpGetInput,
@@ -477,6 +479,7 @@ function SetUpRegExp() {
                                       RegExpMakeCaptureGetter(i), NoOpSetter,
                                       DONT_DELETE);
   }
+  %ToFastProperties($RegExp);
 }
 
 SetUpRegExp();

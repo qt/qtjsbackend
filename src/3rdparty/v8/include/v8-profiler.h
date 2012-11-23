@@ -50,11 +50,12 @@
 
 // Setup for Linux shared library export. See v8.h in this directory for
 // information on how to build/use V8 as shared library.
-#if defined(__GNUC__) && (__GNUC__ >= 4) && defined(V8_SHARED)
+#if defined(__GNUC__) && ((__GNUC__ >= 4) || \
+    (__GNUC__ == 3 && __GNUC_MINOR__ >= 3)) && defined(V8_SHARED)
 #define V8EXPORT __attribute__ ((visibility("default")))
-#else  // defined(__GNUC__) && (__GNUC__ >= 4)
+#else
 #define V8EXPORT
-#endif  // defined(__GNUC__) && (__GNUC__ >= 4)
+#endif
 
 #endif  // _WIN32
 
@@ -280,31 +281,11 @@ class V8EXPORT HeapGraphNode {
   /** Returns node's own size, in bytes. */
   int GetSelfSize() const;
 
-  /**
-   * Returns node's retained size, in bytes. That is, self + sizes of
-   * the objects that are reachable only from this object. In other
-   * words, the size of memory that will be reclaimed having this node
-   * collected.
-   */
-  int GetRetainedSize() const;
-
   /** Returns child nodes count of the node. */
   int GetChildrenCount() const;
 
   /** Retrieves a child by index. */
   const HeapGraphEdge* GetChild(int index) const;
-
-  /** Returns retainer nodes count of the node. */
-  int GetRetainersCount() const;
-
-  /** Returns a retainer by index. */
-  const HeapGraphEdge* GetRetainer(int index) const;
-
-  /**
-   * Returns a dominator node. This is the node that participates in every
-   * path from the snapshot root to the current node.
-   */
-  const HeapGraphNode* GetDominatorNode() const;
 
   /**
    * Finds and returns a value from the heap corresponding to this node,
@@ -448,11 +429,12 @@ class V8EXPORT HeapProfiler {
    * reports updates for all previous time intervals via the OutputStream
    * object. Updates on each time interval are provided as a stream of the
    * HeapStatsUpdate structure instances.
+   * The return value of the function is the last seen heap object Id.
    *
    * StartHeapObjectsTracking must be called before the first call to this
    * method.
    */
-  static void PushHeapObjectsStats(OutputStream* stream);
+  static SnapshotObjectId PushHeapObjectsStats(OutputStream* stream);
 
   /**
    * Stops tracking of heap objects population statistics, cleans up all
@@ -481,6 +463,9 @@ class V8EXPORT HeapProfiler {
 
   /** Returns the number of currently existing persistent handles. */
   static int GetPersistentHandleCount();
+
+  /** Returns memory used for profiler internal data and snapshots. */
+  static size_t GetMemorySizeUsedByProfiler();
 };
 
 
