@@ -253,7 +253,7 @@ SOURCES += \
     $$V8SRC/platform-freebsd.cc \
     $$V8SRC/platform-posix.cc
 LIBS += -lexecinfo
-} else:unix:!symbian:!qnx{
+} else:unix:!qnx {
 SOURCES += \
     $$V8SRC/platform-linux.cc \
     $$V8SRC/platform-posix.cc
