@@ -125,12 +125,15 @@ static bool CPUInfoContainsString(const char * search_string) {
 
 bool OS::ArmCpuHasFeature(CpuFeature feature) {
   switch (feature) {
+    case VFP2:
     case VFP3:
       // All shipping devices currently support this and QNX has no easy way to
       // determine this at runtime.
       return true;
     case ARMv7:
       return (SYSPAGE_ENTRY(cpuinfo)->flags & ARM_CPU_FLAG_V7) != 0;
+    case SUDIV:
+      return CPUInfoContainsString("idiva");
     default:
       UNREACHABLE();
   }
@@ -138,6 +141,12 @@ bool OS::ArmCpuHasFeature(CpuFeature feature) {
   return false;
 }
 
+CpuImplementer OS::GetCpuImplementer() {
+  // We do NOT return QUALCOMM_IMPLEMENTER, even though /proc/cpuinfo
+  // has "CPU implementer : 0x51" in it, as that leads to a runtime
+  // error on the first JS function call.
+  return UNKNOWN_IMPLEMENTER;
+}
 
 // Simple helper function to detect whether the C code is compiled with
 // option -mfloat-abi=hard. The register d0 is loaded with 1.0 and the register
@@ -598,6 +607,10 @@ bool VirtualMemory::UncommitRegion(void* base, size_t size) {
 
 bool VirtualMemory::ReleaseRegion(void* base, size_t size) {
   return munmap(base, size) == 0;
+}
+
+bool VirtualMemory::HasLazyCommits() {
+  return false;
 }
 
 
