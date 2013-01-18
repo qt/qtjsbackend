@@ -48,6 +48,11 @@
 #error both DEBUG and NDEBUG are set
 #endif
 
+// For Windows CE, Windows headers need to be included first as they define ASSERT
+#ifdef _WIN32_WCE
+# include "win32-headers.h"
+#endif
+
 // Basic includes
 #include "../include/v8.h"
 #include "v8globals.h"
