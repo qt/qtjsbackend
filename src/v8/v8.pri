@@ -33,6 +33,9 @@ DEFINES += ENABLE_DEBUGGER_SUPPORT
 # this is needed by crankshaft ( http://code.google.com/p/v8/issues/detail?id=1271 )
 DEFINES += ENABLE_VMSTATE_TRACKING ENABLE_LOGGING_AND_PROFILING
 
+# Set NOMINMAX, so that the minmax macros are not getting set for the msvc
+win*:DEFINES += NOMINMAX
+
 CONFIG(debug, debug|release) {
     DEFINES += DEBUG V8_ENABLE_CHECKS OBJECT_PRINT ENABLE_DISASSEMBLER
 } else {
