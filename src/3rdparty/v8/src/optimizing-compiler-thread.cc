@@ -25,6 +25,11 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+// For Windows CE, Windows headers need to be included first as they define ASSERT
+#ifdef _WIN32_WCE
+# include "win32-headers.h"
+#endif
+
 #include "optimizing-compiler-thread.h"
 
 #include "v8.h"
