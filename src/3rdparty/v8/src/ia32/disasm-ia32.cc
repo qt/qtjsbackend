@@ -31,6 +31,8 @@
 
 #include "v8.h"
 
+#undef CONST
+
 #if defined(V8_TARGET_ARCH_IA32)
 
 #include "disasm.h"
