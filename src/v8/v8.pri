@@ -36,6 +36,9 @@ DEFINES += ENABLE_VMSTATE_TRACKING ENABLE_LOGGING_AND_PROFILING
 # Set NOMINMAX, so that the minmax macros are not getting set for the msvc
 win*:DEFINES += NOMINMAX
 
+# Windows CE does not set the WIN32 macro, which is needed for compiling
+wince:DEFINES += WIN32
+
 CONFIG(debug, debug|release) {
     DEFINES += DEBUG V8_ENABLE_CHECKS OBJECT_PRINT ENABLE_DISASSEMBLER
 } else {
