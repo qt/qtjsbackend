@@ -45,7 +45,7 @@ void PrintF(const char* format, ...) {
 }
 
 
-void PrintF(FILE* out, const char* format, ...) {
+void FPrintF(FILE* out, const char* format, ...) {
   va_list arguments;
   va_start(arguments, format);
   OS::VFPrint(out, format, arguments);
