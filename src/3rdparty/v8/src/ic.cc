@@ -989,6 +989,10 @@ void LoadIC::UpdateCaches(LookupResult* lookup,
         }
         break;
       case CALLBACKS: {
+#ifdef _WIN32_WCE
+        // Disable optimization for wince as the calling convention looks different.
+        return;
+#endif
         Handle<Object> callback(lookup->GetCallbackObject());
         if (callback->IsAccessorInfo()) {
           Handle<AccessorInfo> info = Handle<AccessorInfo>::cast(callback);
