@@ -274,10 +274,10 @@ void StringStream::OutputToFile(FILE* out) {
   for (unsigned next; (next = position + 2048) < length_; position = next) {
     char save = buffer_[next];
     buffer_[next] = '\0';
-    internal::PrintF(out, "%s", &buffer_[position]);
+    internal::FPrintF(out, "%s", &buffer_[position]);
     buffer_[next] = save;
   }
-  internal::PrintF(out, "%s", &buffer_[position]);
+  internal::FPrintF(out, "%s", &buffer_[position]);
 }
 
 

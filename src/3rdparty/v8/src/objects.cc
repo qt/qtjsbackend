@@ -815,7 +815,7 @@ void Object::ShortPrint(StringStream* accumulator) {
 
 
 void Smi::SmiPrint(FILE* out) {
-  PrintF(out, "%d", value());
+  FPrintF(out, "%d", value());
 }
 
 
@@ -830,7 +830,7 @@ void Failure::FailurePrint(StringStream* accumulator) {
 
 
 void Failure::FailurePrint(FILE* out) {
-  PrintF(out, "Failure(%p)", reinterpret_cast<void*>(value()));
+  FPrintF(out, "Failure(%p)", reinterpret_cast<void*>(value()));
 }
 
 
@@ -1168,19 +1168,19 @@ void JSObject::PrintElementsTransition(
     FILE* file, ElementsKind from_kind, FixedArrayBase* from_elements,
     ElementsKind to_kind, FixedArrayBase* to_elements) {
   if (from_kind != to_kind) {
-    PrintF(file, "elements transition [");
+    FPrintF(file, "elements transition [");
     PrintElementsKind(file, from_kind);
-    PrintF(file, " -> ");
+    FPrintF(file, " -> ");
     PrintElementsKind(file, to_kind);
-    PrintF(file, "] in ");
+    FPrintF(file, "] in ");
     JavaScriptFrame::PrintTop(file, false, true);
-    PrintF(file, " for ");
+    FPrintF(file, " for ");
     ShortPrint(file);
-    PrintF(file, " from ");
+    FPrintF(file, " from ");
     from_elements->ShortPrint(file);
-    PrintF(file, " to ");
+    FPrintF(file, " to ");
     to_elements->ShortPrint(file);
-    PrintF(file, "\n");
+    FPrintF(file, "\n");
   }
 }
 
@@ -1454,7 +1454,7 @@ Object* HeapNumber::HeapNumberToBoolean() {
 
 
 void HeapNumber::HeapNumberPrint(FILE* out) {
-  PrintF(out, "%.16g", Number());
+  FPrintF(out, "%.16g", Number());
 }
 
 
@@ -8210,7 +8210,7 @@ void JSFunction::SetInstanceClassName(String* name) {
 
 void JSFunction::PrintName(FILE* out) {
   SmartArrayPointer<char> name = shared()->DebugName()->ToCString();
-  PrintF(out, "%s", *name);
+  FPrintF(out, "%s", *name);
 }
 
 
@@ -8973,20 +8973,20 @@ Code* Code::GetCodeAgeStub(Age age, MarkingParity parity) {
 void DeoptimizationInputData::DeoptimizationInputDataPrint(FILE* out) {
   disasm::NameConverter converter;
   int deopt_count = DeoptCount();
-  PrintF(out, "Deoptimization Input Data (deopt points = %d)\n", deopt_count);
+  FPrintF(out, "Deoptimization Input Data (deopt points = %d)\n", deopt_count);
   if (0 == deopt_count) return;
 
-  PrintF(out, "%6s  %6s  %6s %6s %12s\n", "index", "ast id", "argc", "pc",
+  FPrintF(out, "%6s  %6s  %6s %6s %12s\n", "index", "ast id", "argc", "pc",
          FLAG_print_code_verbose ? "commands" : "");
   for (int i = 0; i < deopt_count; i++) {
-    PrintF(out, "%6d  %6d  %6d %6d",
+    FPrintF(out, "%6d  %6d  %6d %6d",
            i,
            AstId(i).ToInt(),
            ArgumentsStackHeight(i)->value(),
            Pc(i)->value());
 
     if (!FLAG_print_code_verbose) {
-      PrintF(out, "\n");
+      FPrintF(out, "\n");
       continue;
     }
     // Print details of the frame translation.
@@ -8997,7 +8997,7 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(FILE* out) {
     ASSERT(Translation::BEGIN == opcode);
     int frame_count = iterator.Next();
     int jsframe_count = iterator.Next();
-    PrintF(out, "  %s {frame count=%d, js frame count=%d}\n",
+    FPrintF(out, "  %s {frame count=%d, js frame count=%d}\n",
            Translation::StringFor(opcode),
            frame_count,
            jsframe_count);
@@ -9005,7 +9005,7 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(FILE* out) {
     while (iterator.HasNext() &&
            Translation::BEGIN !=
            (opcode = static_cast<Translation::Opcode>(iterator.Next()))) {
-      PrintF(out, "%24s    %s ", "", Translation::StringFor(opcode));
+      FPrintF(out, "%24s    %s ", "", Translation::StringFor(opcode));
 
       switch (opcode) {
         case Translation::BEGIN:
@@ -9016,14 +9016,14 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(FILE* out) {
           int ast_id = iterator.Next();
           int function_id = iterator.Next();
           unsigned height = iterator.Next();
-          PrintF(out, "{ast_id=%d, function=", ast_id);
+          FPrintF(out, "{ast_id=%d, function=", ast_id);
           if (function_id != Translation::kSelfLiteralId) {
             Object* function = LiteralArray()->get(function_id);
             JSFunction::cast(function)->PrintName(out);
           } else {
-            PrintF(out, "<self>");
+            FPrintF(out, "<self>");
           }
-          PrintF(out, ", height=%u}", height);
+          FPrintF(out, ", height=%u}", height);
           break;
         }
 
@@ -9033,9 +9033,9 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(FILE* out) {
           JSFunction* function =
               JSFunction::cast(LiteralArray()->get(function_id));
           unsigned height = iterator.Next();
-          PrintF(out, "{function=");
+          FPrintF(out, "{function=");
           function->PrintName(out);
-          PrintF(out, ", height=%u}", height);
+          FPrintF(out, ", height=%u}", height);
           break;
         }
 
@@ -9044,9 +9044,9 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(FILE* out) {
           int function_id = iterator.Next();
           JSFunction* function =
               JSFunction::cast(LiteralArray()->get(function_id));
-          PrintF(out, "{function=");
+          FPrintF(out, "{function=");
           function->PrintName(out);
-          PrintF(out, "}");
+          FPrintF(out, "}");
           break;
         }
 
@@ -9055,19 +9055,19 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(FILE* out) {
 
         case Translation::REGISTER: {
           int reg_code = iterator.Next();
-            PrintF(out, "{input=%s}", converter.NameOfCPURegister(reg_code));
+            FPrintF(out, "{input=%s}", converter.NameOfCPURegister(reg_code));
           break;
         }
 
         case Translation::INT32_REGISTER: {
           int reg_code = iterator.Next();
-          PrintF(out, "{input=%s}", converter.NameOfCPURegister(reg_code));
+          FPrintF(out, "{input=%s}", converter.NameOfCPURegister(reg_code));
           break;
         }
 
         case Translation::UINT32_REGISTER: {
           int reg_code = iterator.Next();
-          PrintF(out,
+          FPrintF(out,
                  "{input=%s (unsigned)}",
                  converter.NameOfCPURegister(reg_code));
           break;
@@ -9075,52 +9075,52 @@ void DeoptimizationInputData::DeoptimizationInputDataPrint(FILE* out) {
 
         case Translation::DOUBLE_REGISTER: {
           int reg_code = iterator.Next();
-          PrintF(out, "{input=%s}",
+          FPrintF(out, "{input=%s}",
                  DoubleRegister::AllocationIndexToString(reg_code));
           break;
         }
 
         case Translation::STACK_SLOT: {
           int input_slot_index = iterator.Next();
-          PrintF(out, "{input=%d}", input_slot_index);
+          FPrintF(out, "{input=%d}", input_slot_index);
           break;
         }
 
         case Translation::INT32_STACK_SLOT: {
           int input_slot_index = iterator.Next();
-          PrintF(out, "{input=%d}", input_slot_index);
+          FPrintF(out, "{input=%d}", input_slot_index);
           break;
         }
 
         case Translation::UINT32_STACK_SLOT: {
           int input_slot_index = iterator.Next();
-          PrintF(out, "{input=%d (unsigned)}", input_slot_index);
+          FPrintF(out, "{input=%d (unsigned)}", input_slot_index);
           break;
         }
 
         case Translation::DOUBLE_STACK_SLOT: {
           int input_slot_index = iterator.Next();
-          PrintF(out, "{input=%d}", input_slot_index);
+          FPrintF(out, "{input=%d}", input_slot_index);
           break;
         }
 
         case Translation::LITERAL: {
           unsigned literal_index = iterator.Next();
-          PrintF(out, "{literal_id=%u}", literal_index);
+          FPrintF(out, "{literal_id=%u}", literal_index);
           break;
         }
 
         case Translation::ARGUMENTS_OBJECT:
           break;
       }
-      PrintF(out, "\n");
+      FPrintF(out, "\n");
     }
   }
 }
 
 
 void DeoptimizationOutputData::DeoptimizationOutputDataPrint(FILE* out) {
-  PrintF(out, "Deoptimization Output Data (deopt points = %d)\n",
+  FPrintF(out, "Deoptimization Output Data (deopt points = %d)\n",
          this->DeoptPoints());
   if (this->DeoptPoints() == 0) return;
 
@@ -9207,43 +9207,43 @@ void Code::PrintExtraICState(FILE* out, Kind kind, ExtraICState extra) {
       break;
   }
   if (name != NULL) {
-    PrintF(out, "extra_ic_state = %s\n", name);
+    FPrintF(out, "extra_ic_state = %s\n", name);
   } else {
-    PrintF(out, "extra_ic_state = %d\n", extra);
+    FPrintF(out, "extra_ic_state = %d\n", extra);
   }
 }
 
 
 void Code::Disassemble(const char* name, FILE* out) {
-  PrintF(out, "kind = %s\n", Kind2String(kind()));
+  FPrintF(out, "kind = %s\n", Kind2String(kind()));
   if (is_inline_cache_stub()) {
-    PrintF(out, "ic_state = %s\n", ICState2String(ic_state()));
+    FPrintF(out, "ic_state = %s\n", ICState2String(ic_state()));
     PrintExtraICState(out, kind(), extra_ic_state());
     if (ic_state() == MONOMORPHIC) {
-      PrintF(out, "type = %s\n", StubType2String(type()));
+      FPrintF(out, "type = %s\n", StubType2String(type()));
     }
     if (is_call_stub() || is_keyed_call_stub()) {
-      PrintF(out, "argc = %d\n", arguments_count());
+      FPrintF(out, "argc = %d\n", arguments_count());
     }
     if (is_compare_ic_stub()) {
       CompareIC::State state = CompareIC::ComputeState(this);
-      PrintF(out, "compare_state = %s\n", CompareIC::GetStateName(state));
+      FPrintF(out, "compare_state = %s\n", CompareIC::GetStateName(state));
     }
     if (is_compare_ic_stub() && major_key() == CodeStub::CompareIC) {
       Token::Value op = CompareIC::ComputeOperation(this);
-      PrintF(out, "compare_operation = %s\n", Token::Name(op));
+      FPrintF(out, "compare_operation = %s\n", Token::Name(op));
     }
   }
   if ((name != NULL) && (name[0] != '\0')) {
-    PrintF(out, "name = %s\n", name);
+    FPrintF(out, "name = %s\n", name);
   }
   if (kind() == OPTIMIZED_FUNCTION) {
-    PrintF(out, "stack_slots = %d\n", stack_slots());
+    FPrintF(out, "stack_slots = %d\n", stack_slots());
   }
 
-  PrintF(out, "Instructions (size = %d)\n", instruction_size());
+  FPrintF(out, "Instructions (size = %d)\n", instruction_size());
   Disassembler::Decode(out, this);
-  PrintF(out, "\n");
+  FPrintF(out, "\n");
 
   if (kind() == FUNCTION) {
     DeoptimizationOutputData* data =
@@ -9258,24 +9258,24 @@ void Code::Disassemble(const char* name, FILE* out) {
 
   if (kind() == OPTIMIZED_FUNCTION) {
     SafepointTable table(this);
-    PrintF(out, "Safepoints (size = %u)\n", table.size());
+    FPrintF(out, "Safepoints (size = %u)\n", table.size());
     for (unsigned i = 0; i < table.length(); i++) {
       unsigned pc_offset = table.GetPcOffset(i);
-      PrintF(out, "%p  %4d  ", (instruction_start() + pc_offset), pc_offset);
+      FPrintF(out, "%p  %4d  ", (instruction_start() + pc_offset), pc_offset);
       table.PrintEntry(i);
-      PrintF(out, " (sp -> fp)");
+      FPrintF(out, " (sp -> fp)");
       SafepointEntry entry = table.GetEntry(i);
       if (entry.deoptimization_index() != Safepoint::kNoDeoptimizationIndex) {
-        PrintF(out, "  %6d", entry.deoptimization_index());
+        FPrintF(out, "  %6d", entry.deoptimization_index());
       } else {
-        PrintF(out, "  <none>");
+        FPrintF(out, "  <none>");
       }
       if (entry.argument_count() > 0) {
-        PrintF(out, " argc: %d", entry.argument_count());
+        FPrintF(out, " argc: %d", entry.argument_count());
       }
-      PrintF(out, "\n");
+      FPrintF(out, "\n");
     }
-    PrintF(out, "\n");
+    FPrintF(out, "\n");
     // Just print if type feedback info is ever used for optimized code.
     ASSERT(type_feedback_info()->IsUndefined());
   } else if (kind() == FUNCTION) {
@@ -9286,25 +9286,25 @@ void Code::Disassemble(const char* name, FILE* out) {
       unsigned* address =
           reinterpret_cast<unsigned*>(instruction_start() + offset);
       unsigned length = address[0];
-      PrintF(out, "Stack checks (size = %u)\n", length);
-      PrintF(out, "ast_id  pc_offset\n");
+      FPrintF(out, "Stack checks (size = %u)\n", length);
+      FPrintF(out, "ast_id  pc_offset\n");
       for (unsigned i = 0; i < length; ++i) {
         unsigned index = (2 * i) + 1;
-        PrintF(out, "%6u  %9u\n", address[index], address[index + 1]);
+        FPrintF(out, "%6u  %9u\n", address[index], address[index + 1]);
       }
-      PrintF(out, "\n");
+      FPrintF(out, "\n");
     }
 #ifdef OBJECT_PRINT
     if (!type_feedback_info()->IsUndefined()) {
       TypeFeedbackInfo::cast(type_feedback_info())->TypeFeedbackInfoPrint(out);
-      PrintF(out, "\n");
+      FPrintF(out, "\n");
     }
 #endif
   }
 
   PrintF("RelocInfo (size = %d)\n", relocation_size());
   for (RelocIterator it(this); !it.done(); it.next()) it.rinfo()->Print(out);
-  PrintF(out, "\n");
+  FPrintF(out, "\n");
 }
 #endif  // ENABLE_DISASSEMBLER
 
@@ -10862,15 +10862,15 @@ void Dictionary<Shape, Key>::Print(FILE* out) {
   for (int i = 0; i < capacity; i++) {
     Object* k = HashTable<Shape, Key>::KeyAt(i);
     if (HashTable<Shape, Key>::IsKey(k)) {
-      PrintF(out, " ");
+      FPrintF(out, " ");
       if (k->IsString()) {
         String::cast(k)->StringPrint(out);
       } else {
         k->ShortPrint(out);
       }
-      PrintF(out, ": ");
+      FPrintF(out, ": ");
       ValueAt(i)->ShortPrint(out);
-      PrintF(out, "\n");
+      FPrintF(out, "\n");
     }
   }
 }

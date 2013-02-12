@@ -761,7 +761,7 @@ void JavaScriptFrame::PrintTop(FILE* file,
   while (!it.done()) {
     if (it.frame()->is_java_script()) {
       JavaScriptFrame* frame = it.frame();
-      if (frame->IsConstructor()) PrintF(file, "new ");
+      if (frame->IsConstructor()) FPrintF(file, "new ");
       // function name
       Object* maybe_fun = frame->function();
       if (maybe_fun->IsJSFunction()) {
@@ -787,12 +787,12 @@ void JavaScriptFrame::PrintTop(FILE* file,
               SmartArrayPointer<char> c_script_name =
                   script_name->ToCString(DISALLOW_NULLS,
                                          ROBUST_STRING_TRAVERSAL);
-              PrintF(file, " at %s:%d", *c_script_name, line);
+              FPrintF(file, " at %s:%d", *c_script_name, line);
             } else {
-              PrintF(file, " at <unknown>:%d", line);
+              FPrintF(file, " at <unknown>:%d", line);
             }
           } else {
-            PrintF(file, " at <unknown>:<unknown>");
+            FPrintF(file, " at <unknown>:<unknown>");
           }
         }
       } else {
@@ -803,14 +803,14 @@ void JavaScriptFrame::PrintTop(FILE* file,
         // function arguments
         // (we are intentionally only printing the actually
         // supplied parameters, not all parameters required)
-        PrintF(file, "(this=");
+        FPrintF(file, "(this=");
         frame->receiver()->ShortPrint(file);
         const int length = frame->ComputeParametersCount();
         for (int i = 0; i < length; i++) {
-          PrintF(file, ", ");
+          FPrintF(file, ", ");
           frame->GetParameter(i)->ShortPrint(file);
         }
-        PrintF(file, ")");
+        FPrintF(file, ")");
       }
       break;
     }

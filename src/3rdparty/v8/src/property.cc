@@ -43,57 +43,57 @@ void LookupResult::Iterate(ObjectVisitor* visitor) {
 #ifdef OBJECT_PRINT
 void LookupResult::Print(FILE* out) {
   if (!IsFound()) {
-    PrintF(out, "Not Found\n");
+    FPrintF(out, "Not Found\n");
     return;
   }
 
-  PrintF(out, "LookupResult:\n");
-  PrintF(out, " -cacheable = %s\n", IsCacheable() ? "true" : "false");
-  PrintF(out, " -attributes = %x\n", GetAttributes());
+  FPrintF(out, "LookupResult:\n");
+  FPrintF(out, " -cacheable = %s\n", IsCacheable() ? "true" : "false");
+  FPrintF(out, " -attributes = %x\n", GetAttributes());
   switch (type()) {
     case NORMAL:
-      PrintF(out, " -type = normal\n");
-      PrintF(out, " -entry = %d", GetDictionaryEntry());
+      FPrintF(out, " -type = normal\n");
+      FPrintF(out, " -entry = %d", GetDictionaryEntry());
       break;
     case CONSTANT_FUNCTION:
-      PrintF(out, " -type = constant function\n");
-      PrintF(out, " -function:\n");
+      FPrintF(out, " -type = constant function\n");
+      FPrintF(out, " -function:\n");
       GetConstantFunction()->Print(out);
-      PrintF(out, "\n");
+      FPrintF(out, "\n");
       break;
     case FIELD:
-      PrintF(out, " -type = field\n");
-      PrintF(out, " -index = %d", GetFieldIndex());
-      PrintF(out, "\n");
+      FPrintF(out, " -type = field\n");
+      FPrintF(out, " -index = %d", GetFieldIndex());
+      FPrintF(out, "\n");
       break;
     case CALLBACKS:
-      PrintF(out, " -type = call backs\n");
-      PrintF(out, " -callback object:\n");
+      FPrintF(out, " -type = call backs\n");
+      FPrintF(out, " -callback object:\n");
       GetCallbackObject()->Print(out);
       break;
     case HANDLER:
-      PrintF(out, " -type = lookup proxy\n");
+      FPrintF(out, " -type = lookup proxy\n");
       break;
     case INTERCEPTOR:
-      PrintF(out, " -type = lookup interceptor\n");
+      FPrintF(out, " -type = lookup interceptor\n");
       break;
     case TRANSITION:
       switch (GetTransitionDetails().type()) {
         case FIELD:
-          PrintF(out, " -type = map transition\n");
-          PrintF(out, " -map:\n");
+          FPrintF(out, " -type = map transition\n");
+          FPrintF(out, " -map:\n");
           GetTransitionMap()->Print(out);
-          PrintF(out, "\n");
+          FPrintF(out, "\n");
           return;
         case CONSTANT_FUNCTION:
-          PrintF(out, " -type = constant property transition\n");
-          PrintF(out, " -map:\n");
+          FPrintF(out, " -type = constant property transition\n");
+          FPrintF(out, " -map:\n");
           GetTransitionMap()->Print(out);
-          PrintF(out, "\n");
+          FPrintF(out, "\n");
           return;
         case CALLBACKS:
-          PrintF(out, " -type = callbacks transition\n");
-          PrintF(out, " -callback object:\n");
+          FPrintF(out, " -type = callbacks transition\n");
+          FPrintF(out, " -callback object:\n");
           GetCallbackObject()->Print(out);
           return;
         default:
@@ -108,11 +108,11 @@ void LookupResult::Print(FILE* out) {
 
 
 void Descriptor::Print(FILE* out) {
-  PrintF(out, "Descriptor ");
+  FPrintF(out, "Descriptor ");
   GetKey()->ShortPrint(out);
-  PrintF(out, " @ ");
+  FPrintF(out, " @ ");
   GetValue()->ShortPrint(out);
-  PrintF(out, " %d\n", GetDetails().descriptor_index());
+  FPrintF(out, " %d\n", GetDetails().descriptor_index());
 }
 
 
