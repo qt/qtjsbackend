@@ -1736,6 +1736,7 @@ Handle<Code> CallStubCompiler::CompileCustomCall(
 #undef CALL_GENERATOR_CASE
   }
   CallOptimization optimization(function);
+#ifndef _WIN32_WCE
   ASSERT(optimization.is_simple_api_call());
   return CompileFastApiCall(optimization,
                             object,
@@ -1743,6 +1744,10 @@ Handle<Code> CallStubCompiler::CompileCustomCall(
                             cell,
                             function,
                             fname);
+#else
+  // Disable optimization for wince as the calling convention looks different.
+  return Handle<Code>::null();
+#endif // _WIN32_WCE
 }
 
 

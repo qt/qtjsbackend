@@ -1170,6 +1170,10 @@ Handle<Code> LoadIC::ComputeLoadHandler(LookupResult* lookup,
       if (!holder.is_identical_to(receiver)) break;
       return isolate()->stub_cache()->ComputeLoadNormal(name, receiver);
     case CALLBACKS: {
+#ifdef _WIN32_WCE
+      // Disable optimization for wince as the calling convention looks different.
+      return;
+#endif
       Handle<Object> callback(lookup->GetCallbackObject(), isolate());
       if (callback->IsExecutableAccessorInfo()) {
         Handle<ExecutableAccessorInfo> info =
