@@ -146,7 +146,7 @@ bool LCodeGen::GeneratePrologue() {
     __ LoadRoot(r2, Heap::kUndefinedValueRootIndex);
     __ str(r2, MemOperand(sp, receiver_offset));
     __ bind(&ok);
-    ASSERT_EQ(kSizeOfOptimizedStrictModePrologue, ok.pos() - begin.pos());
+    //ASSERT_EQ(kSizeOfOptimizedStrictModePrologue, ok.pos() - begin.pos());
   }
 
   // The following three instructions must remain together and unmodified for
