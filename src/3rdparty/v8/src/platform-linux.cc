@@ -191,7 +191,6 @@ CpuImplementer OS::GetCpuImplementer() {
   return cached_value;
 }
 
-
 bool OS::ArmUsingHardFloat() {
   // GCC versions 4.6 and above define __ARM_PCS or __ARM_PCS_VFP to specify
   // the Floating Point ABI used (PCS stands for Procedure Call Standard).
