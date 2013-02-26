@@ -28,6 +28,10 @@
 #ifndef V8_COMPILER_INTRINSICS_H_
 #define V8_COMPILER_INTRINSICS_H_
 
+#if defined(_WIN32_WCE)
+#include <cmnintrin.h>
+#endif
+
 namespace v8 {
 namespace internal {
 
@@ -58,7 +62,7 @@ int CompilerIntrinsics::CountSetBits(uint32_t value) {
   return __builtin_popcount(value);
 }
 
-#elif defined(_MSC_VER)
+#elif defined(_MSC_VER) && !defined(_WIN32_WCE)
 
 #pragma intrinsic(_BitScanForward)
 #pragma intrinsic(_BitScanReverse)
@@ -75,6 +79,21 @@ int CompilerIntrinsics::CountLeadingZeros(uint32_t value) {
   return 31 - static_cast<int>(result);
 }
 
+#elif defined(_WIN32_WCE)
+int CompilerIntrinsics::CountTrailingZeros(uint32_t value) {
+    // taken from http://graphics.stanford.edu/~seander/bithacks.html#ZerosOnRightFloatCast
+    float f = (float)(value & -value); // cast the least significant bit in v to a float
+    return (*(uint32_t *)&f >> 23) - 0x7f;
+}
+
+int CompilerIntrinsics::CountLeadingZeros(uint32_t value) {
+  return _CountLeadingZeros(value);
+}
+#else
+#error Unsupported compiler
+#endif
+
+#if defined(_MSC_VER)
 int CompilerIntrinsics::CountSetBits(uint32_t value) {
   // Manually count set bits.
   value = ((value >>  1) & 0x55555555) + (value & 0x55555555);
@@ -84,9 +103,6 @@ int CompilerIntrinsics::CountSetBits(uint32_t value) {
   value = ((value >> 16) & 0x0000ffff) + (value & 0x0000ffff);
   return value;
 }
-
-#else
-#error Unsupported compiler
 #endif
 
 } }  // namespace v8::internal
