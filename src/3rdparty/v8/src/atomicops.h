@@ -154,7 +154,7 @@ Atomic64 Release_Load(volatile const Atomic64* ptr);
 #if defined(THREAD_SANITIZER)
 #include "atomicops_internals_tsan.h"
 #elif defined(_MSC_VER) && \
-  (defined(V8_HOST_ARCH_IA32) || defined(V8_HOST_ARCH_X64))
+  (defined(V8_HOST_ARCH_IA32) || defined(V8_HOST_ARCH_X64) || defined(_WIN32_WCE))
 #include "atomicops_internals_x86_msvc.h"
 #elif defined(__APPLE__) && \
   (defined(V8_HOST_ARCH_IA32) || defined(V8_HOST_ARCH_X64))

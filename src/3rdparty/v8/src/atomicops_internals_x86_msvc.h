@@ -69,10 +69,16 @@ inline Atomic32 NoBarrier_AtomicIncrement(volatile Atomic32* ptr,
 #if !(defined(_MSC_VER) && _MSC_VER >= 1400)
 #error "We require at least vs2005 for MemoryBarrier"
 #endif
+// For Windows CE there is no MemoryBarrier needed
+#ifdef _WIN32_WCE
+inline void MemoryBarrier() {
+}
+#else
 inline void MemoryBarrier() {
   // We use MemoryBarrier from WinNT.h
   ::MemoryBarrier();
 }
+#endif
 
 inline Atomic32 Acquire_CompareAndSwap(volatile Atomic32* ptr,
                                        Atomic32 old_value,

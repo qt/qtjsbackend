@@ -58,6 +58,20 @@ int strncasecmp(const char* s1, const char* s2, int n) {
 #endif  // _MSC_VER
 
 
+#ifdef _WIN32_WCE
+// Convert a Latin1 string into a utf16 string
+wchar_t* wce_mbtowc(const char* a) {
+    int length = strlen(a);
+    wchar_t *wbuf = new wchar_t[length];
+
+    for (int i = 0; i < length; ++i)
+        wbuf[i] = (wchar_t)a[i];
+
+    return wbuf;
+}
+#endif // _WIN32_WCE
+
+
 // Extra functions for MinGW. Most of these are the _s functions which are in
 // the Microsoft Visual Studio C++ CRT.
 #ifdef __MINGW32__
@@ -161,6 +175,13 @@ void OS::MemCopy(void* dest, const void* src, size_t size) {
 #endif
 }
 #endif  // V8_TARGET_ARCH_IA32
+
+#ifdef _WIN32_WCE
+// TODO: Implement
+CpuImplementer OS::GetCpuImplementer() {
+    return UNKNOWN_IMPLEMENTER;
+}
+#endif // _WIN32_WCE
 
 #ifdef _WIN64
 typedef double (*ModuloFunction)(double, double);
@@ -386,7 +407,9 @@ void Time::TzSet() {
   if (tz_initialized_) return;
 
   // Initialize POSIX time zone data.
+#ifndef _WIN32_WCE
   _tzset();
+#endif // _WIN32_WCE
   // Obtain timezone information from operating system.
   memset(&tzinfo_, 0, sizeof(tzinfo_));
   if (GetTimeZoneInformation(&tzinfo_) == TIME_ZONE_ID_INVALID) {
@@ -498,6 +521,7 @@ void Time::SetToCurrentTime() {
 // Also, adding the time-zone offset to the input must not overflow.
 // The function EquivalentTime() in date.js guarantees this.
 int64_t Time::LocalOffset() {
+#ifndef _WIN32_WCE
   // Initialize timezone information, if needed.
   TzSet();
 
@@ -528,6 +552,11 @@ int64_t Time::LocalOffset() {
   } else {
     return tzinfo_.Bias * -kMsPerMinute;
   }
+#else
+  // Windows CE has a different handling of Timezones.
+  // TODO: Adapt this for Windows CE
+  return 0;
+#endif
 }
 
 
@@ -578,6 +607,14 @@ void OS::PostSetUp() {
   memcopy_function = CreateMemCopyFunction();
 #endif
 }
+
+#ifdef V8_TARGET_ARCH_ARM
+// TODO: Implement
+// Windows CE is the only platform right now that supports ARM.
+bool OS::ArmCpuHasFeature(CpuFeature feature) {
+  return false;
+}
+#endif // V8_TARGET_ARCH_ARM
 
 
 // Returns the accumulated user time for thread.
@@ -673,6 +710,7 @@ static OutputMode output_mode = UNKNOWN;  // Current output mode.
 static bool HasConsole() {
   // Only check the first time. Eventual race conditions are not a problem,
   // because all threads will eventually determine the same mode.
+#ifndef _WIN32_WCE
   if (output_mode == UNKNOWN) {
     // We cannot just check that the standard output is attached to a console
     // because this would fail if output is redirected to a file. Therefore we
@@ -685,6 +723,10 @@ static bool HasConsole() {
       output_mode = ODS;
   }
   return output_mode == CONSOLE;
+#else
+  // Windows CE has no shell enabled in the standard BSP
+  return false;
+#endif // _WIN32_WCE
 }
 
 
@@ -697,7 +739,14 @@ static void VPrintHelper(FILE* stream, const char* format, va_list args) {
     // does not crash.
     EmbeddedVector<char, 4096> buffer;
     OS::VSNPrintF(buffer, format, args);
+#ifdef _WIN32_WCE
+    wchar_t wbuf[4096];
+    for (int i = 0; i < 4096; ++i)
+        wbuf[i] = (wchar_t)buffer.start()[i];
+    OutputDebugStringW(wbuf);
+#else
     OutputDebugStringA(buffer.start());
+#endif // _WIN32_WCE
   }
 }
 
@@ -713,23 +762,30 @@ FILE* OS::FOpen(const char* path, const char* mode) {
 
 
 bool OS::Remove(const char* path) {
+#ifndef _WIN32_WCE
   return (DeleteFileA(path) != 0);
+#else
+    wchar_t *wpath = wce_mbtowc(path);
+    bool ret = (DeleteFileW(wpath) != 0);
+    delete wpath;
+    return ret;
+#endif // _WIN32_WCE
 }
 
 
 FILE* OS::OpenTemporaryFile() {
   // tmpfile_s tries to use the root dir, don't use it.
-  char tempPathBuffer[MAX_PATH];
+  wchar_t tempPathBuffer[MAX_PATH];
   DWORD path_result = 0;
-  path_result = GetTempPathA(MAX_PATH, tempPathBuffer);
+  path_result = GetTempPathW(MAX_PATH, tempPathBuffer);
   if (path_result > MAX_PATH || path_result == 0) return NULL;
   UINT name_result = 0;
-  char tempNameBuffer[MAX_PATH];
-  name_result = GetTempFileNameA(tempPathBuffer, "", 0, tempNameBuffer);
+  wchar_t tempNameBuffer[MAX_PATH];
+  name_result = GetTempFileNameW(tempPathBuffer, L"", 0, tempNameBuffer);
   if (name_result == 0) return NULL;
-  FILE* result = FOpen(tempNameBuffer, "w+");  // Same mode as tmpfile uses.
+  FILE* result = _wfopen(tempNameBuffer, L"w+");  // Same mode as tmpfile uses.
   if (result != NULL) {
-    Remove(tempNameBuffer);  // Delete on close.
+    DeleteFileW(tempNameBuffer);  // Delete on close.
   }
   return result;
 }
@@ -990,7 +1046,11 @@ void OS::Abort() {
     DebugBreak();
   } else {
     // Make the MSVCRT do a silent abort.
+#ifndef _WIN32_WCE
     raise(SIGABRT);
+#else
+    exit(3);
+#endif // _WIN32_WCE
   }
 }
 
@@ -1032,8 +1092,15 @@ class Win32MemoryMappedFile : public OS::MemoryMappedFile {
 
 OS::MemoryMappedFile* OS::MemoryMappedFile::open(const char* name) {
   // Open a physical file
+#ifndef _WIN32_WCE
   HANDLE file = CreateFileA(name, GENERIC_READ | GENERIC_WRITE,
       FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+#else
+  wchar_t *wname = wce_mbtowc(name);
+  HANDLE file = CreateFileW(wname, GENERIC_READ | GENERIC_WRITE,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+  delete wname;
+#endif // _WIN32_WCE
   if (file == INVALID_HANDLE_VALUE) return NULL;
 
   int size = static_cast<int>(GetFileSize(file, NULL));
@@ -1052,8 +1119,15 @@ OS::MemoryMappedFile* OS::MemoryMappedFile::open(const char* name) {
 OS::MemoryMappedFile* OS::MemoryMappedFile::create(const char* name, int size,
     void* initial) {
   // Open a physical file
+#ifndef _WIN32_WCE
   HANDLE file = CreateFileA(name, GENERIC_READ | GENERIC_WRITE,
       FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, 0, NULL);
+#else
+  wchar_t *wname = wce_mbtowc(name);
+  HANDLE file = CreateFileW(wname, GENERIC_READ | GENERIC_WRITE,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, 0, NULL);
+  delete wname;
+#endif // _WIN32_WCE
   if (file == NULL) return NULL;
   // Create a file mapping for the physical file
   HANDLE file_mapping = CreateFileMapping(file, NULL,
@@ -1115,8 +1189,8 @@ Win32MemoryMappedFile::~Win32MemoryMappedFile() {
 #define VOID void
 #endif
 
-// DbgHelp isn't supported on MinGW yet
-#ifndef __MINGW32__
+// DbgHelp isn't supported on MinGW yet, nor does Windows CE have it
+#if !defined(__MINGW32__) && !defined(_WIN32_WCE)
 // DbgHelp.h functions.
 typedef BOOL (__stdcall *DLL_FUNC_TYPE(SymInitialize))(IN HANDLE hProcess,
                                                        IN PSTR UserSearchPath,
@@ -1645,6 +1719,7 @@ Thread::~Thread() {
 // the Win32 function CreateThread(), because the CreateThread() does not
 // initialize thread specific structures in the C runtime library.
 void Thread::Start() {
+#ifndef _WIN32_WCE
   data_->thread_ = reinterpret_cast<HANDLE>(
       _beginthreadex(NULL,
                      static_cast<unsigned>(stack_size_),
@@ -1652,6 +1727,18 @@ void Thread::Start() {
                      this,
                      0,
                      &data_->thread_id_));
+#else
+    unsigned initflag = 0;
+    if (stack_size_ > 0)
+        initflag |= STACK_SIZE_PARAM_IS_A_RESERVATION;
+    data_->thread_ = reinterpret_cast<HANDLE>(
+        CreateThread( NULL,
+                      static_cast<unsigned>(stack_size_),
+                      (LPTHREAD_START_ROUTINE)ThreadEntry,
+                      this,
+                      initflag,
+                      (LPDWORD)&data_->thread_id_));
+#endif // _WIN32_WCE
 }
 
 
@@ -1746,7 +1833,7 @@ Mutex* OS::CreateMutex() {
 class Win32Semaphore : public Semaphore {
  public:
   explicit Win32Semaphore(int count) {
-    sem = ::CreateSemaphoreA(NULL, count, 0x7fffffff, NULL);
+    sem = ::CreateSemaphoreW(NULL, count, 0x7fffffff, NULL);
   }
 
   ~Win32Semaphore() {
@@ -2078,10 +2165,17 @@ class SamplerThread : public Thread {
       sample->pc = reinterpret_cast<Address>(context.Rip);
       sample->sp = reinterpret_cast<Address>(context.Rsp);
       sample->fp = reinterpret_cast<Address>(context.Rbp);
-#else
+#elif V8_HOST_ARCH_IA32
       sample->pc = reinterpret_cast<Address>(context.Eip);
       sample->sp = reinterpret_cast<Address>(context.Esp);
       sample->fp = reinterpret_cast<Address>(context.Ebp);
+#elif V8_HOST_ARCH_ARM
+      // Taken from http://msdn.microsoft.com/en-us/library/aa448762.aspx
+      sample->pc = reinterpret_cast<Address>(context.Pc);
+      sample->sp = reinterpret_cast<Address>(context.Sp);
+      sample->fp = reinterpret_cast<Address>(context.R11);
+#else
+#error This Platform is not supported.
 #endif
       sampler->SampleStack(sample);
       sampler->Tick(sample);
