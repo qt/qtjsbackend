@@ -29,7 +29,7 @@
 
 #include "v8.h"
 
-#if defined(__arm__)
+#if defined(__arm__) && !defined(_WIN32_WCE)
   #if !defined(__QNXNTO__)
     #include <sys/syscall.h>  // for cache flushing.
   #else
@@ -73,6 +73,11 @@ void CPU::FlushICache(void* start, size_t size) {
   // The QNX kernel does not expose the symbol __ARM_NR_cacheflush so we
   // use the msync system call instead of the approach used on Linux
   msync(start, size, MS_SYNC|MS_INVALIDATE_ICACHE);
+#elif  defined(_WIN32_WCE)
+  // Windows CE compiler does not support the asm command, nor does it expose
+  // __ARM_NR_cacheflush. As well as Windows CE does not support to flush a
+  // region, so we need to flush the whole process.
+  FlushInstructionCache(GetCurrentProcess(), NULL, NULL);
 #else
   // Ideally, we would call
   //   syscall(__ARM_NR_cacheflush, start,

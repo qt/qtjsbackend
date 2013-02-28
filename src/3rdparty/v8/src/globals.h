@@ -74,7 +74,7 @@ namespace internal {
 #define V8_HOST_ARCH_IA32 1
 #define V8_HOST_ARCH_32_BIT 1
 #define V8_HOST_CAN_READ_UNALIGNED 1
-#elif defined(__ARMEL__)
+#elif defined(__ARMEL__) || defined(_M_ARM)
 #define V8_HOST_ARCH_ARM 1
 #define V8_HOST_ARCH_32_BIT 1
 // Some CPU-OS combinations allow unaligned access on ARM. We assume
@@ -128,7 +128,7 @@ namespace internal {
 // Setting USE_SIMULATOR explicitly from the build script will force
 // the use of a simulated environment.
 #if !defined(USE_SIMULATOR)
-#if (defined(V8_TARGET_ARCH_ARM) && !defined(V8_HOST_ARCH_ARM))
+#if (defined(V8_TARGET_ARCH_ARM) && !defined(V8_HOST_ARCH_ARM) && !defined(_WIN32_WCE))
 #define USE_SIMULATOR 1
 #endif
 #if (defined(V8_TARGET_ARCH_MIPS) && !defined(V8_HOST_ARCH_MIPS))

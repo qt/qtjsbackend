@@ -45,7 +45,7 @@ inline int IntegerLog2(uint32_t value) {
   return 31 - __builtin_clz(value);
 }
 
-#elif defined(_MSC_VER)
+#elif defined(_MSC_VER) && !defined(_WIN32_WCE)
 
 #pragma intrinsic(_BitScanReverse)
 

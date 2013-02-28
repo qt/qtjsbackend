@@ -29,14 +29,14 @@
 #define V8_ARM_CONSTANTS_ARM_H_
 
 // ARM EABI is required.
-#if defined(__arm__) && !defined(__ARM_EABI__)
+#if defined(__arm__) && !defined(__ARM_EABI__) && !defined(_WIN32_WCE)
 #error ARM EABI support is required.
 #endif
 
 // This means that interwork-compatible jump instructions are generated.  We
 // want to generate them on the simulator too so it makes snapshots that can
 // be used on real hardware.
-#if defined(__THUMB_INTERWORK__) || !defined(__arm__)
+#if defined(__THUMB_INTERWORK__) || !defined(__arm__) || defined(_WIN32_WCE)
 # define USE_THUMB_INTERWORK 1
 #endif
 
@@ -65,8 +65,10 @@
 #endif
 
 // Simulator should support ARM5 instructions and unaligned access by default.
-#if !defined(__arm__)
-# define CAN_USE_ARMV5_INSTRUCTIONS 1
+#if !defined(__arm__) || defined(_WIN32_WCE)
+# if !defined(_WIN32_WCE)
+#  define CAN_USE_ARMV5_INSTRUCTIONS 1
+# endif
 # define CAN_USE_THUMB_INSTRUCTIONS 1
 
 # ifndef CAN_USE_UNALIGNED_ACCESSES
