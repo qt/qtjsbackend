@@ -4004,26 +4004,6 @@ uint32_t String::ComputeHash(char *string, int length) {
 }
 
 
-uint16_t String::GetCharacter(int index) {
-  i::Handle<i::String> str = Utils::OpenHandle(this);
-  return str->Get(index);
-}
-
-
-bool String::Equals(uint16_t *string, int length) {
-  i::Handle<i::String> str = Utils::OpenHandle(this);
-  if (IsDeadCheck(str->GetIsolate(), "v8::String::Equals()")) return 0;
-  return str->SlowEqualsExternal(string, length);
-}
-
-
-bool String::Equals(char *string, int length) {
-  i::Handle<i::String> str = Utils::OpenHandle(this);
-  if (IsDeadCheck(str->GetIsolate(), "v8::String::Equals()")) return 0;
-  return str->SlowEqualsExternal(string, length);
-}
-
-
 int String::WriteUtf8(char* buffer,
                       int capacity,
                       int* nchars_ref,

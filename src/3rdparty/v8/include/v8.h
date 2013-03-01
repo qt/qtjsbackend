@@ -1113,16 +1113,6 @@ class String : public Primitive {
   V8EXPORT static uint32_t ComputeHash(char *string, int length);
 
   /**
-   * Returns true if this string is equal to the external
-   * string data provided.
-   */
-  V8EXPORT bool Equals(uint16_t *string, int length);
-  V8EXPORT bool Equals(char *string, int length);
-  inline bool Equals(Handle<Value> that) const {
-    return v8::Value::Equals(that);
-  }
-
-  /**
    * Write the contents of the string to an external buffer.
    * If no arguments are given, expects the buffer to be large
    * enough to hold the entire string and NULL terminator. Copies
@@ -1153,8 +1143,6 @@ class String : public Primitive {
     NO_NULL_TERMINATION = 2,
     PRESERVE_ASCII_NULL = 4
   };
-
-  V8EXPORT uint16_t GetCharacter(int index);
 
   // 16-bit character codes.
   V8EXPORT int Write(uint16_t* buffer,
