@@ -158,7 +158,7 @@ Address IC::OriginalCodeAddress() const {
   // Get the address of the call site in the active code. This is the
   // place where the call to DebugBreakXXX is and where the IC
   // normally would be.
-  Address addr = pc() - Assembler::kCallTargetAddressOffset;
+  Address addr = Assembler::target_address_from_return_address(pc());
   // Return the address in the original code. This is the place where
   // the call which has been overwritten by the DebugBreakXXX resides
   // and the place where the inline cache system should look.
@@ -320,12 +320,16 @@ void IC::PostPatching(Address address, Code* target, Code* old_target) {
     int delta = ComputeTypeInfoCountDelta(old_target->ic_state(),
                                           target->ic_state());
     // Not all Code objects have TypeFeedbackInfo.
-    if (delta != 0 && host->type_feedback_info()->IsTypeFeedbackInfo()) {
+    if (host->type_feedback_info()->IsTypeFeedbackInfo() && delta != 0) {
       TypeFeedbackInfo* info =
           TypeFeedbackInfo::cast(host->type_feedback_info());
-      info->set_ic_with_type_info_count(
-          info->ic_with_type_info_count() + delta);
+      info->change_ic_with_type_info_count(delta);
     }
+  }
+  if (host->type_feedback_info()->IsTypeFeedbackInfo()) {
+    TypeFeedbackInfo* info =
+        TypeFeedbackInfo::cast(host->type_feedback_info());
+    info->change_own_type_change_checksum();
   }
   if (FLAG_watch_ic_patching) {
     host->set_profiler_ticks(0);
@@ -435,9 +439,7 @@ static void LookupForRead(Handle<Object> object,
     // Besides normal conditions (property not found or it's not
     // an interceptor), bail out if lookup is not cacheable: we won't
     // be able to IC it anyway and regular lookup should work fine.
-    if (!lookup->IsFound()
-        || (lookup->type() != INTERCEPTOR)
-        || !lookup->IsCacheable()) {
+    if (!lookup->IsInterceptor() || !lookup->IsCacheable()) {
       return;
     }
 
@@ -447,14 +449,14 @@ static void LookupForRead(Handle<Object> object,
     }
 
     holder->LocalLookupRealNamedProperty(*name, lookup);
-    if (lookup->IsProperty()) {
-      ASSERT(lookup->type() != INTERCEPTOR);
+    if (lookup->IsFound()) {
+      ASSERT(!lookup->IsInterceptor());
       return;
     }
 
     Handle<Object> proto(holder->GetPrototype());
     if (proto->IsNull()) {
-      lookup->NotFound();
+      ASSERT(!lookup->IsFound());
       return;
     }
 
@@ -535,7 +537,7 @@ MaybeObject* CallICBase::LoadFunction(State state,
   LookupResult lookup(isolate());
   LookupForRead(object, name, &lookup);
 
-  if (!lookup.IsProperty()) {
+  if (!lookup.IsFound()) {
     // If the object does not have the requested property, check which
     // exception we need to throw.
     return IsContextual(object)
@@ -554,7 +556,7 @@ MaybeObject* CallICBase::LoadFunction(State state,
       Object::GetProperty(object, object, &lookup, name, &attr);
   RETURN_IF_EMPTY_HANDLE(isolate(), result);
 
-  if (lookup.type() == INTERCEPTOR && attr == ABSENT) {
+  if (lookup.IsInterceptor() && attr == ABSENT) {
     // If the object does not have the requested property, check which
     // exception we need to throw.
     return IsContextual(object)
@@ -902,7 +904,7 @@ MaybeObject* LoadIC::Load(State state,
   LookupForRead(object, name, &lookup);
 
   // If we did not find a property, check if we need to throw an exception.
-  if (!lookup.IsProperty()) {
+  if (!lookup.IsFound()) {
     if (IsContextual(object)) {
       return ReferenceError("not_defined", name);
     }
@@ -915,8 +917,7 @@ MaybeObject* LoadIC::Load(State state,
   }
 
   PropertyAttributes attr;
-  if (lookup.IsFound() &&
-      (lookup.type() == INTERCEPTOR || lookup.type() == HANDLER)) {
+  if (lookup.IsInterceptor() || lookup.IsHandler()) {
     // Get the property.
     Handle<Object> result =
         Object::GetProperty(object, object, &lookup, name, &attr);
@@ -988,13 +989,29 @@ void LoadIC::UpdateCaches(LookupResult* lookup,
         }
         break;
       case CALLBACKS: {
-        Handle<Object> callback_object(lookup->GetCallbackObject());
-        if (!callback_object->IsAccessorInfo()) return;
-        Handle<AccessorInfo> callback =
-            Handle<AccessorInfo>::cast(callback_object);
-        if (v8::ToCData<Address>(callback->getter()) == 0) return;
-        code = isolate()->stub_cache()->ComputeLoadCallback(
-            name, receiver, holder, callback);
+#ifdef _WIN32_WCE
+        // Disable optimization for wince as the calling convention looks different.
+        return;
+#endif
+        Handle<Object> callback(lookup->GetCallbackObject());
+        if (callback->IsAccessorInfo()) {
+          Handle<AccessorInfo> info = Handle<AccessorInfo>::cast(callback);
+          if (v8::ToCData<Address>(info->getter()) == 0) return;
+          if (!info->IsCompatibleReceiver(*receiver)) return;
+          code = isolate()->stub_cache()->ComputeLoadCallback(
+              name, receiver, holder, info);
+        } else if (callback->IsAccessorPair()) {
+          Handle<Object> getter(Handle<AccessorPair>::cast(callback)->getter());
+          if (!getter->IsJSFunction()) return;
+          if (holder->IsGlobalObject()) return;
+          if (!holder->HasFastProperties()) return;
+          code = isolate()->stub_cache()->ComputeLoadViaGetter(
+              name, receiver, holder, Handle<JSFunction>::cast(getter));
+        } else {
+          ASSERT(callback->IsForeign());
+          // No IC support for old-style native accessors.
+          return;
+        }
         break;
       }
       case INTERCEPTOR:
@@ -1156,7 +1173,7 @@ MaybeObject* KeyedLoadIC::Load(State state,
     LookupForRead(object, name, &lookup);
 
     // If we did not find a property, check if we need to throw an exception.
-    if (!lookup.IsProperty() && IsContextual(object)) {
+    if (!lookup.IsFound() && IsContextual(object)) {
       return ReferenceError("not_defined", name);
     }
 
@@ -1165,7 +1182,7 @@ MaybeObject* KeyedLoadIC::Load(State state,
     }
 
     PropertyAttributes attr;
-    if (lookup.IsFound() && lookup.type() == INTERCEPTOR) {
+    if (lookup.IsInterceptor()) {
       // Get the property.
       Handle<Object> result =
           Object::GetProperty(object, object, &lookup, name, &attr);
@@ -1256,6 +1273,7 @@ void KeyedLoadIC::UpdateCaches(LookupResult* lookup,
         Handle<AccessorInfo> callback =
             Handle<AccessorInfo>::cast(callback_object);
         if (v8::ToCData<Address>(callback->getter()) == 0) return;
+        if (!callback->IsCompatibleReceiver(*receiver)) return;
         code = isolate()->stub_cache()->ComputeKeyedLoadCallback(
             name, receiver, holder, callback);
         break;
@@ -1288,15 +1306,16 @@ void KeyedLoadIC::UpdateCaches(LookupResult* lookup,
 
 static bool StoreICableLookup(LookupResult* lookup) {
   // Bail out if we didn't find a result.
-  if (!lookup->IsFound() || lookup->type() == NULL_DESCRIPTOR) return false;
+  if (!lookup->IsFound()) return false;
 
   // Bail out if inline caching is not allowed.
   if (!lookup->IsCacheable()) return false;
 
   // If the property is read-only, we leave the IC in its current state.
-  if (lookup->IsReadOnly()) return false;
-
-  return true;
+  if (lookup->IsTransition()) {
+    return !lookup->GetTransitionDetails().IsReadOnly();
+  }
+  return !lookup->IsReadOnly();
 }
 
 
@@ -1304,11 +1323,16 @@ static bool LookupForWrite(Handle<JSObject> receiver,
                            Handle<String> name,
                            LookupResult* lookup) {
   receiver->LocalLookup(*name, lookup);
+  if (!lookup->IsFound()) {
+    receiver->map()->LookupTransition(*receiver, *name, lookup);
+  }
   if (!StoreICableLookup(lookup)) {
-    return false;
+    // 2nd chance: There can be accessors somewhere in the prototype chain.
+    receiver->Lookup(*name, lookup);
+    return lookup->IsPropertyCallbacks() && StoreICableLookup(lookup);
   }
 
-  if (lookup->type() == INTERCEPTOR &&
+  if (lookup->IsInterceptor() &&
       receiver->GetNamedInterceptor()->setter()->IsUndefined()) {
     receiver->LocalLookupRealNamedProperty(*name, lookup);
     return StoreICableLookup(lookup);
@@ -1357,6 +1381,11 @@ MaybeObject* StoreIC::Store(State state,
     return *value;
   }
 
+  // Observed objects are always modified through the runtime.
+  if (FLAG_harmony_observation && receiver->map()->is_observed()) {
+    return receiver->SetProperty(*name, *value, NONE, strict_mode);
+  }
+
   // Use specialized code for setting the length of arrays with fast
   // properties.  Slow properties might indicate redefinition of the
   // length property.
@@ -1375,12 +1404,13 @@ MaybeObject* StoreIC::Store(State state,
   }
 
   // Lookup the property locally in the receiver.
-  if (FLAG_use_ic && !receiver->IsJSGlobalProxy()) {
+  if (!receiver->IsJSGlobalProxy()) {
     LookupResult lookup(isolate());
 
     if (LookupForWrite(receiver, name, &lookup)) {
-      // Generate a stub for this store.
-      UpdateCaches(&lookup, state, strict_mode, receiver, name, value);
+      if (FLAG_use_ic) {  // Generate a stub for this store.
+        UpdateCaches(&lookup, state, strict_mode, receiver, name, value);
+      }
     } else {
       // Strict mode doesn't allow setting non-existent global property
       // or an assignment to a read only property.
@@ -1408,7 +1438,11 @@ MaybeObject* StoreIC::Store(State state,
   }
 
   // Set the property.
-  return receiver->SetProperty(*name, *value, NONE, strict_mode);
+  return receiver->SetProperty(*name,
+                               *value,
+                               NONE,
+                               strict_mode,
+                               JSReceiver::CERTAINLY_NOT_STORE_FROM_KEYED);
 }
 
 
@@ -1420,10 +1454,10 @@ void StoreIC::UpdateCaches(LookupResult* lookup,
                            Handle<Object> value) {
   ASSERT(!receiver->IsJSGlobalProxy());
   ASSERT(StoreICableLookup(lookup));
+  ASSERT(lookup->IsFound());
+
   // These are not cacheable, so we never see such LookupResults here.
-  ASSERT(lookup->type() != HANDLER);
-  // We get only called for properties or transitions, see StoreICableLookup.
-  ASSERT(lookup->type() != NULL_DESCRIPTOR);
+  ASSERT(!lookup->IsHandler());
 
   // If the property has a non-field type allowing map transitions
   // where there is extra room in the object, we leave the IC in its
@@ -1433,6 +1467,7 @@ void StoreIC::UpdateCaches(LookupResult* lookup,
   // Compute the code stub for this store; used for rewriting to
   // monomorphic state and making sure that the code stub is in the
   // stub cache.
+  Handle<JSObject> holder(lookup->holder());
   Handle<Code> code;
   switch (type) {
     case FIELD:
@@ -1442,14 +1477,6 @@ void StoreIC::UpdateCaches(LookupResult* lookup,
                                                         Handle<Map>::null(),
                                                         strict_mode);
       break;
-    case MAP_TRANSITION: {
-      if (lookup->GetAttributes() != NONE) return;
-      Handle<Map> transition(lookup->GetTransitionMap());
-      int index = transition->PropertyIndexFor(*name);
-      code = isolate()->stub_cache()->ComputeStoreField(
-          name, receiver, index, transition, strict_mode);
-      break;
-    }
     case NORMAL:
       if (receiver->IsGlobalObject()) {
         // The stub generated for the global object picks the value directly
@@ -1460,18 +1487,32 @@ void StoreIC::UpdateCaches(LookupResult* lookup,
         code = isolate()->stub_cache()->ComputeStoreGlobal(
             name, global, cell, strict_mode);
       } else {
-        if (lookup->holder() != *receiver) return;
+        if (!holder.is_identical_to(receiver)) return;
         code = isolate()->stub_cache()->ComputeStoreNormal(strict_mode);
       }
       break;
     case CALLBACKS: {
-      Handle<Object> callback_object(lookup->GetCallbackObject());
-      if (!callback_object->IsAccessorInfo()) return;
-      Handle<AccessorInfo> callback =
-          Handle<AccessorInfo>::cast(callback_object);
-      if (v8::ToCData<Address>(callback->setter()) == 0) return;
-      code = isolate()->stub_cache()->ComputeStoreCallback(
-          name, receiver, callback, strict_mode);
+      Handle<Object> callback(lookup->GetCallbackObject());
+      if (callback->IsAccessorInfo()) {
+        Handle<AccessorInfo> info = Handle<AccessorInfo>::cast(callback);
+        if (v8::ToCData<Address>(info->setter()) == 0) return;
+        if (!holder->HasFastProperties()) return;
+        if (!info->IsCompatibleReceiver(*receiver)) return;
+        code = isolate()->stub_cache()->ComputeStoreCallback(
+            name, receiver, holder, info, strict_mode);
+      } else if (callback->IsAccessorPair()) {
+        Handle<Object> setter(Handle<AccessorPair>::cast(callback)->setter());
+        if (!setter->IsJSFunction()) return;
+        if (holder->IsGlobalObject()) return;
+        if (!holder->HasFastProperties()) return;
+        code = isolate()->stub_cache()->ComputeStoreViaSetter(
+            name, receiver, holder, Handle<JSFunction>::cast(setter),
+            strict_mode);
+      } else {
+        ASSERT(callback->IsForeign());
+        // No IC support for old-style native accessors.
+        return;
+      }
       break;
     }
     case INTERCEPTOR:
@@ -1480,11 +1521,24 @@ void StoreIC::UpdateCaches(LookupResult* lookup,
           name, receiver, strict_mode);
       break;
     case CONSTANT_FUNCTION:
-    case CONSTANT_TRANSITION:
-    case ELEMENTS_TRANSITION:
       return;
+    case TRANSITION: {
+      Handle<Map> transition(lookup->GetTransitionTarget());
+      int descriptor = transition->LastAdded();
+
+      DescriptorArray* target_descriptors = transition->instance_descriptors();
+      PropertyDetails details = target_descriptors->GetDetails(descriptor);
+
+      if (details.type() != FIELD || details.attributes() != NONE) return;
+
+      int field_index = target_descriptors->GetFieldIndex(descriptor);
+      code = isolate()->stub_cache()->ComputeStoreField(
+          name, receiver, field_index, transition, strict_mode);
+
+      break;
+    }
+    case NONEXISTENT:
     case HANDLER:
-    case NULL_DESCRIPTOR:
       UNREACHABLE();
       return;
   }
@@ -1557,44 +1611,49 @@ Handle<Code> KeyedIC::ComputeStub(Handle<JSObject> receiver,
   // Don't handle megamorphic property accesses for INTERCEPTORS or CALLBACKS
   // via megamorphic stubs, since they don't have a map in their relocation info
   // and so the stubs can't be harvested for the object needed for a map check.
-  if (target()->type() != NORMAL) {
+  if (target()->type() != Code::NORMAL) {
     TRACE_GENERIC_IC("KeyedIC", "non-NORMAL target type");
     return generic_stub;
   }
 
   bool monomorphic = false;
+  bool is_transition_stub = IsTransitionStubKind(stub_kind);
+  Handle<Map> receiver_map(receiver->map());
+  Handle<Map> monomorphic_map = receiver_map;
   MapHandleList target_receiver_maps;
-  if (ic_state != UNINITIALIZED && ic_state != PREMONOMORPHIC) {
+  if (ic_state == UNINITIALIZED || ic_state == PREMONOMORPHIC) {
+    // Optimistically assume that ICs that haven't reached the MONOMORPHIC state
+    // yet will do so and stay there.
+    monomorphic = true;
+  } else {
     GetReceiverMapsForStub(Handle<Code>(target()), &target_receiver_maps);
-  }
-  if (!IsTransitionStubKind(stub_kind)) {
-    if (ic_state == UNINITIALIZED || ic_state == PREMONOMORPHIC) {
-      monomorphic = true;
-    } else {
-      if (ic_state == MONOMORPHIC) {
-        // The first time a receiver is seen that is a transitioned version of
-        // the previous monomorphic receiver type, assume the new ElementsKind
-        // is the monomorphic type. This benefits global arrays that only
-        // transition once, and all call sites accessing them are faster if they
-        // remain monomorphic. If this optimistic assumption is not true, the IC
-        // will miss again and it will become polymorphic and support both the
-        // untransitioned and transitioned maps.
-        monomorphic = IsMoreGeneralElementsKindTransition(
-            target_receiver_maps.at(0)->elements_kind(),
-            receiver->GetElementsKind());
-      }
+    if (ic_state == MONOMORPHIC && (is_transition_stub || stub_kind == LOAD)) {
+      // The first time a receiver is seen that is a transitioned version of the
+      // previous monomorphic receiver type, assume the new ElementsKind is the
+      // monomorphic type. This benefits global arrays that only transition
+      // once, and all call sites accessing them are faster if they remain
+      // monomorphic. If this optimistic assumption is not true, the IC will
+      // miss again and it will become polymorphic and support both the
+      // untransitioned and transitioned maps.
+      monomorphic = IsMoreGeneralElementsKindTransition(
+          target_receiver_maps.at(0)->elements_kind(),
+          receiver->GetElementsKind());
     }
   }
 
   if (monomorphic) {
+    if (is_transition_stub) {
+      monomorphic_map = ComputeTransitionedMap(receiver, stub_kind);
+      ASSERT(*monomorphic_map != *receiver_map);
+      stub_kind = GetNoTransitionStubKind(stub_kind);
+    }
     return ComputeMonomorphicStub(
-        receiver, stub_kind, strict_mode, generic_stub);
+        monomorphic_map, stub_kind, strict_mode, generic_stub);
   }
   ASSERT(target() != *generic_stub);
 
   // Determine the list of receiver maps that this call site has seen,
   // adding the map that was just encountered.
-  Handle<Map> receiver_map(receiver->map());
   bool map_added =
       AddOneReceiverMapIfMissing(&target_receiver_maps, receiver_map);
   if (IsTransitionStubKind(stub_kind)) {
@@ -1644,8 +1703,7 @@ Handle<Code> KeyedIC::ComputeMonomorphicStubWithoutMapCheck(
     return string_stub();
   } else {
     ASSERT(receiver_map->has_dictionary_elements() ||
-           receiver_map->has_fast_elements() ||
-           receiver_map->has_fast_smi_only_elements() ||
+           receiver_map->has_fast_smi_or_object_elements() ||
            receiver_map->has_fast_double_elements() ||
            receiver_map->has_external_array_elements());
     bool is_js_array = receiver_map->instance_type() == JS_ARRAY_TYPE;
@@ -1656,17 +1714,16 @@ Handle<Code> KeyedIC::ComputeMonomorphicStubWithoutMapCheck(
 }
 
 
-Handle<Code> KeyedIC::ComputeMonomorphicStub(Handle<JSObject> receiver,
+Handle<Code> KeyedIC::ComputeMonomorphicStub(Handle<Map> receiver_map,
                                              StubKind stub_kind,
                                              StrictModeFlag strict_mode,
                                              Handle<Code> generic_stub) {
-  if (receiver->HasFastElements() ||
-      receiver->HasFastSmiOnlyElements() ||
-      receiver->HasExternalArrayElements() ||
-      receiver->HasFastDoubleElements() ||
-      receiver->HasDictionaryElements()) {
+  ElementsKind elements_kind = receiver_map->elements_kind();
+  if (IsFastElementsKind(elements_kind) ||
+      IsExternalArrayElementsKind(elements_kind) ||
+      IsDictionaryElementsKind(elements_kind)) {
     return isolate()->stub_cache()->ComputeKeyedLoadOrStoreElement(
-        receiver, stub_kind, strict_mode);
+        receiver_map, stub_kind, strict_mode);
   } else {
     return generic_stub;
   }
@@ -1681,15 +1738,26 @@ Handle<Map> KeyedIC::ComputeTransitionedMap(Handle<JSObject> receiver,
     case KeyedIC::STORE_AND_GROW_TRANSITION_SMI_TO_OBJECT:
     case KeyedIC::STORE_AND_GROW_TRANSITION_DOUBLE_TO_OBJECT:
       return JSObject::GetElementsTransitionMap(receiver, FAST_ELEMENTS);
-      break;
     case KeyedIC::STORE_TRANSITION_SMI_TO_DOUBLE:
     case KeyedIC::STORE_AND_GROW_TRANSITION_SMI_TO_DOUBLE:
       return JSObject::GetElementsTransitionMap(receiver, FAST_DOUBLE_ELEMENTS);
-      break;
-    default:
+    case KeyedIC::STORE_TRANSITION_HOLEY_SMI_TO_OBJECT:
+    case KeyedIC::STORE_TRANSITION_HOLEY_DOUBLE_TO_OBJECT:
+    case KeyedIC::STORE_AND_GROW_TRANSITION_HOLEY_SMI_TO_OBJECT:
+    case KeyedIC::STORE_AND_GROW_TRANSITION_HOLEY_DOUBLE_TO_OBJECT:
+      return JSObject::GetElementsTransitionMap(receiver,
+                                                FAST_HOLEY_ELEMENTS);
+    case KeyedIC::STORE_TRANSITION_HOLEY_SMI_TO_DOUBLE:
+    case KeyedIC::STORE_AND_GROW_TRANSITION_HOLEY_SMI_TO_DOUBLE:
+      return JSObject::GetElementsTransitionMap(receiver,
+                                                FAST_HOLEY_DOUBLE_ELEMENTS);
+    case KeyedIC::LOAD:
+    case KeyedIC::STORE_NO_TRANSITION:
+    case KeyedIC::STORE_AND_GROW_NO_TRANSITION:
       UNREACHABLE();
-      return Handle<Map>::null();
+      break;
   }
+  return Handle<Map>::null();
 }
 
 
@@ -1749,30 +1817,54 @@ KeyedIC::StubKind KeyedStoreIC::GetStubKind(Handle<JSObject> receiver,
 
   if (allow_growth) {
     // Handle growing array in stub if necessary.
-    if (receiver->HasFastSmiOnlyElements()) {
+    if (receiver->HasFastSmiElements()) {
       if (value->IsHeapNumber()) {
-        return STORE_AND_GROW_TRANSITION_SMI_TO_DOUBLE;
+        if (receiver->HasFastHoleyElements()) {
+          return STORE_AND_GROW_TRANSITION_HOLEY_SMI_TO_DOUBLE;
+        } else {
+          return STORE_AND_GROW_TRANSITION_SMI_TO_DOUBLE;
+        }
       }
       if (value->IsHeapObject()) {
-        return STORE_AND_GROW_TRANSITION_SMI_TO_OBJECT;
+        if (receiver->HasFastHoleyElements()) {
+          return STORE_AND_GROW_TRANSITION_HOLEY_SMI_TO_OBJECT;
+        } else {
+          return STORE_AND_GROW_TRANSITION_SMI_TO_OBJECT;
+        }
       }
     } else if (receiver->HasFastDoubleElements()) {
       if (!value->IsSmi() && !value->IsHeapNumber()) {
-        return STORE_AND_GROW_TRANSITION_DOUBLE_TO_OBJECT;
+        if (receiver->HasFastHoleyElements()) {
+          return STORE_AND_GROW_TRANSITION_HOLEY_DOUBLE_TO_OBJECT;
+        } else {
+          return STORE_AND_GROW_TRANSITION_DOUBLE_TO_OBJECT;
+        }
       }
     }
     return STORE_AND_GROW_NO_TRANSITION;
   } else {
     // Handle only in-bounds elements accesses.
-    if (receiver->HasFastSmiOnlyElements()) {
+    if (receiver->HasFastSmiElements()) {
       if (value->IsHeapNumber()) {
-        return STORE_TRANSITION_SMI_TO_DOUBLE;
+        if (receiver->HasFastHoleyElements()) {
+          return STORE_TRANSITION_HOLEY_SMI_TO_DOUBLE;
+        } else {
+          return STORE_TRANSITION_SMI_TO_DOUBLE;
+        }
       } else if (value->IsHeapObject()) {
-        return STORE_TRANSITION_SMI_TO_OBJECT;
+        if (receiver->HasFastHoleyElements()) {
+          return STORE_TRANSITION_HOLEY_SMI_TO_OBJECT;
+        } else {
+          return STORE_TRANSITION_SMI_TO_OBJECT;
+        }
       }
     } else if (receiver->HasFastDoubleElements()) {
       if (!value->IsSmi() && !value->IsHeapNumber()) {
-        return STORE_TRANSITION_DOUBLE_TO_OBJECT;
+        if (receiver->HasFastHoleyElements()) {
+          return STORE_TRANSITION_HOLEY_DOUBLE_TO_OBJECT;
+        } else {
+          return STORE_TRANSITION_DOUBLE_TO_OBJECT;
+        }
       }
     }
     return STORE_NO_TRANSITION;
@@ -1819,7 +1911,8 @@ MaybeObject* KeyedStoreIC::Store(State state,
     }
 
     // Update inline cache and stub cache.
-    if (FLAG_use_ic && !receiver->IsJSGlobalProxy()) {
+    if (FLAG_use_ic && !receiver->IsJSGlobalProxy() &&
+        !(FLAG_harmony_observation && receiver->map()->is_observed())) {
       LookupResult lookup(isolate());
       if (LookupForWrite(receiver, name, &lookup)) {
         UpdateCaches(&lookup, state, strict_mode, receiver, name, value);
@@ -1831,8 +1924,10 @@ MaybeObject* KeyedStoreIC::Store(State state,
   }
 
   // Do not use ICs for objects that require access checks (including
-  // the global object).
-  bool use_ic = FLAG_use_ic && !object->IsAccessCheckNeeded();
+  // the global object), or are observed.
+  bool use_ic = FLAG_use_ic && !object->IsAccessCheckNeeded() &&
+      !(FLAG_harmony_observation && object->IsJSObject() &&
+          JSObject::cast(*object)->map()->is_observed());
   ASSERT(!(use_ic && object->IsJSGlobalProxy()));
 
   if (use_ic) {
@@ -1872,10 +1967,10 @@ void KeyedStoreIC::UpdateCaches(LookupResult* lookup,
                                 Handle<Object> value) {
   ASSERT(!receiver->IsJSGlobalProxy());
   ASSERT(StoreICableLookup(lookup));
+  ASSERT(lookup->IsFound());
+
   // These are not cacheable, so we never see such LookupResults here.
-  ASSERT(lookup->type() != HANDLER);
-  // We get only called for properties or transitions, see StoreICableLookup.
-  ASSERT(lookup->type() != NULL_DESCRIPTOR);
+  ASSERT(!lookup->IsHandler());
 
   // If the property has a non-field type allowing map transitions
   // where there is extra room in the object, we leave the IC in its
@@ -1893,21 +1988,25 @@ void KeyedStoreIC::UpdateCaches(LookupResult* lookup,
           name, receiver, lookup->GetFieldIndex(),
           Handle<Map>::null(), strict_mode);
       break;
-    case MAP_TRANSITION:
-      if (lookup->GetAttributes() == NONE) {
-        Handle<Map> transition(lookup->GetTransitionMap());
-        int index = transition->PropertyIndexFor(*name);
+    case TRANSITION: {
+      Handle<Map> transition(lookup->GetTransitionTarget());
+      int descriptor = transition->LastAdded();
+
+      DescriptorArray* target_descriptors = transition->instance_descriptors();
+      PropertyDetails details = target_descriptors->GetDetails(descriptor);
+
+      if (details.type() == FIELD && details.attributes() == NONE) {
+        int field_index = target_descriptors->GetFieldIndex(descriptor);
         code = isolate()->stub_cache()->ComputeKeyedStoreField(
-            name, receiver, index, transition, strict_mode);
+            name, receiver, field_index, transition, strict_mode);
         break;
       }
       // fall through.
+    }
     case NORMAL:
     case CONSTANT_FUNCTION:
     case CALLBACKS:
     case INTERCEPTOR:
-    case CONSTANT_TRANSITION:
-    case ELEMENTS_TRANSITION:
       // Always rewrite to the generic case so that we do not
       // repeatedly try to rewrite.
       code = (strict_mode == kStrictMode)
@@ -1915,7 +2014,7 @@ void KeyedStoreIC::UpdateCaches(LookupResult* lookup,
           : generic_stub();
       break;
     case HANDLER:
-    case NULL_DESCRIPTOR:
+    case NONEXISTENT:
       UNREACHABLE();
       return;
   }
@@ -2050,7 +2149,7 @@ RUNTIME_FUNCTION(MaybeObject*, StoreIC_ArrayLength) {
   // The length property has to be a writable callback property.
   LookupResult debug_lookup(isolate);
   receiver->LocalLookup(isolate->heap()->length_symbol(), &debug_lookup);
-  ASSERT(debug_lookup.type() == CALLBACKS && !debug_lookup.IsReadOnly());
+  ASSERT(debug_lookup.IsPropertyCallbacks() && !debug_lookup.IsReadOnly());
 #endif
 
   Object* result;
@@ -2491,7 +2590,8 @@ CompareIC::State CompareIC::ComputeState(Code* target) {
 
 Token::Value CompareIC::ComputeOperation(Code* target) {
   ASSERT(target->major_key() == CodeStub::CompareIC);
-  return static_cast<Token::Value>(target->compare_operation());
+  return static_cast<Token::Value>(
+      target->compare_operation() + Token::EQ);
 }
 
 
@@ -2501,7 +2601,7 @@ const char* CompareIC::GetStateName(State state) {
     case SMIS: return "SMIS";
     case HEAP_NUMBERS: return "HEAP_NUMBERS";
     case OBJECTS: return "OBJECTS";
-    case KNOWN_OBJECTS: return "OBJECTS";
+    case KNOWN_OBJECTS: return "KNOWN_OBJECTS";
     case SYMBOLS: return "SYMBOLS";
     case STRINGS: return "STRINGS";
     case GENERIC: return "GENERIC";

@@ -90,6 +90,13 @@ class MacroAssembler: public Assembler {
                      Label* condition_met,
                      Label::Distance condition_met_distance = Label::kFar);
 
+  void CheckPageFlagForMap(
+      Handle<Map> map,
+      int mask,
+      Condition cc,
+      Label* condition_met,
+      Label::Distance condition_met_distance = Label::kFar);
+
   // Check if object is in new space.  Jumps if the object is not in new space.
   // The register scratch can be object itself, but scratch will be clobbered.
   void JumpIfNotInNewSpace(Register object,
@@ -194,6 +201,16 @@ class MacroAssembler: public Assembler {
       RememberedSetAction remembered_set_action = EMIT_REMEMBERED_SET,
       SmiCheck smi_check = INLINE_SMI_CHECK);
 
+  // For page containing |object| mark the region covering the object's map
+  // dirty. |object| is the object being stored into, |map| is the Map object
+  // that was stored.
+  void RecordWriteForMap(
+      Register object,
+      Handle<Map> map,
+      Register scratch1,
+      Register scratch2,
+      SaveFPRegsMode save_fp);
+
 #ifdef ENABLE_DEBUGGER_SUPPORT
   // ---------------------------------------------------------------------------
   // Debugger Support
@@ -222,8 +239,8 @@ class MacroAssembler: public Assembler {
   void LoadContext(Register dst, int context_chain_length);
 
   // Conditionally load the cached Array transitioned map of type
-  // transitioned_kind from the global context if the map in register
-  // map_in_out is the cached Array map in the global context of
+  // transitioned_kind from the native context if the map in register
+  // map_in_out is the cached Array map in the native context of
   // expected_kind.
   void LoadTransitionedArrayMapConditional(
       ElementsKind expected_kind,
@@ -235,7 +252,8 @@ class MacroAssembler: public Assembler {
   // Load the initial map for new Arrays from a JSFunction.
   void LoadInitialArrayMap(Register function_in,
                            Register scratch,
-                           Register map_out);
+                           Register map_out,
+                           bool can_have_holes);
 
   // Load the global function with the given index.
   void LoadGlobalFunction(int index, Register function);
@@ -357,9 +375,9 @@ class MacroAssembler: public Assembler {
 
   // Check if a map for a JSObject indicates that the object has fast smi only
   // elements.  Jump to the specified label if it does not.
-  void CheckFastSmiOnlyElements(Register map,
-                                Label* fail,
-                                Label::Distance distance = Label::kFar);
+  void CheckFastSmiElements(Register map,
+                            Label* fail,
+                            Label::Distance distance = Label::kFar);
 
   // Check to see if maybe_number can be stored as a double in
   // FastDoubleElements. If it can, store it at the index specified by key in
@@ -449,6 +467,8 @@ class MacroAssembler: public Assembler {
     j(not_carry, is_smi);
   }
 
+  void LoadUint32(XMMRegister dst, Register src, XMMRegister scratch);
+
   // Jump the register contains a smi.
   inline void JumpIfSmi(Register value,
                         Label* smi_label,
@@ -472,20 +492,29 @@ class MacroAssembler: public Assembler {
   }
 
   void LoadInstanceDescriptors(Register map, Register descriptors);
+  void EnumLength(Register dst, Register map);
+  void NumberOfOwnDescriptors(Register dst, Register map);
 
+  template<typename Field>
+  void DecodeField(Register reg) {
+    static const int shift = Field::kShift;
+    static const int mask = (Field::kMask >> Field::kShift) << kSmiTagSize;
+    sar(reg, shift);
+    and_(reg, Immediate(mask));
+  }
   void LoadPowerOf2(XMMRegister dst, Register scratch, int power);
 
-  // Abort execution if argument is not a number. Used in debug code.
-  void AbortIfNotNumber(Register object);
+  // Abort execution if argument is not a number, enabled via --debug-code.
+  void AssertNumber(Register object);
 
-  // Abort execution if argument is not a smi. Used in debug code.
-  void AbortIfNotSmi(Register object);
+  // Abort execution if argument is not a smi, enabled via --debug-code.
+  void AssertSmi(Register object);
 
-  // Abort execution if argument is a smi. Used in debug code.
-  void AbortIfSmi(Register object);
+  // Abort execution if argument is a smi, enabled via --debug-code.
+  void AssertNotSmi(Register object);
 
-  // Abort execution if argument is a string. Used in debug code.
-  void AbortIfNotString(Register object);
+  // Abort execution if argument is not a string, enabled via --debug-code.
+  void AssertString(Register object);
 
   // ---------------------------------------------------------------------------
   // Exception handling
@@ -670,7 +699,7 @@ class MacroAssembler: public Assembler {
   // Runtime calls
 
   // Call a code stub.  Generate the code if necessary.
-  void CallStub(CodeStub* stub, unsigned ast_id = kNoASTId);
+  void CallStub(CodeStub* stub, TypeFeedbackId ast_id = TypeFeedbackId::None());
 
   // Tail call a code stub (jump).  Generate the code if necessary.
   void TailCallStub(CodeStub* stub);
@@ -943,11 +972,11 @@ inline Operand ContextOperand(Register context, int index) {
 
 
 inline Operand GlobalObjectOperand() {
-  return ContextOperand(esi, Context::GLOBAL_INDEX);
+  return ContextOperand(esi, Context::GLOBAL_OBJECT_INDEX);
 }
 
 static inline Operand QmlGlobalObjectOperand() {
-  return ContextOperand(esi, Context::QML_GLOBAL_INDEX);
+  return ContextOperand(esi, Context::QML_GLOBAL_OBJECT_INDEX);
 }
 
 // Generates an Operand for saving parameters after PrepareCallApiFunction.

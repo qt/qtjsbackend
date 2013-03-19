@@ -31,7 +31,9 @@
 
 #include "platform.h"
 
+#ifndef _WIN32_WCE
 #include "sys/stat.h"
+#endif
 
 namespace v8 {
 namespace internal {
@@ -45,10 +47,19 @@ void PrintF(const char* format, ...) {
 }
 
 
-void PrintF(FILE* out, const char* format, ...) {
+void FPrintF(FILE* out, const char* format, ...) {
   va_list arguments;
   va_start(arguments, format);
   OS::VFPrint(out, format, arguments);
+  va_end(arguments);
+}
+
+
+void PrintPID(const char* format, ...) {
+  OS::Print("[%d] ", OS::GetCurrentProcessId());
+  va_list arguments;
+  va_start(arguments, format);
+  OS::VPrint(format, arguments);
   va_end(arguments);
 }
 
@@ -124,7 +135,11 @@ char* ReadCharsFromFile(FILE* file,
 
   // Get the size of the file and rewind it.
   *size = ftell(file);
+#ifdef _WIN32_WCE
+  fseek(file, 0, SEEK_SET);
+#else
   rewind(file);
+#endif // _WIN32_WCE
 
   char* result = NewArray<char>(*size + extra_space);
   for (int i = 0; i < *size && feof(file) == 0;) {

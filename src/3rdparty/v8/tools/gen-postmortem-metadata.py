@@ -61,7 +61,7 @@ consts_misc = [
 
     { 'name': 'StringEncodingMask',     'value': 'kStringEncodingMask' },
     { 'name': 'TwoByteStringTag',       'value': 'kTwoByteStringTag' },
-    { 'name': 'AsciiStringTag',         'value': 'kAsciiStringTag' },
+    { 'name': 'AsciiStringTag',         'value': 'kOneByteStringTag' },
 
     { 'name': 'StringRepresentationMask',
         'value': 'kStringRepresentationMask' },
@@ -78,8 +78,8 @@ consts_misc = [
     { 'name': 'SmiValueShift',          'value': 'kSmiTagSize' },
     { 'name': 'PointerSizeLog2',        'value': 'kPointerSizeLog2' },
 
-    { 'name': 'prop_idx_content',
-        'value': 'DescriptorArray::kContentArrayIndex' },
+    { 'name': 'prop_idx_transitions',
+        'value': 'DescriptorArray::kTransitionsIndex' },
     { 'name': 'prop_idx_first',
         'value': 'DescriptorArray::kFirstIndex' },
     { 'name': 'prop_type_field',

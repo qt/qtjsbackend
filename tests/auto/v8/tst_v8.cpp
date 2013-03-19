@@ -68,6 +68,7 @@ private slots:
     void fallbackpropertyhandler_nonempty();
     void completehash();
     void stringhashcomparison();
+    void qmlmodevariables();
 };
 
 void tst_v8::eval()
@@ -138,6 +139,11 @@ void tst_v8::completehash()
 void tst_v8::stringhashcomparison()
 {
     QVERIFY(v8test_stringhashcomparison());
+}
+
+void tst_v8::qmlmodevariables()
+{
+    QVERIFY(v8test_qmlmodevariables());
 }
 
 int main(int argc, char *argv[])

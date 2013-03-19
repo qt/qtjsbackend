@@ -36,29 +36,45 @@ namespace internal {
 
 // This class implements the following abstract grammar of interfaces
 // (i.e. module types):
-//   interface ::= UNDETERMINED | VALUE | MODULE(exports)
+//   interface ::= UNDETERMINED | VALUE | CONST | MODULE(exports)
 //   exports ::= {name : interface, ...}
-// A frozen module type is one that is fully determined. Unification does not
-// allow adding additional exports to frozen interfaces.
-// Otherwise, unifying modules merges their exports.
+// A frozen type is one that is fully determined. Unification does not
+// allow to turn non-const values into const, or adding additional exports to
+// frozen interfaces. Otherwise, unifying modules merges their exports.
 // Undetermined types are unification variables that can be unified freely.
+// There is a natural subsort lattice that reflects the increase of knowledge:
+//
+//            undetermined
+//           //     |    \\                                                    .
+//       value  (frozen)  module
+//      //   \\  /    \  //
+//  const   fr.value  fr.module
+//      \\    /
+//     fr.const
+//
+// where the bold lines are the only transitions allowed.
 
 class Interface : public ZoneObject {
  public:
   // ---------------------------------------------------------------------------
   // Factory methods.
 
+  static Interface* NewUnknown(Zone* zone) {
+    return new(zone) Interface(NONE);
+  }
+
   static Interface* NewValue() {
     static Interface value_interface(VALUE + FROZEN);  // Cached.
     return &value_interface;
   }
 
-  static Interface* NewUnknown() {
-    return new Interface(NONE);
+  static Interface* NewConst() {
+    static Interface value_interface(VALUE + CONST + FROZEN);  // Cached.
+    return &value_interface;
   }
 
-  static Interface* NewModule() {
-    return new Interface(MODULE);
+  static Interface* NewModule(Zone* zone) {
+    return new(zone) Interface(MODULE);
   }
 
   // ---------------------------------------------------------------------------
@@ -66,18 +82,24 @@ class Interface : public ZoneObject {
 
   // Add a name to the list of exports. If it already exists, unify with
   // interface, otherwise insert unless this is closed.
-  void Add(Handle<String> name, Interface* interface, bool* ok) {
-    DoAdd(name.location(), name->Hash(), interface, ok);
+  void Add(Handle<String> name, Interface* interface, Zone* zone, bool* ok) {
+    DoAdd(name.location(), name->Hash(), interface, zone, ok);
   }
 
   // Unify with another interface. If successful, both interface objects will
   // represent the same type, and changes to one are reflected in the other.
-  void Unify(Interface* that, bool* ok);
+  void Unify(Interface* that, Zone* zone, bool* ok);
 
   // Determine this interface to be a value interface.
   void MakeValue(bool* ok) {
     *ok = !IsModule();
     if (*ok) Chase()->flags_ |= VALUE;
+  }
+
+  // Determine this interface to be an immutable interface.
+  void MakeConst(bool* ok) {
+    *ok = !IsModule() && (IsConst() || !IsFrozen());
+    if (*ok) Chase()->flags_ |= VALUE + CONST;
   }
 
   // Determine this interface to be a module interface.
@@ -107,6 +129,9 @@ class Interface : public ZoneObject {
   // Check whether this is a value type.
   bool IsValue() { return Chase()->flags_ & VALUE; }
 
+  // Check whether this is a constant type.
+  bool IsConst() { return Chase()->flags_ & CONST; }
+
   // Check whether this is a module type.
   bool IsModule() { return Chase()->flags_ & MODULE; }
 
@@ -116,7 +141,7 @@ class Interface : public ZoneObject {
   Handle<JSModule> Instance() { return Chase()->instance_; }
 
   // Look up an exported name. Returns NULL if not (yet) defined.
-  Interface* Lookup(Handle<String> name);
+  Interface* Lookup(Handle<String> name, Zone* zone);
 
   // ---------------------------------------------------------------------------
   // Iterators.
@@ -161,8 +186,9 @@ class Interface : public ZoneObject {
   enum Flags {    // All flags are monotonic
     NONE = 0,
     VALUE = 1,    // This type describes a value
-    MODULE = 2,   // This type describes a module
-    FROZEN = 4    // This type is fully determined
+    CONST = 2,    // This type describes a constant
+    MODULE = 4,   // This type describes a module
+    FROZEN = 8    // This type is fully determined
   };
 
   int flags_;
@@ -187,8 +213,9 @@ class Interface : public ZoneObject {
     return result;
   }
 
-  void DoAdd(void* name, uint32_t hash, Interface* interface, bool* ok);
-  void DoUnify(Interface* that, bool* ok);
+  void DoAdd(void* name, uint32_t hash, Interface* interface, Zone* zone,
+             bool* ok);
+  void DoUnify(Interface* that, bool* ok, Zone* zone);
 };
 
 } }  // namespace v8::internal

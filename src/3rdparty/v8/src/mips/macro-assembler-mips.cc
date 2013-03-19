@@ -361,28 +361,29 @@ void MacroAssembler::CheckAccessGlobalProxy(Register holder_reg,
       scratch, Operand(zero_reg));
 #endif
 
-  // Load the global context of the current context.
-  int offset = Context::kHeaderSize + Context::GLOBAL_INDEX * kPointerSize;
+  // Load the native context of the current context.
+  int offset =
+      Context::kHeaderSize + Context::GLOBAL_OBJECT_INDEX * kPointerSize;
   lw(scratch, FieldMemOperand(scratch, offset));
-  lw(scratch, FieldMemOperand(scratch, GlobalObject::kGlobalContextOffset));
+  lw(scratch, FieldMemOperand(scratch, GlobalObject::kNativeContextOffset));
 
-  // Check the context is a global context.
+  // Check the context is a native context.
   if (emit_debug_code()) {
     // TODO(119): Avoid push(holder_reg)/pop(holder_reg).
     push(holder_reg);  // Temporarily save holder on the stack.
-    // Read the first word and compare to the global_context_map.
+    // Read the first word and compare to the native_context_map.
     lw(holder_reg, FieldMemOperand(scratch, HeapObject::kMapOffset));
-    LoadRoot(at, Heap::kGlobalContextMapRootIndex);
-    Check(eq, "JSGlobalObject::global_context should be a global context.",
+    LoadRoot(at, Heap::kNativeContextMapRootIndex);
+    Check(eq, "JSGlobalObject::native_context should be a native context.",
           holder_reg, Operand(at));
     pop(holder_reg);  // Restore holder.
   }
 
   // Check if both contexts are the same.
-  lw(at, FieldMemOperand(holder_reg, JSGlobalProxy::kContextOffset));
+  lw(at, FieldMemOperand(holder_reg, JSGlobalProxy::kNativeContextOffset));
   Branch(&same_contexts, eq, scratch, Operand(at));
 
-  // Check the context is a global context.
+  // Check the context is a native context.
   if (emit_debug_code()) {
     // TODO(119): Avoid push(holder_reg)/pop(holder_reg).
     push(holder_reg);  // Temporarily save holder on the stack.
@@ -392,13 +393,13 @@ void MacroAssembler::CheckAccessGlobalProxy(Register holder_reg,
           holder_reg, Operand(at));
 
     lw(holder_reg, FieldMemOperand(holder_reg, HeapObject::kMapOffset));
-    LoadRoot(at, Heap::kGlobalContextMapRootIndex);
-    Check(eq, "JSGlobalObject::global_context should be a global context.",
+    LoadRoot(at, Heap::kNativeContextMapRootIndex);
+    Check(eq, "JSGlobalObject::native_context should be a native context.",
           holder_reg, Operand(at));
     // Restore at is not needed. at is reloaded below.
     pop(holder_reg);  // Restore holder.
     // Restore at to holder's context.
-    lw(at, FieldMemOperand(holder_reg, JSGlobalProxy::kContextOffset));
+    lw(at, FieldMemOperand(holder_reg, JSGlobalProxy::kNativeContextOffset));
   }
 
   // Check that the security token in the calling global object is
@@ -2559,7 +2560,7 @@ void MacroAssembler::Call(Address target,
 
 int MacroAssembler::CallSize(Handle<Code> code,
                              RelocInfo::Mode rmode,
-                             unsigned ast_id,
+                             TypeFeedbackId ast_id,
                              Condition cond,
                              Register rs,
                              const Operand& rt,
@@ -2571,7 +2572,7 @@ int MacroAssembler::CallSize(Handle<Code> code,
 
 void MacroAssembler::Call(Handle<Code> code,
                           RelocInfo::Mode rmode,
-                          unsigned ast_id,
+                          TypeFeedbackId ast_id,
                           Condition cond,
                           Register rs,
                           const Operand& rt,
@@ -2580,7 +2581,7 @@ void MacroAssembler::Call(Handle<Code> code,
   Label start;
   bind(&start);
   ASSERT(RelocInfo::IsCodeTarget(rmode));
-  if (rmode == RelocInfo::CODE_TARGET && ast_id != kNoASTId) {
+  if (rmode == RelocInfo::CODE_TARGET && !ast_id.IsNone()) {
     SetRecordedAstId(ast_id);
     rmode = RelocInfo::CODE_TARGET_WITH_ID;
   }
@@ -3341,33 +3342,39 @@ void MacroAssembler::InitializeFieldsWithFiller(Register start_offset,
 void MacroAssembler::CheckFastElements(Register map,
                                        Register scratch,
                                        Label* fail) {
-  STATIC_ASSERT(FAST_SMI_ONLY_ELEMENTS == 0);
-  STATIC_ASSERT(FAST_ELEMENTS == 1);
+  STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
+  STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
+  STATIC_ASSERT(FAST_ELEMENTS == 2);
+  STATIC_ASSERT(FAST_HOLEY_ELEMENTS == 3);
   lbu(scratch, FieldMemOperand(map, Map::kBitField2Offset));
-  Branch(fail, hi, scratch, Operand(Map::kMaximumBitField2FastElementValue));
+  Branch(fail, hi, scratch,
+         Operand(Map::kMaximumBitField2FastHoleyElementValue));
 }
 
 
 void MacroAssembler::CheckFastObjectElements(Register map,
                                              Register scratch,
                                              Label* fail) {
-  STATIC_ASSERT(FAST_SMI_ONLY_ELEMENTS == 0);
-  STATIC_ASSERT(FAST_ELEMENTS == 1);
+  STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
+  STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
+  STATIC_ASSERT(FAST_ELEMENTS == 2);
+  STATIC_ASSERT(FAST_HOLEY_ELEMENTS == 3);
   lbu(scratch, FieldMemOperand(map, Map::kBitField2Offset));
   Branch(fail, ls, scratch,
-         Operand(Map::kMaximumBitField2FastSmiOnlyElementValue));
+         Operand(Map::kMaximumBitField2FastHoleySmiElementValue));
   Branch(fail, hi, scratch,
-         Operand(Map::kMaximumBitField2FastElementValue));
+         Operand(Map::kMaximumBitField2FastHoleyElementValue));
 }
 
 
-void MacroAssembler::CheckFastSmiOnlyElements(Register map,
-                                              Register scratch,
-                                              Label* fail) {
-  STATIC_ASSERT(FAST_SMI_ONLY_ELEMENTS == 0);
+void MacroAssembler::CheckFastSmiElements(Register map,
+                                          Register scratch,
+                                          Label* fail) {
+  STATIC_ASSERT(FAST_SMI_ELEMENTS == 0);
+  STATIC_ASSERT(FAST_HOLEY_SMI_ELEMENTS == 1);
   lbu(scratch, FieldMemOperand(map, Map::kBitField2Offset));
   Branch(fail, hi, scratch,
-         Operand(Map::kMaximumBitField2FastSmiOnlyElementValue));
+         Operand(Map::kMaximumBitField2FastHoleySmiElementValue));
 }
 
 
@@ -3438,7 +3445,7 @@ void MacroAssembler::StoreNumberToDoubleElements(Register value_reg,
     destination = FloatingPointHelper::kCoreRegisters;
   }
 
-  Register untagged_value = receiver_reg;
+  Register untagged_value = elements_reg;
   SmiUntag(untagged_value, value_reg);
   FloatingPointHelper::ConvertIntToDouble(this,
                                           untagged_value,
@@ -3467,28 +3474,33 @@ void MacroAssembler::CompareMapAndBranch(Register obj,
                                          Label* branch_to,
                                          CompareMapMode mode) {
   lw(scratch, FieldMemOperand(obj, HeapObject::kMapOffset));
+  CompareMapAndBranch(scratch, map, early_success, cond, branch_to, mode);
+}
+
+
+void MacroAssembler::CompareMapAndBranch(Register obj_map,
+                                         Handle<Map> map,
+                                         Label* early_success,
+                                         Condition cond,
+                                         Label* branch_to,
+                                         CompareMapMode mode) {
   Operand right = Operand(map);
   if (mode == ALLOW_ELEMENT_TRANSITION_MAPS) {
-    Map* transitioned_fast_element_map(
-        map->LookupElementsTransitionMap(FAST_ELEMENTS, NULL));
-    ASSERT(transitioned_fast_element_map == NULL ||
-           map->elements_kind() != FAST_ELEMENTS);
-    if (transitioned_fast_element_map != NULL) {
-      Branch(early_success, eq, scratch, right);
-      right = Operand(Handle<Map>(transitioned_fast_element_map));
-    }
-
-    Map* transitioned_double_map(
-        map->LookupElementsTransitionMap(FAST_DOUBLE_ELEMENTS, NULL));
-    ASSERT(transitioned_double_map == NULL ||
-           map->elements_kind() == FAST_SMI_ONLY_ELEMENTS);
-    if (transitioned_double_map != NULL) {
-      Branch(early_success, eq, scratch, right);
-      right = Operand(Handle<Map>(transitioned_double_map));
+    ElementsKind kind = map->elements_kind();
+    if (IsFastElementsKind(kind)) {
+      bool packed = IsFastPackedElementsKind(kind);
+      Map* current_map = *map;
+      while (CanTransitionToMoreGeneralFastElementsKind(kind, packed)) {
+        kind = GetNextMoreGeneralFastElementsKind(kind, packed);
+        current_map = current_map->LookupElementsTransitionMap(kind);
+        if (!current_map) break;
+        Branch(early_success, eq, obj_map, right);
+        right = Operand(Handle<Map>(current_map));
+      }
     }
   }
 
-  Branch(branch_to, cond, scratch, right);
+  Branch(branch_to, cond, obj_map, right);
 }
 
 
@@ -3900,7 +3912,8 @@ void MacroAssembler::CallStub(CodeStub* stub,
                               const Operand& r2,
                               BranchDelaySlot bd) {
   ASSERT(AllowThisStubCall(stub));  // Stub calls are not allowed in some stubs.
-  Call(stub->GetCode(), RelocInfo::CODE_TARGET, kNoASTId, cond, r1, r2, bd);
+  Call(stub->GetCode(), RelocInfo::CODE_TARGET, TypeFeedbackId::None(),
+       cond, r1, r2, bd);
 }
 
 
@@ -4270,7 +4283,7 @@ void MacroAssembler::InvokeBuiltin(Builtins::JavaScript id,
 void MacroAssembler::GetBuiltinFunction(Register target,
                                         Builtins::JavaScript id) {
   // Load the builtins object into target register.
-  lw(target, MemOperand(cp, Context::SlotOffset(Context::GLOBAL_INDEX)));
+  lw(target, MemOperand(cp, Context::SlotOffset(Context::GLOBAL_OBJECT_INDEX)));
   lw(target, FieldMemOperand(target, GlobalObject::kBuiltinsOffset));
   // Load the JavaScript builtin function from the builtins object.
   lw(target, FieldMemOperand(target,
@@ -4439,31 +4452,43 @@ void MacroAssembler::LoadTransitionedArrayMapConditional(
     Register scratch,
     Label* no_map_match) {
   // Load the global or builtins object from the current context.
-  lw(scratch, MemOperand(cp, Context::SlotOffset(Context::GLOBAL_INDEX)));
-  lw(scratch, FieldMemOperand(scratch, GlobalObject::kGlobalContextOffset));
+  lw(scratch,
+     MemOperand(cp, Context::SlotOffset(Context::GLOBAL_OBJECT_INDEX)));
+  lw(scratch, FieldMemOperand(scratch, GlobalObject::kNativeContextOffset));
 
   // Check that the function's map is the same as the expected cached map.
-  int expected_index =
-      Context::GetContextMapIndexFromElementsKind(expected_kind);
-  lw(at, MemOperand(scratch, Context::SlotOffset(expected_index)));
+  lw(scratch,
+     MemOperand(scratch,
+                Context::SlotOffset(Context::JS_ARRAY_MAPS_INDEX)));
+  size_t offset = expected_kind * kPointerSize +
+      FixedArrayBase::kHeaderSize;
+  lw(at, FieldMemOperand(scratch, offset));
   Branch(no_map_match, ne, map_in_out, Operand(at));
 
   // Use the transitioned cached map.
-  int trans_index =
-      Context::GetContextMapIndexFromElementsKind(transitioned_kind);
-  lw(map_in_out, MemOperand(scratch, Context::SlotOffset(trans_index)));
+  offset = transitioned_kind * kPointerSize +
+      FixedArrayBase::kHeaderSize;
+  lw(map_in_out, FieldMemOperand(scratch, offset));
 }
 
 
 void MacroAssembler::LoadInitialArrayMap(
-    Register function_in, Register scratch, Register map_out) {
+    Register function_in, Register scratch,
+    Register map_out, bool can_have_holes) {
   ASSERT(!function_in.is(map_out));
   Label done;
   lw(map_out, FieldMemOperand(function_in,
                               JSFunction::kPrototypeOrInitialMapOffset));
   if (!FLAG_smi_only_arrays) {
-    LoadTransitionedArrayMapConditional(FAST_SMI_ONLY_ELEMENTS,
-                                        FAST_ELEMENTS,
+    ElementsKind kind = can_have_holes ? FAST_HOLEY_ELEMENTS : FAST_ELEMENTS;
+    LoadTransitionedArrayMapConditional(FAST_SMI_ELEMENTS,
+                                        kind,
+                                        map_out,
+                                        scratch,
+                                        &done);
+  } else if (can_have_holes) {
+    LoadTransitionedArrayMapConditional(FAST_SMI_ELEMENTS,
+                                        FAST_HOLEY_SMI_ELEMENTS,
                                         map_out,
                                         scratch,
                                         &done);
@@ -4474,11 +4499,12 @@ void MacroAssembler::LoadInitialArrayMap(
 
 void MacroAssembler::LoadGlobalFunction(int index, Register function) {
   // Load the global or builtins object from the current context.
-  lw(function, MemOperand(cp, Context::SlotOffset(Context::GLOBAL_INDEX)));
-  // Load the global context from the global or builtins object.
+  lw(function,
+     MemOperand(cp, Context::SlotOffset(Context::GLOBAL_OBJECT_INDEX)));
+  // Load the native context from the global or builtins object.
   lw(function, FieldMemOperand(function,
-                               GlobalObject::kGlobalContextOffset));
-  // Load the function from the global context.
+                               GlobalObject::kNativeContextOffset));
+  // Load the function from the native context.
   lw(function, MemOperand(function, Context::SlotOffset(index)));
 }
 
@@ -4772,38 +4798,46 @@ void MacroAssembler::JumpIfEitherSmi(Register reg1,
 }
 
 
-void MacroAssembler::AbortIfSmi(Register object) {
-  STATIC_ASSERT(kSmiTag == 0);
-  andi(at, object, kSmiTagMask);
-  Assert(ne, "Operand is a smi", at, Operand(zero_reg));
+void MacroAssembler::AssertNotSmi(Register object) {
+  if (emit_debug_code()) {
+    STATIC_ASSERT(kSmiTag == 0);
+    andi(at, object, kSmiTagMask);
+    Check(ne, "Operand is a smi", at, Operand(zero_reg));
+  }
 }
 
 
-void MacroAssembler::AbortIfNotSmi(Register object) {
-  STATIC_ASSERT(kSmiTag == 0);
-  andi(at, object, kSmiTagMask);
-  Assert(eq, "Operand is a smi", at, Operand(zero_reg));
+void MacroAssembler::AssertSmi(Register object) {
+  if (emit_debug_code()) {
+    STATIC_ASSERT(kSmiTag == 0);
+    andi(at, object, kSmiTagMask);
+    Check(eq, "Operand is a smi", at, Operand(zero_reg));
+  }
 }
 
 
-void MacroAssembler::AbortIfNotString(Register object) {
-  STATIC_ASSERT(kSmiTag == 0);
-  And(t0, object, Operand(kSmiTagMask));
-  Assert(ne, "Operand is not a string", t0, Operand(zero_reg));
-  push(object);
-  lw(object, FieldMemOperand(object, HeapObject::kMapOffset));
-  lbu(object, FieldMemOperand(object, Map::kInstanceTypeOffset));
-  Assert(lo, "Operand is not a string", object, Operand(FIRST_NONSTRING_TYPE));
-  pop(object);
+void MacroAssembler::AssertString(Register object) {
+  if (emit_debug_code()) {
+    STATIC_ASSERT(kSmiTag == 0);
+    And(t0, object, Operand(kSmiTagMask));
+    Check(ne, "Operand is a smi and not a string", t0, Operand(zero_reg));
+    push(object);
+    lw(object, FieldMemOperand(object, HeapObject::kMapOffset));
+    lbu(object, FieldMemOperand(object, Map::kInstanceTypeOffset));
+    Check(lo, "Operand is not a string", object, Operand(FIRST_NONSTRING_TYPE));
+    pop(object);
+  }
 }
 
 
-void MacroAssembler::AbortIfNotRootValue(Register src,
-                                         Heap::RootListIndex root_value_index,
-                                         const char* message) {
-  ASSERT(!src.is(at));
-  LoadRoot(at, root_value_index);
-  Assert(eq, message, src, Operand(at));
+void MacroAssembler::AssertRootValue(Register src,
+                                     Heap::RootListIndex root_value_index,
+                                     const char* message) {
+  if (emit_debug_code()) {
+    ASSERT(!src.is(at));
+    LoadRoot(at, root_value_index);
+    Check(eq, message, src, Operand(at));
+  }
 }
 
 
@@ -5238,7 +5272,7 @@ void MacroAssembler::EnsureNotWhite(
   // For ASCII (char-size of 1) we shift the smi tag away to get the length.
   // For UC16 (char-size of 2) we just leave the smi tag in place, thereby
   // getting the length multiplied by 2.
-  ASSERT(kAsciiStringTag == 4 && kStringEncodingMask == 4);
+  ASSERT(kOneByteStringTag == 4 && kStringEncodingMask == 4);
   ASSERT(kSmiTag == 0 && kSmiTagSize == 1);
   lw(t9, FieldMemOperand(value, String::kLengthOffset));
   And(t8, instance_type, Operand(kStringEncodingMask));
@@ -5269,54 +5303,54 @@ void MacroAssembler::EnsureNotWhite(
 
 void MacroAssembler::LoadInstanceDescriptors(Register map,
                                              Register descriptors) {
-  lw(descriptors,
-     FieldMemOperand(map, Map::kInstanceDescriptorsOrBitField3Offset));
-  Label not_smi;
-  JumpIfNotSmi(descriptors, &not_smi);
-  LoadRoot(descriptors, Heap::kEmptyDescriptorArrayRootIndex);
-  bind(&not_smi);
+  lw(descriptors, FieldMemOperand(map, Map::kDescriptorsOffset));
+}
+
+
+void MacroAssembler::NumberOfOwnDescriptors(Register dst, Register map) {
+  lw(dst, FieldMemOperand(map, Map::kBitField3Offset));
+  DecodeField<Map::NumberOfOwnDescriptorsBits>(dst);
+}
+
+
+void MacroAssembler::EnumLength(Register dst, Register map) {
+  STATIC_ASSERT(Map::EnumLengthBits::kShift == 0);
+  lw(dst, FieldMemOperand(map, Map::kBitField3Offset));
+  And(dst, dst, Operand(Smi::FromInt(Map::EnumLengthBits::kMask)));
 }
 
 
 void MacroAssembler::CheckEnumCache(Register null_value, Label* call_runtime) {
-  Label next;
-  // Preload a couple of values used in the loop.
   Register  empty_fixed_array_value = t2;
   LoadRoot(empty_fixed_array_value, Heap::kEmptyFixedArrayRootIndex);
-  Register empty_descriptor_array_value = t3;
-  LoadRoot(empty_descriptor_array_value,
-           Heap::kEmptyDescriptorArrayRootIndex);
-  mov(a1, a0);
+  Label next, start;
+  mov(a2, a0);
+
+  // Check if the enum length field is properly initialized, indicating that
+  // there is an enum cache.
+  lw(a1, FieldMemOperand(a2, HeapObject::kMapOffset));
+
+  EnumLength(a3, a1);
+  Branch(call_runtime, eq, a3, Operand(Smi::FromInt(Map::kInvalidEnumCache)));
+
+  jmp(&start);
+
   bind(&next);
-
-  // Check that there are no elements.  Register a1 contains the
-  // current JS object we've reached through the prototype chain.
-  lw(a2, FieldMemOperand(a1, JSObject::kElementsOffset));
-  Branch(call_runtime, ne, a2, Operand(empty_fixed_array_value));
-
-  // Check that instance descriptors are not empty so that we can
-  // check for an enum cache.  Leave the map in a2 for the subsequent
-  // prototype load.
-  lw(a2, FieldMemOperand(a1, HeapObject::kMapOffset));
-  lw(a3, FieldMemOperand(a2, Map::kInstanceDescriptorsOrBitField3Offset));
-  JumpIfSmi(a3, call_runtime);
-
-  // Check that there is an enum cache in the non-empty instance
-  // descriptors (a3).  This is the case if the next enumeration
-  // index field does not contain a smi.
-  lw(a3, FieldMemOperand(a3, DescriptorArray::kEnumerationIndexOffset));
-  JumpIfSmi(a3, call_runtime);
+  lw(a1, FieldMemOperand(a2, HeapObject::kMapOffset));
 
   // For all objects but the receiver, check that the cache is empty.
-  Label check_prototype;
-  Branch(&check_prototype, eq, a1, Operand(a0));
-  lw(a3, FieldMemOperand(a3, DescriptorArray::kEnumCacheBridgeCacheOffset));
-  Branch(call_runtime, ne, a3, Operand(empty_fixed_array_value));
+  EnumLength(a3, a1);
+  Branch(call_runtime, ne, a3, Operand(Smi::FromInt(0)));
 
-  // Load the prototype from the map and loop if non-null.
-  bind(&check_prototype);
-  lw(a1, FieldMemOperand(a2, Map::kPrototypeOffset));
-  Branch(&next, ne, a1, Operand(null_value));
+  bind(&start);
+
+  // Check that there are no elements. Register r2 contains the current JS
+  // object we've reached through the prototype chain.
+  lw(a2, FieldMemOperand(a2, JSObject::kElementsOffset));
+  Branch(call_runtime, ne, a2, Operand(empty_fixed_array_value));
+
+  lw(a2, FieldMemOperand(a1, Map::kPrototypeOffset));
+  Branch(&next, ne, a2, Operand(null_value));
 }
 
 
@@ -5357,7 +5391,7 @@ void MacroAssembler::ClampDoubleToUint8(Register result_reg,
 
   // In 0-255 range, round and truncate.
   bind(&in_bounds);
-  round_w_d(temp_double_reg, input_reg);
+  cvt_w_d(temp_double_reg, input_reg);
   mfc1(result_reg, temp_double_reg);
   bind(&done);
 }

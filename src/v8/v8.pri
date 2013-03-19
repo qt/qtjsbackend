@@ -33,6 +33,12 @@ DEFINES += ENABLE_DEBUGGER_SUPPORT
 # this is needed by crankshaft ( http://code.google.com/p/v8/issues/detail?id=1271 )
 DEFINES += ENABLE_VMSTATE_TRACKING ENABLE_LOGGING_AND_PROFILING
 
+# Set NOMINMAX, so that the minmax macros are not getting set for the msvc
+win*:DEFINES += NOMINMAX
+
+# Windows CE does not set the WIN32 macro, which is needed for compiling
+wince:DEFINES += WIN32
+
 CONFIG(debug, debug|release) {
     DEFINES += DEBUG V8_ENABLE_CHECKS OBJECT_PRINT ENABLE_DISASSEMBLER
 } else {
@@ -76,6 +82,7 @@ SOURCES += \
     $$V8SRC/diy-fp.cc \
     $$V8SRC/dtoa.cc \
     $$V8SRC/elements.cc \
+    $$V8SRC/elements-kind.cc \
     $$V8SRC/execution.cc \
     $$V8SRC/factory.cc \
     $$V8SRC/flags.cc \
@@ -110,6 +117,7 @@ SOURCES += \
     $$V8SRC/objects-printer.cc \
     $$V8SRC/objects-visiting.cc \
     $$V8SRC/once.cc \
+    $$V8SRC/optimizing-compiler-thread.cc \
     $$V8SRC/parser.cc \
     $$V8SRC/preparser.cc \
     $$V8SRC/preparse-data.cc \
@@ -134,6 +142,7 @@ SOURCES += \
     $$V8SRC/strtod.cc \
     $$V8SRC/stub-cache.cc \
     $$V8SRC/token.cc \
+    $$V8SRC/transitions.cc \
     $$V8SRC/type-info.cc \
     $$V8SRC/unicode.cc \
     $$V8SRC/utils.cc \
@@ -146,8 +155,9 @@ SOURCES += \
     $$V8SRC/version.cc \
     $$V8SRC/store-buffer.cc \
     $$V8SRC/zone.cc \
+    $$V8SRC/extensions/externalize-string-extension.cc \
     $$V8SRC/extensions/gc-extension.cc \
-    $$V8SRC/extensions/externalize-string-extension.cc
+    $$V8SRC/extensions/statistics-extension.cc
 
 equals(V8_TARGET_ARCH, arm) {
 DEFINES += V8_TARGET_ARCH_ARM
@@ -263,7 +273,8 @@ win32 {
 SOURCES += \
     $$V8SRC/platform-win32.cc \
     $$V8SRC/win32-math.cc
-LIBS += -lws2_32 -lwinmm
+wince*:LIBS += -lws2 -lmmtimer
+else:LIBS += -lws2_32 -lwinmm
 win32-msvc*: QMAKE_CXXFLAGS += -wd4100 -wd 4291 -wd4351 -wd4355 -wd4800
 win32-msvc*:arch_i386: DEFINES += _USE_32BIT_TIME_T
 }

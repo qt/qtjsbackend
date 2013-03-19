@@ -69,7 +69,11 @@ typedef intptr_t Atomic64;
 
 // Use AtomicWord for a machine-sized pointer.  It will use the Atomic32 or
 // Atomic64 routines below, depending on your architecture.
+#if defined(__OpenBSD__) && defined(__i386__)
+typedef Atomic32 AtomicWord;
+#else
 typedef intptr_t AtomicWord;
+#endif
 
 // Atomically execute:
 //      result = *ptr;
@@ -148,7 +152,7 @@ Atomic64 Release_Load(volatile const Atomic64* ptr);
 
 // Include our platform specific implementation.
 #if defined(_MSC_VER) && \
-  (defined(V8_HOST_ARCH_IA32) || defined(V8_HOST_ARCH_X64))
+  (defined(V8_HOST_ARCH_IA32) || defined(V8_HOST_ARCH_X64) || defined(_WIN32_WCE))
 #include "atomicops_internals_x86_msvc.h"
 #elif defined(__APPLE__) && \
   (defined(V8_HOST_ARCH_IA32) || defined(V8_HOST_ARCH_X64))

@@ -169,7 +169,7 @@ void Displacement::init(Label* L, Type type) {
 const int RelocInfo::kApplyMask =
   RelocInfo::kCodeTargetMask | 1 << RelocInfo::RUNTIME_ENTRY |
     1 << RelocInfo::JS_RETURN | 1 << RelocInfo::INTERNAL_REFERENCE |
-    1 << RelocInfo::DEBUG_BREAK_SLOT;
+    1 << RelocInfo::DEBUG_BREAK_SLOT | 1 << RelocInfo::CODE_AGE_SEQUENCE;
 
 
 bool RelocInfo::IsCodedSpecially() {
@@ -314,8 +314,7 @@ static void InitCoverageLog();
 
 Assembler::Assembler(Isolate* arg_isolate, void* buffer, int buffer_size)
     : AssemblerBase(arg_isolate),
-      positions_recorder_(this),
-      emit_debug_code_(FLAG_debug_code) {
+      positions_recorder_(this) {
   if (buffer == NULL) {
     // Do our own buffer management.
     if (buffer_size <= kMinimalBufferSize) {
@@ -1064,6 +1063,25 @@ void Assembler::rcr(Register dst, uint8_t imm8) {
   }
 }
 
+void Assembler::ror(Register dst, uint8_t imm8) {
+  EnsureSpace ensure_space(this);
+  ASSERT(is_uint5(imm8));  // illegal shift count
+  if (imm8 == 1) {
+    EMIT(0xD1);
+    EMIT(0xC8 | dst.code());
+  } else {
+    EMIT(0xC1);
+    EMIT(0xC8 | dst.code());
+    EMIT(imm8);
+  }
+}
+
+void Assembler::ror_cl(Register dst) {
+  EnsureSpace ensure_space(this);
+  EMIT(0xD3);
+  EMIT(0xC8 | dst.code());
+}
+
 
 void Assembler::sar(Register dst, uint8_t imm8) {
   EnsureSpace ensure_space(this);
@@ -1373,7 +1391,7 @@ void Assembler::bind_to(Label* L, int pos) {
     ASSERT(offset_to_next <= 0);
     // Relative address, relative to point after address.
     int disp = pos - fixup_pos - sizeof(int8_t);
-    ASSERT(0 <= disp && disp <= 127);
+    CHECK(0 <= disp && disp <= 127);
     set_byte_at(fixup_pos, disp);
     if (offset_to_next < 0) {
       L->link_to(fixup_pos + offset_to_next, Label::kNear);
@@ -1440,7 +1458,7 @@ int Assembler::CallSize(Handle<Code> code, RelocInfo::Mode rmode) {
 
 void Assembler::call(Handle<Code> code,
                      RelocInfo::Mode rmode,
-                     unsigned ast_id) {
+                     TypeFeedbackId ast_id) {
   positions_recorder()->WriteRecordedPositions();
   EnsureSpace ensure_space(this);
   ASSERT(RelocInfo::IsCodeTarget(rmode));
@@ -1501,7 +1519,7 @@ void Assembler::jmp(Handle<Code> code, RelocInfo::Mode rmode) {
 
 void Assembler::j(Condition cc, Label* L, Label::Distance distance) {
   EnsureSpace ensure_space(this);
-  ASSERT(0 <= cc && cc < 16);
+  ASSERT(0 <= cc && static_cast<int>(cc) < 16);
   if (L->is_bound()) {
     const int short_size = 2;
     const int long_size  = 6;
@@ -1533,7 +1551,7 @@ void Assembler::j(Condition cc, Label* L, Label::Distance distance) {
 
 void Assembler::j(Condition cc, byte* entry, RelocInfo::Mode rmode) {
   EnsureSpace ensure_space(this);
-  ASSERT((0 <= cc) && (cc < 16));
+  ASSERT((0 <= cc) && (static_cast<int>(cc) < 16));
   // 0000 1111 1000 tttn #32-bit disp.
   EMIT(0x0F);
   EMIT(0x80 | cc);
@@ -1938,6 +1956,16 @@ void Assembler::cvttsd2si(Register dst, const Operand& src) {
 }
 
 
+void Assembler::cvtsd2si(Register dst, XMMRegister src) {
+  ASSERT(CpuFeatures::IsEnabled(SSE2));
+  EnsureSpace ensure_space(this);
+  EMIT(0xF2);
+  EMIT(0x0F);
+  EMIT(0x2D);
+  emit_sse_operand(dst, src);
+}
+
+
 void Assembler::cvtsi2sd(XMMRegister dst, const Operand& src) {
   ASSERT(CpuFeatures::IsEnabled(SSE2));
   EnsureSpace ensure_space(this);
@@ -2044,6 +2072,15 @@ void Assembler::andpd(XMMRegister dst, XMMRegister src) {
 }
 
 
+void Assembler::orpd(XMMRegister dst, XMMRegister src) {
+  EnsureSpace ensure_space(this);
+  EMIT(0x66);
+  EMIT(0x0F);
+  EMIT(0x56);
+  emit_sse_operand(dst, src);
+}
+
+
 void Assembler::ucomisd(XMMRegister dst, XMMRegister src) {
   ASSERT(CpuFeatures::IsEnabled(SSE2));
   EnsureSpace ensure_space(this);
@@ -2082,6 +2119,16 @@ void Assembler::movmskpd(Register dst, XMMRegister src) {
   EMIT(0x66);
   EMIT(0x0F);
   EMIT(0x50);
+  emit_sse_operand(dst, src);
+}
+
+
+void Assembler::pcmpeqd(XMMRegister dst, XMMRegister src) {
+  ASSERT(CpuFeatures::IsEnabled(SSE2));
+  EnsureSpace ensure_space(this);
+  EMIT(0x66);
+  EMIT(0x0F);
+  EMIT(0x76);
   emit_sse_operand(dst, src);
 }
 

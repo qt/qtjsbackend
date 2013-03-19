@@ -36,7 +36,7 @@ namespace internal {
 
 Context* Context::declaration_context() {
   Context* current = this;
-  while (!current->IsFunctionContext() && !current->IsGlobalContext()) {
+  while (!current->IsFunctionContext() && !current->IsNativeContext()) {
     current = current->previous();
     ASSERT(current->closure() == closure());
   }
@@ -45,7 +45,7 @@ Context* Context::declaration_context() {
 
 
 JSBuiltinsObject* Context::builtins() {
-  GlobalObject* object = global();
+  GlobalObject* object = global_object();
   if (object->IsJSGlobalObject()) {
     return JSGlobalObject::cast(object)->builtins();
   } else {
@@ -55,19 +55,19 @@ JSBuiltinsObject* Context::builtins() {
 }
 
 
-Context* Context::global_context() {
+Context* Context::native_context() {
   // Fast case: the global object for this context has been set.  In
   // that case, the global object has a direct pointer to the global
   // context.
-  if (global()->IsGlobalObject()) {
-    return global()->global_context();
+  if (global_object()->IsGlobalObject()) {
+    return global_object()->native_context();
   }
 
   // During bootstrapping, the global object might not be set and we
-  // have to search the context chain to find the global context.
+  // have to search the context chain to find the native context.
   ASSERT(Isolate::Current()->bootstrapper()->IsActive());
   Context* current = this;
-  while (!current->IsGlobalContext()) {
+  while (!current->IsNativeContext()) {
     JSFunction* closure = JSFunction::cast(current->closure());
     current = Context::cast(closure->context());
   }
@@ -76,11 +76,11 @@ Context* Context::global_context() {
 
 
 JSObject* Context::global_proxy() {
-  return global_context()->global_proxy_object();
+  return native_context()->global_proxy_object();
 }
 
 void Context::set_global_proxy(JSObject* object) {
-  global_context()->set_global_proxy_object(object);
+  native_context()->set_global_proxy_object(object);
 }
 
 
@@ -109,17 +109,17 @@ Handle<Object> Context::Lookup(Handle<String> name,
   do {
     if (FLAG_trace_contexts) {
       PrintF(" - looking in context %p", reinterpret_cast<void*>(*context));
-      if (context->IsGlobalContext()) PrintF(" (global context)");
+      if (context->IsNativeContext()) PrintF(" (native context)");
       PrintF("\n");
     }
 
-    if (qml_global.is_null() && !context->qml_global()->IsUndefined()) {
-      qml_global = Handle<JSObject>(context->qml_global(), isolate);
-      qml_global_global = Handle<JSObject>(context->global(), isolate);
+    if (qml_global.is_null() && !context->qml_global_object()->IsUndefined()) {
+      qml_global = Handle<JSObject>(context->qml_global_object(), isolate);
+      qml_global_global = Handle<JSObject>(context->global_object(), isolate);
     }
 
     // 1. Check global objects, subjects of with, and extension objects.
-    if (context->IsGlobalContext() ||
+    if (context->IsNativeContext() ||
         context->IsWithContext() ||
         (context->IsFunctionContext() && context->has_extension())) {
       Handle<JSObject> object(JSObject::cast(context->extension()), isolate);
@@ -234,7 +234,7 @@ Handle<Object> Context::Lookup(Handle<String> name,
     }
 
     // 3. Prepare to continue with the previous (next outermost) context.
-    if (context->IsGlobalContext()) {
+    if (context->IsNativeContext()) {
       follow_context_chain = false;
     } else {
       context = Handle<Context>(context->previous(), isolate);
@@ -276,19 +276,19 @@ Handle<Object> Context::Lookup(Handle<String> name,
 
 
 void Context::AddOptimizedFunction(JSFunction* function) {
-  ASSERT(IsGlobalContext());
+  ASSERT(IsNativeContext());
 #ifdef DEBUG
-  Object* element = get(OPTIMIZED_FUNCTIONS_LIST);
-  while (!element->IsUndefined()) {
-    CHECK(element != function);
-    element = JSFunction::cast(element)->next_function_link();
+  if (FLAG_enable_slow_asserts) {
+    Object* element = get(OPTIMIZED_FUNCTIONS_LIST);
+    while (!element->IsUndefined()) {
+      CHECK(element != function);
+      element = JSFunction::cast(element)->next_function_link();
+    }
   }
 
-  CHECK(function->next_function_link()->IsUndefined());
-
-  // Check that the context belongs to the weak global contexts list.
+  // Check that the context belongs to the weak native contexts list.
   bool found = false;
-  Object* context = GetHeap()->global_contexts_list();
+  Object* context = GetHeap()->native_contexts_list();
   while (!context->IsUndefined()) {
     if (context == this) {
       found = true;
@@ -298,13 +298,23 @@ void Context::AddOptimizedFunction(JSFunction* function) {
   }
   CHECK(found);
 #endif
+
+  // If the function link field is already used then the function was
+  // enqueued as a code flushing candidate and we remove it now.
+  if (!function->next_function_link()->IsUndefined()) {
+    CodeFlusher* flusher = GetHeap()->mark_compact_collector()->code_flusher();
+    flusher->EvictCandidate(function);
+  }
+
+  ASSERT(function->next_function_link()->IsUndefined());
+
   function->set_next_function_link(get(OPTIMIZED_FUNCTIONS_LIST));
   set(OPTIMIZED_FUNCTIONS_LIST, function);
 }
 
 
 void Context::RemoveOptimizedFunction(JSFunction* function) {
-  ASSERT(IsGlobalContext());
+  ASSERT(IsNativeContext());
   Object* element = get(OPTIMIZED_FUNCTIONS_LIST);
   JSFunction* prev = NULL;
   while (!element->IsUndefined()) {
@@ -328,7 +338,7 @@ void Context::RemoveOptimizedFunction(JSFunction* function) {
 
 
 Object* Context::OptimizedFunctionsListHead() {
-  ASSERT(IsGlobalContext());
+  ASSERT(IsNativeContext());
   return get(OPTIMIZED_FUNCTIONS_LIST);
 }
 
@@ -338,11 +348,28 @@ void Context::ClearOptimizedFunctions() {
 }
 
 
+Handle<Object> Context::ErrorMessageForCodeGenerationFromStrings() {
+  Handle<Object> result(error_message_for_code_gen_from_strings());
+  if (result->IsUndefined()) {
+    const char* error =
+        "Code generation from strings disallowed for this context";
+    Isolate* isolate = Isolate::Current();
+    result = isolate->factory()->NewStringFromAscii(i::CStrVector(error));
+  }
+  return result;
+}
+
+
 #ifdef DEBUG
-bool Context::IsBootstrappingOrContext(Object* object) {
+bool Context::IsBootstrappingOrValidParentContext(
+    Object* object, Context* child) {
   // During bootstrapping we allow all objects to pass as
   // contexts. This is necessary to fix circular dependencies.
-  return Isolate::Current()->bootstrapper()->IsActive() || object->IsContext();
+  if (Isolate::Current()->bootstrapper()->IsActive()) return true;
+  if (!object->IsContext()) return false;
+  Context* context = Context::cast(object);
+  return context->IsNativeContext() || context->IsGlobalContext() ||
+         context->IsModuleContext() || !child->IsModuleContext();
 }
 
 

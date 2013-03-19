@@ -38,10 +38,10 @@ namespace v8 {
 namespace internal {
 
 
-Handle<ScopeInfo> ScopeInfo::Create(Scope* scope) {
+Handle<ScopeInfo> ScopeInfo::Create(Scope* scope, Zone* zone) {
   // Collect stack and context locals.
-  ZoneList<Variable*> stack_locals(scope->StackLocalCount());
-  ZoneList<Variable*> context_locals(scope->ContextLocalCount());
+  ZoneList<Variable*> stack_locals(scope->StackLocalCount(), zone);
+  ZoneList<Variable*> context_locals(scope->ContextLocalCount(), zone);
   scope->CollectStackAndContextLocals(&stack_locals, &context_locals);
   const int stack_local_count = stack_locals.length();
   const int context_local_count = context_locals.length();
@@ -199,8 +199,8 @@ int ScopeInfo::ContextLength(bool qml_function) {
     bool has_context = context_locals > 0 ||
         function_name_context_slot ||
         Type() == WITH_SCOPE ||
-        (Type() == FUNCTION_SCOPE && CallsEval());
-
+        (Type() == FUNCTION_SCOPE && CallsEval()) ||
+        Type() == MODULE_SCOPE;
     // TODO: The QML mode should be checked in the has_context expression.
     if (has_context || qml_function) {
       return Context::MIN_CONTEXT_SLOTS + context_locals +
@@ -230,11 +230,7 @@ bool ScopeInfo::HasHeapAllocatedLocals() {
 
 
 bool ScopeInfo::HasContext() {
-  if (length() > 0) {
-    return ContextLength() > 0;
-  } else {
-    return false;
-  }
+  return ContextLength() > 0;
 }
 
 

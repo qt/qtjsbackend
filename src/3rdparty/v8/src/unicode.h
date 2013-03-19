@@ -28,7 +28,9 @@
 #ifndef V8_UNICODE_H_
 #define V8_UNICODE_H_
 
+#ifndef _WIN32_WCE
 #include <sys/types.h>
+#endif
 
 /**
  * \file
@@ -201,6 +203,7 @@ class CharacterStream {
 
  protected:
   virtual void FillBuffer() = 0;
+  virtual bool BoundsCheck(unsigned offset) = 0;
   // The number of characters left in the current buffer
   unsigned remaining_;
   // The current offset within the buffer
@@ -228,6 +231,9 @@ class InputBuffer : public CharacterStream {
   InputBuffer() { }
   explicit InputBuffer(Input input) { Reset(input); }
   virtual void FillBuffer();
+  virtual bool BoundsCheck(unsigned offset) {
+    return (buffer_ != util_buffer_) || (offset < kSize);
+  }
 
   // A custom offset that can be used by the string implementation to
   // mark progress within the encoded string.

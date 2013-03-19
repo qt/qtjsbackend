@@ -692,11 +692,19 @@ void Decoder::DecodeType01(Instruction* instr) {
             // Rn field to encode it.
             Format(instr, "mul'cond's 'rn, 'rm, 'rs");
           } else {
-            // The MLA instruction description (A 4.1.28) refers to the order
-            // of registers as "Rd, Rm, Rs, Rn". But confusingly it uses the
-            // Rn field to encode the Rd register and the Rd field to encode
-            // the Rn register.
-            Format(instr, "mla'cond's 'rn, 'rm, 'rs, 'rd");
+            if (instr->Bit(22) == 0) {
+              // The MLA instruction description (A 4.1.28) refers to the order
+              // of registers as "Rd, Rm, Rs, Rn". But confusingly it uses the
+              // Rn field to encode the Rd register and the Rd field to encode
+              // the Rn register.
+              Format(instr, "mla'cond's 'rn, 'rm, 'rs, 'rd");
+            } else {
+              // The MLS instruction description (A 4.1.29) refers to the order
+              // of registers as "Rd, Rm, Rs, Rn". But confusingly it uses the
+              // Rn field to encode the Rd register and the Rd field to encode
+              // the Rn register.
+              Format(instr, "mls'cond's 'rn, 'rm, 'rs, 'rd");
+            }
           }
         } else {
           // The signed/long multiply instructions use the terms RdHi and RdLo
@@ -822,6 +830,8 @@ void Decoder::DecodeType01(Instruction* instr) {
     } else {
       Unknown(instr);  // not used by V8
     }
+  } else if ((type == 1) && instr->IsNopType1()) {
+    Format(instr, "nop'cond");
   } else {
     switch (instr->OpcodeField()) {
       case AND: {
@@ -974,6 +984,17 @@ void Decoder::DecodeType3(Instruction* instr) {
       break;
     }
     case db_x: {
+      if (FLAG_enable_sudiv) {
+        if (!instr->HasW()) {
+          if (instr->Bits(5, 4) == 0x1) {
+            if ((instr->Bit(22) == 0x0) && (instr->Bit(20) == 0x1)) {
+              // SDIV (in V8 notation matching ARM ISA format) rn = rm/rs
+              Format(instr, "sdiv'cond'b 'rn, 'rm, 'rs");
+              break;
+            }
+          }
+        }
+      }
       Format(instr, "'memop'cond'b 'rd, ['rn, -'shift_rm]'w");
       break;
     }
@@ -1367,7 +1388,7 @@ bool Decoder::IsConstantPoolAt(byte* instr_ptr) {
 int Decoder::ConstantPoolSizeAt(byte* instr_ptr) {
   if (IsConstantPoolAt(instr_ptr)) {
     int instruction_bits = *(reinterpret_cast<int*>(instr_ptr));
-    return instruction_bits & kConstantPoolLengthMask;
+    return DecodeConstantPoolLength(instruction_bits);
   } else {
     return -1;
   }
@@ -1389,8 +1410,7 @@ int Decoder::InstructionDecode(byte* instr_ptr) {
   if ((instruction_bits & kConstantPoolMarkerMask) == kConstantPoolMarker) {
     out_buffer_pos_ += OS::SNPrintF(out_buffer_ + out_buffer_pos_,
                                     "constant pool begin (length %d)",
-                                    instruction_bits &
-                                    kConstantPoolLengthMask);
+                                    DecodeConstantPoolLength(instruction_bits));
     return Instruction::kInstrSize;
   }
   switch (instr->TypeValue()) {

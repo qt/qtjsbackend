@@ -84,6 +84,7 @@ CodeEntry* ProfileGenerator::EntryForVMState(StateTag tag) {
       return gc_entry_;
     case JS:
     case COMPILER:
+    case PARALLEL_COMPILER_PROLOGUE:
     // DOM events handlers are reported as OTHER / EXTERNAL entries.
     // To avoid confusing people, let's put all these entries into
     // one bucket.
@@ -118,29 +119,9 @@ int HeapEntry::set_children_index(int index) {
 }
 
 
-int HeapEntry::set_retainers_index(int index) {
-  retainers_index_ = index;
-  int next_index = index + retainers_count_;
-  retainers_count_ = 0;
-  return next_index;
-}
-
-
 HeapGraphEdge** HeapEntry::children_arr() {
   ASSERT(children_index_ >= 0);
   return &snapshot_->children()[children_index_];
-}
-
-
-HeapGraphEdge** HeapEntry::retainers_arr() {
-  ASSERT(retainers_index_ >= 0);
-  return &snapshot_->retainers()[retainers_index_];
-}
-
-
-HeapEntry* HeapEntry::dominator() const {
-  ASSERT(dominator_ >= 0);
-  return &snapshot_->entries()[dominator_];
 }
 
 

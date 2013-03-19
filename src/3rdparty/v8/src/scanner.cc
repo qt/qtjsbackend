@@ -32,6 +32,11 @@
 #include "../include/v8stdint.h"
 #include "char-predicates-inl.h"
 
+#undef CONST
+#undef DELETE
+#undef IN
+#undef VOID
+
 namespace v8 {
 namespace internal {
 
@@ -1077,6 +1082,7 @@ bool Scanner::ScanRegExpFlags() {
       if (!ScanLiteralUnicodeEscape()) {
         break;
       }
+      Advance();
     }
   }
   literal.Complete();

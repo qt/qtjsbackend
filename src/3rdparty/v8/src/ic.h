@@ -111,7 +111,7 @@ class IC {
   RelocInfo::Mode ComputeMode();
 
   bool IsQmlGlobal(Handle<Object> receiver) {
-    JSObject* qml_global = isolate_->context()->qml_global();
+    JSObject* qml_global = isolate_->context()->qml_global_object();
     return !qml_global->IsUndefined() && qml_global == *receiver;
   }
 
@@ -384,10 +384,16 @@ class KeyedIC: public IC {
     STORE_TRANSITION_SMI_TO_OBJECT,
     STORE_TRANSITION_SMI_TO_DOUBLE,
     STORE_TRANSITION_DOUBLE_TO_OBJECT,
+    STORE_TRANSITION_HOLEY_SMI_TO_OBJECT,
+    STORE_TRANSITION_HOLEY_SMI_TO_DOUBLE,
+    STORE_TRANSITION_HOLEY_DOUBLE_TO_OBJECT,
     STORE_AND_GROW_NO_TRANSITION,
     STORE_AND_GROW_TRANSITION_SMI_TO_OBJECT,
     STORE_AND_GROW_TRANSITION_SMI_TO_DOUBLE,
-    STORE_AND_GROW_TRANSITION_DOUBLE_TO_OBJECT
+    STORE_AND_GROW_TRANSITION_DOUBLE_TO_OBJECT,
+    STORE_AND_GROW_TRANSITION_HOLEY_SMI_TO_OBJECT,
+    STORE_AND_GROW_TRANSITION_HOLEY_SMI_TO_DOUBLE,
+    STORE_AND_GROW_TRANSITION_HOLEY_DOUBLE_TO_OBJECT
   };
 
   static const int kGrowICDelta = STORE_AND_GROW_NO_TRANSITION -
@@ -451,7 +457,7 @@ class KeyedIC: public IC {
  private:
   void GetReceiverMapsForStub(Handle<Code> stub, MapHandleList* result);
 
-  Handle<Code> ComputeMonomorphicStub(Handle<JSObject> receiver,
+  Handle<Code> ComputeMonomorphicStub(Handle<Map> receiver_map,
                                       StubKind stub_kind,
                                       StrictModeFlag strict_mode,
                                       Handle<Code> default_stub);
@@ -466,6 +472,12 @@ class KeyedIC: public IC {
 
   static bool IsGrowStubKind(StubKind stub_kind) {
     return stub_kind >= STORE_AND_GROW_NO_TRANSITION;
+  }
+
+  static StubKind GetNoTransitionStubKind(StubKind stub_kind) {
+    if (!IsTransitionStubKind(stub_kind)) return stub_kind;
+    if (IsGrowStubKind(stub_kind)) return STORE_AND_GROW_NO_TRANSITION;
+    return STORE_NO_TRANSITION;
   }
 };
 
@@ -625,6 +637,18 @@ class StoreIC: public IC {
 };
 
 
+enum KeyedStoreCheckMap {
+  kDontCheckMap,
+  kCheckMap
+};
+
+
+enum KeyedStoreIncrementLength {
+  kDontIncrementLength,
+  kIncrementLength
+};
+
+
 class KeyedStoreIC: public KeyedIC {
  public:
   explicit KeyedStoreIC(Isolate* isolate) : KeyedIC(isolate) {
@@ -632,7 +656,7 @@ class KeyedStoreIC: public KeyedIC {
   }
 
   MUST_USE_RESULT MaybeObject* Store(State state,
-                                   StrictModeFlag strict_mode,
+                                     StrictModeFlag strict_mode,
                                      Handle<Object> object,
                                      Handle<Object> name,
                                      Handle<Object> value,

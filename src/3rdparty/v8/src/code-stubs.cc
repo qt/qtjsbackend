@@ -142,7 +142,9 @@ Handle<Code> CodeStub::GetCode() {
   }
 
   Activate(code);
-  ASSERT(!NeedsImmovableCode() || heap->lo_space()->Contains(code));
+  ASSERT(!NeedsImmovableCode() ||
+         heap->lo_space()->Contains(code) ||
+         heap->code_space()->FirstPage()->Contains(code->address()));
   return Handle<Code>(code, isolate);
 }
 
@@ -172,7 +174,9 @@ void ICCompareStub::AddToSpecialCache(Handle<Code> new_object) {
   Isolate* isolate = new_object->GetIsolate();
   Factory* factory = isolate->factory();
   return Map::UpdateCodeCache(known_map_,
-                              factory->compare_ic_symbol(),
+                              strict() ?
+                                  factory->strict_compare_ic_symbol() :
+                                  factory->compare_ic_symbol(),
                               new_object);
 }
 
@@ -183,10 +187,16 @@ bool ICCompareStub::FindCodeInSpecialCache(Code** code_out) {
   Code::Flags flags = Code::ComputeFlags(
       static_cast<Code::Kind>(GetCodeKind()),
       UNINITIALIZED);
+  ASSERT(op_ == Token::EQ || op_ == Token::EQ_STRICT);
   Handle<Object> probe(
-      known_map_->FindInCodeCache(*factory->compare_ic_symbol(), flags));
+      known_map_->FindInCodeCache(
+        strict() ?
+            *factory->strict_compare_ic_symbol() :
+            *factory->compare_ic_symbol(),
+        flags));
   if (probe->IsCode()) {
     *code_out = Code::cast(*probe);
+    ASSERT(op_ == (*code_out)->compare_operation() + Token::EQ);
     return true;
   }
   return false;
@@ -262,10 +272,13 @@ void JSEntryStub::FinishCode(Handle<Code> code) {
 void KeyedLoadElementStub::Generate(MacroAssembler* masm) {
   switch (elements_kind_) {
     case FAST_ELEMENTS:
-    case FAST_SMI_ONLY_ELEMENTS:
+    case FAST_HOLEY_ELEMENTS:
+    case FAST_SMI_ELEMENTS:
+    case FAST_HOLEY_SMI_ELEMENTS:
       KeyedLoadStubCompiler::GenerateLoadFastElement(masm);
       break;
     case FAST_DOUBLE_ELEMENTS:
+    case FAST_HOLEY_DOUBLE_ELEMENTS:
       KeyedLoadStubCompiler::GenerateLoadFastDoubleElement(masm);
       break;
     case EXTERNAL_BYTE_ELEMENTS:
@@ -292,7 +305,9 @@ void KeyedLoadElementStub::Generate(MacroAssembler* masm) {
 void KeyedStoreElementStub::Generate(MacroAssembler* masm) {
   switch (elements_kind_) {
     case FAST_ELEMENTS:
-    case FAST_SMI_ONLY_ELEMENTS: {
+    case FAST_HOLEY_ELEMENTS:
+    case FAST_SMI_ELEMENTS:
+    case FAST_HOLEY_SMI_ELEMENTS: {
       KeyedStoreStubCompiler::GenerateStoreFastElement(masm,
                                                        is_js_array_,
                                                        elements_kind_,
@@ -300,6 +315,7 @@ void KeyedStoreElementStub::Generate(MacroAssembler* masm) {
     }
       break;
     case FAST_DOUBLE_ELEMENTS:
+    case FAST_HOLEY_DOUBLE_ELEMENTS:
       KeyedStoreStubCompiler::GenerateStoreFastDoubleElement(masm,
                                                              is_js_array_,
                                                              grow_mode_);
@@ -430,24 +446,32 @@ bool ToBooleanStub::Types::CanBeUndetectable() const {
 
 void ElementsTransitionAndStoreStub::Generate(MacroAssembler* masm) {
   Label fail;
+  ASSERT(!IsFastHoleyElementsKind(from_) || IsFastHoleyElementsKind(to_));
   if (!FLAG_trace_elements_transitions) {
-    if (to_ == FAST_ELEMENTS) {
-      if (from_ == FAST_SMI_ONLY_ELEMENTS) {
-        ElementsTransitionGenerator::GenerateSmiOnlyToObject(masm);
-      } else if (from_ == FAST_DOUBLE_ELEMENTS) {
+    if (IsFastSmiOrObjectElementsKind(to_)) {
+      if (IsFastSmiOrObjectElementsKind(from_)) {
+        ElementsTransitionGenerator::
+            GenerateMapChangeElementsTransition(masm);
+      } else if (IsFastDoubleElementsKind(from_)) {
+        ASSERT(!IsFastSmiElementsKind(to_));
         ElementsTransitionGenerator::GenerateDoubleToObject(masm, &fail);
       } else {
         UNREACHABLE();
       }
       KeyedStoreStubCompiler::GenerateStoreFastElement(masm,
                                                        is_jsarray_,
-                                                       FAST_ELEMENTS,
+                                                       to_,
                                                        grow_mode_);
-    } else if (from_ == FAST_SMI_ONLY_ELEMENTS && to_ == FAST_DOUBLE_ELEMENTS) {
-      ElementsTransitionGenerator::GenerateSmiOnlyToDouble(masm, &fail);
+    } else if (IsFastSmiElementsKind(from_) &&
+               IsFastDoubleElementsKind(to_)) {
+      ElementsTransitionGenerator::GenerateSmiToDouble(masm, &fail);
       KeyedStoreStubCompiler::GenerateStoreFastDoubleElement(masm,
                                                              is_jsarray_,
                                                              grow_mode_);
+    } else if (IsFastDoubleElementsKind(from_)) {
+      ASSERT(to_ == FAST_HOLEY_DOUBLE_ELEMENTS);
+      ElementsTransitionGenerator::
+          GenerateMapChangeElementsTransition(masm);
     } else {
       UNREACHABLE();
     }
@@ -455,5 +479,27 @@ void ElementsTransitionAndStoreStub::Generate(MacroAssembler* masm) {
   masm->bind(&fail);
   KeyedStoreIC::GenerateRuntimeSetProperty(masm, strict_mode_);
 }
+
+
+FunctionEntryHook ProfileEntryHookStub::entry_hook_ = NULL;
+
+
+void ProfileEntryHookStub::EntryHookTrampoline(intptr_t function,
+                                               intptr_t stack_pointer) {
+  if (entry_hook_ != NULL)
+    entry_hook_(function, stack_pointer);
+}
+
+
+bool ProfileEntryHookStub::SetFunctionEntryHook(FunctionEntryHook entry_hook) {
+  // We don't allow setting a new entry hook over one that's
+  // already active, as the hooks won't stack.
+  if (entry_hook != 0 && entry_hook_ != 0)
+    return false;
+
+  entry_hook_ = entry_hook;
+  return true;
+}
+
 
 } }  // namespace v8::internal

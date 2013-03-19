@@ -73,6 +73,45 @@ void Builtins::Generate_Adaptor(MacroAssembler* masm,
 }
 
 
+static void GenerateTailCallToSharedCode(MacroAssembler* masm) {
+  __ movq(kScratchRegister,
+          FieldOperand(rdi, JSFunction::kSharedFunctionInfoOffset));
+  __ movq(kScratchRegister,
+          FieldOperand(kScratchRegister, SharedFunctionInfo::kCodeOffset));
+  __ lea(kScratchRegister, FieldOperand(kScratchRegister, Code::kHeaderSize));
+  __ jmp(kScratchRegister);
+}
+
+
+void Builtins::Generate_InRecompileQueue(MacroAssembler* masm) {
+  GenerateTailCallToSharedCode(masm);
+}
+
+
+void Builtins::Generate_ParallelRecompile(MacroAssembler* masm) {
+  {
+    FrameScope scope(masm, StackFrame::INTERNAL);
+
+    // Push a copy of the function onto the stack.
+    __ push(rdi);
+    // Push call kind information.
+    __ push(rcx);
+
+    __ push(rdi);  // Function is also the parameter to the runtime call.
+    __ CallRuntime(Runtime::kParallelRecompile, 1);
+
+    // Restore call kind information.
+    __ pop(rcx);
+    // Restore receiver.
+    __ pop(rdi);
+
+    // Tear down internal frame.
+  }
+
+  GenerateTailCallToSharedCode(masm);
+}
+
+
 static void Generate_JSConstructStubHelper(MacroAssembler* masm,
                                            bool is_api_function,
                                            bool count_constructions) {
@@ -567,6 +606,46 @@ void Builtins::Generate_LazyRecompile(MacroAssembler* masm) {
 }
 
 
+static void GenerateMakeCodeYoungAgainCommon(MacroAssembler* masm) {
+  // For now, we are relying on the fact that make_code_young doesn't do any
+  // garbage collection which allows us to save/restore the registers without
+  // worrying about which of them contain pointers. We also don't build an
+  // internal frame to make the code faster, since we shouldn't have to do stack
+  // crawls in MakeCodeYoung. This seems a bit fragile.
+
+  // Re-execute the code that was patched back to the young age when
+  // the stub returns.
+  __ subq(Operand(rsp, 0), Immediate(5));
+  __ Pushad();
+#ifdef _WIN64
+  __ movq(rcx, Operand(rsp, kNumSafepointRegisters * kPointerSize));
+#else
+  __ movq(rdi, Operand(rsp, kNumSafepointRegisters * kPointerSize));
+#endif
+  {  // NOLINT
+    FrameScope scope(masm, StackFrame::MANUAL);
+    __ PrepareCallCFunction(1);
+    __ CallCFunction(
+        ExternalReference::get_make_code_young_function(masm->isolate()), 1);
+  }
+  __ Popad();
+  __ ret(0);
+}
+
+
+#define DEFINE_CODE_AGE_BUILTIN_GENERATOR(C)                 \
+void Builtins::Generate_Make##C##CodeYoungAgainEvenMarking(  \
+    MacroAssembler* masm) {                                  \
+  GenerateMakeCodeYoungAgainCommon(masm);                    \
+}                                                            \
+void Builtins::Generate_Make##C##CodeYoungAgainOddMarking(   \
+    MacroAssembler* masm) {                                  \
+  GenerateMakeCodeYoungAgainCommon(masm);                    \
+}
+CODE_AGE_LIST(DEFINE_CODE_AGE_BUILTIN_GENERATOR)
+#undef DEFINE_CODE_AGE_BUILTIN_GENERATOR
+
+
 static void Generate_NotifyDeoptimizedHelper(MacroAssembler* masm,
                                              Deoptimizer::BailoutType type) {
   // Enter an internal frame.
@@ -711,9 +790,9 @@ void Builtins::Generate_FunctionCall(MacroAssembler* masm) {
     // receiver.
     __ bind(&use_global_receiver);
     const int kGlobalIndex =
-        Context::kHeaderSize + Context::GLOBAL_INDEX * kPointerSize;
+        Context::kHeaderSize + Context::GLOBAL_OBJECT_INDEX * kPointerSize;
     __ movq(rbx, FieldOperand(rsi, kGlobalIndex));
-    __ movq(rbx, FieldOperand(rbx, GlobalObject::kGlobalContextOffset));
+    __ movq(rbx, FieldOperand(rbx, GlobalObject::kNativeContextOffset));
     __ movq(rbx, FieldOperand(rbx, kGlobalIndex));
     __ movq(rbx, FieldOperand(rbx, GlobalObject::kGlobalReceiverOffset));
 
@@ -896,9 +975,9 @@ void Builtins::Generate_FunctionApply(MacroAssembler* masm) {
     // Use the current global receiver object as the receiver.
     __ bind(&use_global_receiver);
     const int kGlobalOffset =
-        Context::kHeaderSize + Context::GLOBAL_INDEX * kPointerSize;
+        Context::kHeaderSize + Context::GLOBAL_OBJECT_INDEX * kPointerSize;
     __ movq(rbx, FieldOperand(rsi, kGlobalOffset));
-    __ movq(rbx, FieldOperand(rbx, GlobalObject::kGlobalContextOffset));
+    __ movq(rbx, FieldOperand(rbx, GlobalObject::kNativeContextOffset));
     __ movq(rbx, FieldOperand(rbx, kGlobalOffset));
     __ movq(rbx, FieldOperand(rbx, GlobalObject::kGlobalReceiverOffset));
 
@@ -977,7 +1056,7 @@ static void AllocateEmptyJSArray(MacroAssembler* masm,
   const int initial_capacity = JSArray::kPreallocatedArrayElements;
   STATIC_ASSERT(initial_capacity >= 0);
 
-  __ LoadInitialArrayMap(array_function, scratch2, scratch1);
+  __ LoadInitialArrayMap(array_function, scratch2, scratch1, false);
 
   // Allocate the JSArray object together with space for a fixed array with the
   // requested elements.
@@ -1076,7 +1155,8 @@ static void AllocateJSArray(MacroAssembler* masm,
                             Register scratch,
                             bool fill_with_hole,
                             Label* gc_required) {
-  __ LoadInitialArrayMap(array_function, scratch, elements_array);
+  __ LoadInitialArrayMap(array_function, scratch,
+                         elements_array, fill_with_hole);
 
   if (FLAG_debug_code) {  // Assert that array size is not zero.
     __ testq(array_size, array_size);
@@ -1303,10 +1383,10 @@ static void ArrayNativeCode(MacroAssembler* masm,
   __ jmp(call_generic_code);
 
   __ bind(&not_double);
-  // Transition FAST_SMI_ONLY_ELEMENTS to FAST_ELEMENTS.
+  // Transition FAST_SMI_ELEMENTS to FAST_ELEMENTS.
   // rbx: JSArray
   __ movq(r11, FieldOperand(rbx, HeapObject::kMapOffset));
-  __ LoadTransitionedArrayMapConditional(FAST_SMI_ONLY_ELEMENTS,
+  __ LoadTransitionedArrayMapConditional(FAST_SMI_ELEMENTS,
                                          FAST_ELEMENTS,
                                          r11,
                                          kScratchRegister,

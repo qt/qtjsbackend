@@ -28,6 +28,7 @@
 #ifndef V8_ELEMENTS_H_
 #define V8_ELEMENTS_H_
 
+#include "elements-kind.h"
 #include "objects.h"
 #include "heap.h"
 #include "isolate.h"
@@ -45,6 +46,10 @@ class ElementsAccessor {
   virtual ElementsKind kind() const = 0;
   const char* name() const { return name_; }
 
+  // Checks the elements of an object for consistency, asserting when a problem
+  // is found.
+  virtual void Validate(JSObject* obj) = 0;
+
   // Returns true if a holder contains an element with the specified key
   // without iterating up the prototype chain.  The caller can optionally pass
   // in the backing store to use for the check, which must be compatible with
@@ -61,6 +66,17 @@ class ElementsAccessor {
   // be compatible with the ElementsKind of the ElementsAccessor. If
   // backing_store is NULL, the holder->elements() is used as the backing store.
   MUST_USE_RESULT virtual MaybeObject* Get(
+      Object* receiver,
+      JSObject* holder,
+      uint32_t key,
+      FixedArrayBase* backing_store = NULL) = 0;
+
+  // Returns an element's attributes, or ABSENT if there is no such
+  // element. This method doesn't iterate up the prototype chain.  The caller
+  // can optionally pass in the backing store to use for the check, which must
+  // be compatible with the ElementsKind of the ElementsAccessor. If
+  // backing_store is NULL, the holder->elements() is used as the backing store.
+  MUST_USE_RESULT virtual PropertyAttributes GetAttributes(
       Object* receiver,
       JSObject* holder,
       uint32_t key,

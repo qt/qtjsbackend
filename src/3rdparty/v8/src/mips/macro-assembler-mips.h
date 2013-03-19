@@ -108,12 +108,12 @@ inline MemOperand ContextOperand(Register context, int index) {
 
 
 inline MemOperand GlobalObjectOperand()  {
-  return ContextOperand(cp, Context::GLOBAL_INDEX);
+  return ContextOperand(cp, Context::GLOBAL_OBJECT_INDEX);
 }
 
 
 static inline MemOperand QmlGlobalObjectOperand()  {
-  return ContextOperand(cp, Context::QML_GLOBAL_INDEX);
+  return ContextOperand(cp, Context::QML_GLOBAL_OBJECT_INDEX);
 }
 
 
@@ -187,11 +187,11 @@ class MacroAssembler: public Assembler {
   void Call(Address target, RelocInfo::Mode rmode, COND_ARGS);
   static int CallSize(Handle<Code> code,
                       RelocInfo::Mode rmode = RelocInfo::CODE_TARGET,
-                      unsigned ast_id = kNoASTId,
+                      TypeFeedbackId ast_id = TypeFeedbackId::None(),
                       COND_ARGS);
   void Call(Handle<Code> code,
             RelocInfo::Mode rmode = RelocInfo::CODE_TARGET,
-            unsigned ast_id = kNoASTId,
+            TypeFeedbackId ast_id = TypeFeedbackId::None(),
             COND_ARGS);
   void Ret(COND_ARGS);
   inline void Ret(BranchDelaySlot bd, Condition cond = al,
@@ -811,8 +811,8 @@ class MacroAssembler: public Assembler {
   void LoadContext(Register dst, int context_chain_length);
 
   // Conditionally load the cached Array transitioned map of type
-  // transitioned_kind from the global context if the map in register
-  // map_in_out is the cached Array map in the global context of
+  // transitioned_kind from the native context if the map in register
+  // map_in_out is the cached Array map in the native context of
   // expected_kind.
   void LoadTransitionedArrayMapConditional(
       ElementsKind expected_kind,
@@ -824,7 +824,8 @@ class MacroAssembler: public Assembler {
   // Load the initial map for new Arrays from a JSFunction.
   void LoadInitialArrayMap(Register function_in,
                            Register scratch,
-                           Register map_out);
+                           Register map_out,
+                           bool can_have_holes);
 
   void LoadGlobalFunction(int index, Register function);
 
@@ -966,9 +967,9 @@ class MacroAssembler: public Assembler {
 
   // Check if a map for a JSObject indicates that the object has fast smi only
   // elements.  Jump to the specified label if it does not.
-  void CheckFastSmiOnlyElements(Register map,
-                                Register scratch,
-                                Label* fail);
+  void CheckFastSmiElements(Register map,
+                            Register scratch,
+                            Label* fail);
 
   // Check to see if maybe_number can be stored as a double in
   // FastDoubleElements. If it can, store it at the index specified by key in
@@ -977,6 +978,7 @@ class MacroAssembler: public Assembler {
   void StoreNumberToDoubleElements(Register value_reg,
                                    Register key_reg,
                                    Register receiver_reg,
+                                   // All regs below here overwritten.
                                    Register elements_reg,
                                    Register scratch1,
                                    Register scratch2,
@@ -990,6 +992,15 @@ class MacroAssembler: public Assembler {
   // compares are required, the compare sequences branches to early_success.
   void CompareMapAndBranch(Register obj,
                            Register scratch,
+                           Handle<Map> map,
+                           Label* early_success,
+                           Condition cond,
+                           Label* branch_to,
+                           CompareMapMode mode = REQUIRE_EXACT_MAP);
+
+  // As above, but the map of the object is already loaded into the register
+  // which is preserved by the code generated.
+  void CompareMapAndBranch(Register obj_map,
                            Handle<Map> map,
                            Label* early_success,
                            Condition cond,
@@ -1330,17 +1341,18 @@ class MacroAssembler: public Assembler {
   // Jump if either of the registers contain a smi.
   void JumpIfEitherSmi(Register reg1, Register reg2, Label* on_either_smi);
 
-  // Abort execution if argument is a smi. Used in debug code.
-  void AbortIfSmi(Register object);
-  void AbortIfNotSmi(Register object);
+  // Abort execution if argument is a smi, enabled via --debug-code.
+  void AssertNotSmi(Register object);
+  void AssertSmi(Register object);
 
-  // Abort execution if argument is a string. Used in debug code.
-  void AbortIfNotString(Register object);
+  // Abort execution if argument is not a string, enabled via --debug-code.
+  void AssertString(Register object);
 
-  // Abort execution if argument is not the root value with the given index.
-  void AbortIfNotRootValue(Register src,
-                           Heap::RootListIndex root_value_index,
-                           const char* message);
+  // Abort execution if argument is not the root value with the given index,
+  // enabled via --debug-code.
+  void AssertRootValue(Register src,
+                       Heap::RootListIndex root_value_index,
+                       const char* message);
 
   // ---------------------------------------------------------------------------
   // HeapNumber utilities.
@@ -1392,7 +1404,16 @@ class MacroAssembler: public Assembler {
 
 
   void LoadInstanceDescriptors(Register map, Register descriptors);
+  void EnumLength(Register dst, Register map);
+  void NumberOfOwnDescriptors(Register dst, Register map);
 
+  template<typename Field>
+  void DecodeField(Register reg) {
+    static const int shift = Field::kShift;
+    static const int mask = (Field::kMask >> shift) << kSmiTagSize;
+    srl(reg, reg, shift);
+    And(reg, reg, Operand(mask));
+  }
 
   // Activation support.
   void EnterFrame(StackFrame::Type type);

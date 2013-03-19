@@ -1454,6 +1454,8 @@ DebugCommandProcessor.prototype.processDebugJSONRequest = function(
         this.profileRequest_(request, response);
       } else if (request.command == 'changelive') {
         this.changeLiveRequest_(request, response);
+      } else if (request.command == 'restartframe') {
+        this.restartFrameRequest_(request, response);
       } else if (request.command == 'flags') {
         this.debuggerFlagsRequest_(request, response);
       } else if (request.command == 'v8flags') {
@@ -2081,7 +2083,7 @@ DebugCommandProcessor.prototype.evaluateRequest_ = function(request, response) {
 
   // Global evaluate.
   if (global) {
-    // Evaluate in the global context.
+    // Evaluate in the native context.
     response.body = this.exec_state_.evaluateGlobal(
         expression, Boolean(disable_break), additional_context_object);
     return;
@@ -2363,9 +2365,6 @@ DebugCommandProcessor.prototype.profileRequest_ = function(request, response) {
 
 DebugCommandProcessor.prototype.changeLiveRequest_ = function(
     request, response) {
-  if (!Debug.LiveEdit) {
-    return response.failed('LiveEdit feature is not supported');
-  }
   if (!request.arguments) {
     return response.failed('Missing arguments');
   }
@@ -2400,6 +2399,37 @@ DebugCommandProcessor.prototype.changeLiveRequest_ = function(
   if (!preview_only && !this.running_ && result_description.stack_modified) {
     response.body.stepin_recommended = true;
   }
+};
+
+
+DebugCommandProcessor.prototype.restartFrameRequest_ = function(
+    request, response) {
+  if (!request.arguments) {
+    return response.failed('Missing arguments');
+  }
+  var frame = request.arguments.frame;
+
+  // No frames to evaluate in frame.
+  if (this.exec_state_.frameCount() == 0) {
+    return response.failed('No frames');
+  }
+
+  var frame_mirror;
+  // Check whether a frame was specified.
+  if (!IS_UNDEFINED(frame)) {
+    var frame_number = %ToNumber(frame);
+    if (frame_number < 0 || frame_number >= this.exec_state_.frameCount()) {
+      return response.failed('Invalid frame "' + frame + '"');
+    }
+    // Restart specified frame.
+    frame_mirror = this.exec_state_.frame(frame_number);
+  } else {
+    // Restart selected frame.
+    frame_mirror = this.exec_state_.frame();
+  }
+
+  var result_description = Debug.LiveEdit.RestartFrame(frame_mirror);
+  response.body = {result: result_description};
 };
 
 

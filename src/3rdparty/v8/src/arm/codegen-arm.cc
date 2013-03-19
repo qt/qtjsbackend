@@ -73,7 +73,7 @@ void StubRuntimeCallHelper::AfterCall(MacroAssembler* masm) const {
 // -------------------------------------------------------------------------
 // Code generators
 
-void ElementsTransitionGenerator::GenerateSmiOnlyToObject(
+void ElementsTransitionGenerator::GenerateMapChangeElementsTransition(
     MacroAssembler* masm) {
   // ----------- S t a t e -------------
   //  -- r0    : value
@@ -96,7 +96,7 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToObject(
 }
 
 
-void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
+void ElementsTransitionGenerator::GenerateSmiToDouble(
     MacroAssembler* masm, Label* fail) {
   // ----------- S t a t e -------------
   //  -- r0    : value
@@ -107,7 +107,7 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
   //  -- r4    : scratch (elements)
   // -----------------------------------
   Label loop, entry, convert_hole, gc_required, only_change_map, done;
-  bool vfp3_supported = CpuFeatures::IsSupported(VFP3);
+  bool vfp2_supported = CpuFeatures::IsSupported(VFP2);
 
   // Check for empty arrays, which only require a map transition and no changes
   // to the backing store.
@@ -121,15 +121,34 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
   // r5: number of elements (smi-tagged)
 
   // Allocate new FixedDoubleArray.
-  __ mov(lr, Operand(FixedDoubleArray::kHeaderSize));
-  __ add(lr, lr, Operand(r5, LSL, 2));
+  // Use lr as a temporary register.
+  __ mov(lr, Operand(r5, LSL, 2));
+  __ add(lr, lr, Operand(FixedDoubleArray::kHeaderSize + kPointerSize));
   __ AllocateInNewSpace(lr, r6, r7, r9, &gc_required, NO_ALLOCATION_FLAGS);
-  // r6: destination FixedDoubleArray, not tagged as heap object
+  // r6: destination FixedDoubleArray, not tagged as heap object.
+
+  // Align the array conveniently for doubles.
+  // Store a filler value in the unused memory.
+  Label aligned, aligned_done;
+  __ tst(r6, Operand(kDoubleAlignmentMask));
+  __ mov(ip, Operand(masm->isolate()->factory()->one_pointer_filler_map()));
+  __ b(eq, &aligned);
+  // Store at the beginning of the allocated memory and update the base pointer.
+  __ str(ip, MemOperand(r6, kPointerSize, PostIndex));
+  __ b(&aligned_done);
+
+  __ bind(&aligned);
+  // Store the filler at the end of the allocated memory.
+  __ sub(lr, lr, Operand(kPointerSize));
+  __ str(ip, MemOperand(r6, lr));
+
+  __ bind(&aligned_done);
+
   // Set destination FixedDoubleArray's length and map.
   __ LoadRoot(r9, Heap::kFixedDoubleArrayMapRootIndex);
   __ str(r5, MemOperand(r6, FixedDoubleArray::kLengthOffset));
-  __ str(r9, MemOperand(r6, HeapObject::kMapOffset));
   // Update receiver's map.
+  __ str(r9, MemOperand(r6, HeapObject::kMapOffset));
 
   __ str(r3, FieldMemOperand(r2, HeapObject::kMapOffset));
   __ RecordWriteField(r2,
@@ -163,7 +182,7 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
   // r5: kHoleNanUpper32
   // r6: end of destination FixedDoubleArray, not tagged
   // r7: begin of FixedDoubleArray element fields, not tagged
-  if (!vfp3_supported) __ Push(r1, r0);
+  if (!vfp2_supported) __ Push(r1, r0);
 
   __ b(&entry);
 
@@ -191,8 +210,8 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
   __ UntagAndJumpIfNotSmi(r9, r9, &convert_hole);
 
   // Normal smi, convert to double and store.
-  if (vfp3_supported) {
-    CpuFeatures::Scope scope(VFP3);
+  if (vfp2_supported) {
+    CpuFeatures::Scope scope(VFP2);
     __ vmov(s0, r9);
     __ vcvt_f64_s32(d0, s0);
     __ vstr(d0, r7, 0);
@@ -225,7 +244,7 @@ void ElementsTransitionGenerator::GenerateSmiOnlyToDouble(
   __ cmp(r7, r6);
   __ b(lt, &loop);
 
-  if (!vfp3_supported) __ Pop(r1, r0);
+  if (!vfp2_supported) __ Pop(r1, r0);
   __ pop(lr);
   __ bind(&done);
 }
@@ -432,6 +451,92 @@ void StringCharLoadGenerator::Generate(MacroAssembler* masm,
 }
 
 #undef __
+
+// add(r0, pc, Operand(-8))
+static const uint32_t kCodeAgePatchFirstInstruction = 0xe24f0008;
+
+static byte* GetNoCodeAgeSequence(uint32_t* length) {
+  // The sequence of instructions that is patched out for aging code is the
+  // following boilerplate stack-building prologue that is found in FUNCTIONS
+  static bool initialized = false;
+  static uint32_t sequence[kNoCodeAgeSequenceLength];
+  byte* byte_sequence = reinterpret_cast<byte*>(sequence);
+  *length = kNoCodeAgeSequenceLength * Assembler::kInstrSize;
+  if (!initialized) {
+    CodePatcher patcher(byte_sequence, kNoCodeAgeSequenceLength);
+    patcher.masm()->stm(db_w, sp, r1.bit() | cp.bit() | fp.bit() | lr.bit());
+    patcher.masm()->LoadRoot(ip, Heap::kUndefinedValueRootIndex);
+    patcher.masm()->add(fp, sp, Operand(2 * kPointerSize));
+    initialized = true;
+  }
+  return byte_sequence;
+}
+
+
+byte* Code::FindPlatformCodeAgeSequence() {
+  byte* start = instruction_start();
+  uint32_t young_length;
+  byte* young_sequence = GetNoCodeAgeSequence(&young_length);
+  if (!memcmp(start, young_sequence, young_length) ||
+      Memory::uint32_at(start) == kCodeAgePatchFirstInstruction) {
+    return start;
+  } else {
+    byte* start_after_strict = NULL;
+    if (kind() == FUNCTION) {
+      start_after_strict = start + kSizeOfFullCodegenStrictModePrologue;
+    } else {
+      ASSERT(kind() == OPTIMIZED_FUNCTION);
+      start_after_strict = start + kSizeOfOptimizedStrictModePrologue;
+    }
+    ASSERT(!memcmp(start_after_strict, young_sequence, young_length) ||
+           Memory::uint32_at(start_after_strict) ==
+           kCodeAgePatchFirstInstruction);
+    return start_after_strict;
+  }
+}
+
+
+bool Code::IsYoungSequence(byte* sequence) {
+  uint32_t young_length;
+  byte* young_sequence = GetNoCodeAgeSequence(&young_length);
+  bool result = !memcmp(sequence, young_sequence, young_length);
+  ASSERT(result ||
+         Memory::uint32_at(sequence) == kCodeAgePatchFirstInstruction);
+  return result;
+}
+
+
+void Code::GetCodeAgeAndParity(byte* sequence, Age* age,
+                               MarkingParity* parity) {
+  if (IsYoungSequence(sequence)) {
+    *age = kNoAge;
+    *parity = NO_MARKING_PARITY;
+  } else {
+    Address target_address = Memory::Address_at(
+        sequence + Assembler::kInstrSize * (kNoCodeAgeSequenceLength - 1));
+    Code* stub = GetCodeFromTargetAddress(target_address);
+    GetCodeAgeAndParity(stub, age, parity);
+  }
+}
+
+
+void Code::PatchPlatformCodeAge(byte* sequence,
+                                Code::Age age,
+                                MarkingParity parity) {
+  uint32_t young_length;
+  byte* young_sequence = GetNoCodeAgeSequence(&young_length);
+  if (age == kNoAge) {
+    memcpy(sequence, young_sequence, young_length);
+    CPU::FlushICache(sequence, young_length);
+  } else {
+    Code* stub = GetCodeAgeStub(age, parity);
+    CodePatcher patcher(sequence, young_length / Assembler::kInstrSize);
+    patcher.masm()->add(r0, pc, Operand(-8));
+    patcher.masm()->ldr(pc, MemOperand(pc, -4));
+    patcher.masm()->dd(reinterpret_cast<uint32_t>(stub->instruction_start()));
+  }
+}
+
 
 } }  // namespace v8::internal
 

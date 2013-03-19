@@ -584,9 +584,6 @@ class Assembler : public AssemblerBase {
   Assembler(Isolate* isolate, void* buffer, int buffer_size);
   ~Assembler();
 
-  // Overrides the default provided by FLAG_debug_code.
-  void set_emit_debug_code(bool value) { emit_debug_code_ = value; }
-
   // GetCode emits any pending (non-emitted) code and fills the descriptor
   // desc. GetCode() is idempotent; it returns the same result if no other
   // Assembler functions are invoked in between GetCode() calls.
@@ -595,6 +592,10 @@ class Assembler : public AssemblerBase {
   // Read/Modify the code target in the branch/call instruction at pc.
   inline static Address target_address_at(Address pc);
   inline static void set_target_address_at(Address pc, Address target);
+
+  // Return the code target address at a call site from the return address
+  // of that call in the instruction stream.
+  inline static Address target_address_from_return_address(Address pc);
 
   // This sets the branch destination (which is in the instruction on x86).
   // This is for calls and branches within generated code.
@@ -624,6 +625,7 @@ class Assembler : public AssemblerBase {
   static const int kPatchDebugBreakSlotAddressOffset = 1;  // JMP imm32.
 
   static const int kCallInstructionLength = 5;
+  static const int kPatchDebugBreakSlotReturnOffset = kPointerSize;
   static const int kJSReturnSequenceLength = 6;
 
   // The debug break slot must be able to contain a call instruction.
@@ -807,6 +809,8 @@ class Assembler : public AssemblerBase {
 
   void rcl(Register dst, uint8_t imm8);
   void rcr(Register dst, uint8_t imm8);
+  void ror(Register dst, uint8_t imm8);
+  void ror_cl(Register dst);
 
   void sar(Register dst, uint8_t imm8);
   void sar_cl(Register dst);
@@ -883,8 +887,8 @@ class Assembler : public AssemblerBase {
   void call(const Operand& adr);
   int CallSize(Handle<Code> code, RelocInfo::Mode mode);
   void call(Handle<Code> code,
-            RelocInfo::Mode rmode = RelocInfo::CODE_TARGET,
-            unsigned ast_id = kNoASTId);
+            RelocInfo::Mode rmode,
+            TypeFeedbackId id = TypeFeedbackId::None());
 
   // Jumps
   // unconditional jump to L
@@ -978,6 +982,7 @@ class Assembler : public AssemblerBase {
   // SSE2 instructions
   void cvttss2si(Register dst, const Operand& src);
   void cvttsd2si(Register dst, const Operand& src);
+  void cvtsd2si(Register dst, XMMRegister src);
 
   void cvtsi2sd(XMMRegister dst, Register src) { cvtsi2sd(dst, Operand(src)); }
   void cvtsi2sd(XMMRegister dst, const Operand& src);
@@ -993,6 +998,7 @@ class Assembler : public AssemblerBase {
   void sqrtsd(XMMRegister dst, XMMRegister src);
 
   void andpd(XMMRegister dst, XMMRegister src);
+  void orpd(XMMRegister dst, XMMRegister src);
 
   void ucomisd(XMMRegister dst, XMMRegister src);
   void ucomisd(XMMRegister dst, const Operand& src);
@@ -1009,6 +1015,7 @@ class Assembler : public AssemblerBase {
   void movmskpd(Register dst, XMMRegister src);
 
   void cmpltsd(XMMRegister dst, XMMRegister src);
+  void pcmpeqd(XMMRegister dst, XMMRegister src);
 
   void movaps(XMMRegister dst, XMMRegister src);
 
@@ -1110,8 +1117,6 @@ class Assembler : public AssemblerBase {
   void set_byte_at(int pos, byte value) { buffer_[pos] = value; }
 
  protected:
-  bool emit_debug_code() const { return emit_debug_code_; }
-
   void movsd(XMMRegister dst, const Operand& src);
   void movsd(const Operand& dst, XMMRegister src);
 
@@ -1136,7 +1141,7 @@ class Assembler : public AssemblerBase {
   inline void emit(Handle<Object> handle);
   inline void emit(uint32_t x,
                    RelocInfo::Mode rmode,
-                   unsigned ast_id = kNoASTId);
+                   TypeFeedbackId id = TypeFeedbackId::None());
   inline void emit(const Immediate& x);
   inline void emit_w(const Immediate& x);
 
@@ -1184,9 +1189,6 @@ class Assembler : public AssemblerBase {
   RelocInfoWriter reloc_info_writer;
 
   PositionsRecorder positions_recorder_;
-
-  bool emit_debug_code_;
-
   friend class PositionsRecorder;
 };
 

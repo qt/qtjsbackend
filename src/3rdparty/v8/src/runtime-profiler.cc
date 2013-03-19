@@ -34,6 +34,7 @@
 #include "compilation-cache.h"
 #include "deoptimizer.h"
 #include "execution.h"
+#include "full-codegen.h"
 #include "global-handles.h"
 #include "isolate-inl.h"
 #include "mark-compact.h"
@@ -65,16 +66,24 @@ static const int kSizeLimit = 1500;
 // Number of times a function has to be seen on the stack before it is
 // optimized.
 static const int kProfilerTicksBeforeOptimization = 2;
+// If the function optimization was disabled due to high deoptimization count,
+// but the function is hot and has been seen on the stack this number of times,
+// then we try to reenable optimization for this function.
+static const int kProfilerTicksBeforeReenablingOptimization = 250;
 // If a function does not have enough type info (according to
 // FLAG_type_info_threshold), but has seen a huge number of ticks,
 // optimize it as it is.
 static const int kTicksWhenNotEnoughTypeInfo = 100;
 // We only have one byte to store the number of ticks.
+STATIC_ASSERT(kProfilerTicksBeforeOptimization < 256);
+STATIC_ASSERT(kProfilerTicksBeforeReenablingOptimization < 256);
 STATIC_ASSERT(kTicksWhenNotEnoughTypeInfo < 256);
+
 
 // Maximum size in bytes of generated code for a function to be optimized
 // the very first time it is seen on the stack.
-static const int kMaxSizeEarlyOpt = 500;
+static const int kMaxSizeEarlyOpt =
+    5 * FullCodeGenerator::kBackEdgeDistanceUnit;
 
 
 Atomic32 RuntimeProfiler::state_ = 0;
@@ -144,15 +153,20 @@ void RuntimeProfiler::Optimize(JSFunction* function, const char* reason) {
     PrintF("]\n");
   }
 
-  // The next call to the function will trigger optimization.
-  function->MarkForLazyRecompilation();
+  if (FLAG_parallel_recompilation) {
+    function->MarkForParallelRecompilation();
+  } else {
+    // The next call to the function will trigger optimization.
+    function->MarkForLazyRecompilation();
+  }
 }
 
 
 void RuntimeProfiler::AttemptOnStackReplacement(JSFunction* function) {
   // See AlwaysFullCompiler (in compiler.cc) comment on why we need
   // Debug::has_break_points().
-  ASSERT(function->IsMarkedForLazyRecompilation());
+  ASSERT(function->IsMarkedForLazyRecompilation() ||
+         function->IsMarkedForParallelRecompilation());
   if (!FLAG_use_osr ||
       isolate_->DebuggerHasBreakPoints() ||
       function->IsBuiltin()) {
@@ -211,7 +225,10 @@ int RuntimeProfiler::LookupSample(JSFunction* function) {
   for (int i = 0; i < kSamplerWindowSize; i++) {
     Object* sample = sampler_window_[i];
     if (sample != NULL) {
-      if (function == sample) {
+      bool fits = FLAG_lookup_sample_by_shared
+          ? (function->shared() == JSFunction::cast(sample)->shared())
+          : (function == JSFunction::cast(sample));
+      if (fits) {
         weight += sampler_window_weight_[i];
       }
     }
@@ -263,29 +280,44 @@ void RuntimeProfiler::OptimizeNow() {
       }
     }
 
-    Code* shared_code = function->shared()->code();
+    SharedFunctionInfo* shared = function->shared();
+    Code* shared_code = shared->code();
+
     if (shared_code->kind() != Code::FUNCTION) continue;
 
-    if (function->IsMarkedForLazyRecompilation()) {
+    if (function->IsMarkedForLazyRecompilation() ||
+        function->IsMarkedForParallelRecompilation()) {
       int nesting = shared_code->allow_osr_at_loop_nesting_level();
       if (nesting == 0) AttemptOnStackReplacement(function);
       int new_nesting = Min(nesting + 1, Code::kMaxLoopNestingMarker);
       shared_code->set_allow_osr_at_loop_nesting_level(new_nesting);
     }
 
-    // Do not record non-optimizable functions.
-    if (!function->IsOptimizable()) continue;
-    if (function->shared()->optimization_disabled()) continue;
-
     // Only record top-level code on top of the execution stack and
     // avoid optimizing excessively large scripts since top-level code
     // will be executed only once.
     const int kMaxToplevelSourceSize = 10 * 1024;
-    if (function->shared()->is_toplevel()
-        && (frame_count > 1
-            || function->shared()->SourceSize() > kMaxToplevelSourceSize)) {
+    if (shared->is_toplevel() &&
+        (frame_count > 1 || shared->SourceSize() > kMaxToplevelSourceSize)) {
       continue;
     }
+
+    // Do not record non-optimizable functions.
+    if (shared->optimization_disabled()) {
+      if (shared->deopt_count() >= FLAG_max_opt_count) {
+        // If optimization was disabled due to many deoptimizations,
+        // then check if the function is hot and try to reenable optimization.
+        int ticks = shared_code->profiler_ticks();
+        if (ticks >= kProfilerTicksBeforeReenablingOptimization) {
+          shared_code->set_profiler_ticks(0);
+          shared->TryReenableOptimization();
+        } else {
+          shared_code->set_profiler_ticks(ticks + 1);
+        }
+      }
+      continue;
+    }
+    if (!function->IsOptimizable()) continue;
 
     if (FLAG_watch_ic_patching) {
       int ticks = shared_code->profiler_ticks();
@@ -309,7 +341,7 @@ void RuntimeProfiler::OptimizeNow() {
           }
         }
       } else if (!any_ic_changed_ &&
-          shared_code->instruction_size() < kMaxSizeEarlyOpt) {
+                 shared_code->instruction_size() < kMaxSizeEarlyOpt) {
         // If no IC was patched since the last tick and this function is very
         // small, optimistically optimize it now.
         Optimize(function, "small function");

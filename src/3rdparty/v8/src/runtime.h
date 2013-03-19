@@ -62,7 +62,6 @@ namespace internal {
   F(GetIndexedInterceptorElementNames, 1, 1) \
   F(GetArgumentsProperty, 1, 1) \
   F(ToFastProperties, 1, 1) \
-  F(ToSlowProperties, 1, 1) \
   F(FinishArrayPrototypeSetup, 1, 1) \
   F(SpecialArrayFunctions, 1, 1) \
   F(GetDefaultReceiver, 1, 1) \
@@ -86,6 +85,7 @@ namespace internal {
   F(NewStrictArgumentsFast, 3, 1) \
   F(LazyCompile, 1, 1) \
   F(LazyRecompile, 1, 1) \
+  F(ParallelRecompile, 1, 1)     \
   F(NotifyDeoptimized, 1, 1) \
   F(NotifyOSR, 0, 1) \
   F(DeoptimizeFunction, 1, 1) \
@@ -120,6 +120,7 @@ namespace internal {
   F(CharFromCode, 1, 1) \
   F(URIEscape, 1, 1) \
   F(URIUnescape, 1, 1) \
+  F(BasicJSONStringify, 1, 1) \
   F(QuoteJSONString, 1, 1) \
   F(QuoteJSONStringComma, 1, 1) \
   F(QuoteJSONStringArray, 1, 1) \
@@ -267,6 +268,7 @@ namespace internal {
   F(DefineOrRedefineDataProperty, 4, 1) \
   F(DefineOrRedefineAccessorProperty, 5, 1) \
   F(IgnoreAttributesAndSetProperty, -1 /* 3 or 4 */, 1) \
+  F(GetDataProperty, 2, 1) \
   \
   /* Arrays */ \
   F(RemoveArrayHoles, 2, 1) \
@@ -284,6 +286,9 @@ namespace internal {
   F(CreateArrayLiteral, 3, 1) \
   F(CreateArrayLiteralShallow, 3, 1) \
   \
+  /* Harmony modules */ \
+  F(IsJSModule, 1, 1) \
+  \
   /* Harmony proxies */ \
   F(CreateJSProxy, 2, 1) \
   F(CreateJSFunctionProxy, 4, 1) \
@@ -299,16 +304,32 @@ namespace internal {
   F(SetAdd, 2, 1) \
   F(SetHas, 2, 1) \
   F(SetDelete, 2, 1) \
+  F(SetGetSize, 1, 1) \
   \
   /* Harmony maps */ \
   F(MapInitialize, 1, 1) \
   F(MapGet, 2, 1) \
+  F(MapHas, 2, 1) \
+  F(MapDelete, 2, 1) \
   F(MapSet, 3, 1) \
+  F(MapGetSize, 1, 1) \
   \
   /* Harmony weakmaps */ \
   F(WeakMapInitialize, 1, 1) \
   F(WeakMapGet, 2, 1) \
+  F(WeakMapHas, 2, 1) \
+  F(WeakMapDelete, 2, 1) \
   F(WeakMapSet, 3, 1) \
+  \
+  /* Harmony observe */ \
+  F(IsObserved, 1, 1) \
+  F(SetIsObserved, 2, 1) \
+  F(SetObserverDeliveryPending, 0, 1) \
+  F(GetObservationState, 0, 1) \
+  F(CreateObjectHashTable, 0, 1) \
+  F(ObjectHashTableGet, 2, 1) \
+  F(ObjectHashTableSet, 3, 1) \
+  F(ObjectHashTableHas, 2, 1) \
   \
   /* Statements */ \
   F(NewClosure, 3, 1) \
@@ -318,16 +339,18 @@ namespace internal {
   F(Throw, 1, 1) \
   F(ReThrow, 1, 1) \
   F(ThrowReferenceError, 1, 1) \
+  F(ThrowNotDateError, 0, 1) \
   F(StackGuard, 0, 1) \
   F(Interrupt, 0, 1) \
   F(PromoteScheduledException, 0, 1) \
   \
   /* Contexts */ \
+  F(NewGlobalContext, 2, 1) \
   F(NewFunctionContext, 1, 1) \
   F(PushWithContext, 2, 1) \
   F(PushCatchContext, 3, 1) \
   F(PushBlockContext, 2, 1) \
-  F(PushModuleContext, 2, 1) \
+  F(PushModuleContext, 1, 1) \
   F(DeleteContextSlot, 2, 1) \
   F(LoadContextSlot, 2, 2) \
   F(LoadContextSlotNoReferenceError, 2, 2) \
@@ -355,9 +378,6 @@ namespace internal {
   F(GetFromCache, 2, 1) \
   \
   /* Message objects */ \
-  F(NewMessageObject, 2, 1) \
-  F(MessageGetType, 1, 1) \
-  F(MessageGetArguments, 1, 1) \
   F(MessageGetStartPosition, 1, 1) \
   F(MessageGetScript, 1, 1) \
   \
@@ -365,9 +385,11 @@ namespace internal {
   F(IS_VAR, 1, 1) \
   \
   /* expose boolean functions from objects-inl.h */ \
-  F(HasFastSmiOnlyElements, 1, 1) \
-  F(HasFastElements, 1, 1) \
+  F(HasFastSmiElements, 1, 1) \
+  F(HasFastSmiOrObjectElements, 1, 1) \
+  F(HasFastObjectElements, 1, 1) \
   F(HasFastDoubleElements, 1, 1) \
+  F(HasFastHoleyElements, 1, 1) \
   F(HasDictionaryElements, 1, 1) \
   F(HasExternalPixelElements, 1, 1) \
   F(HasExternalArrayElements, 1, 1) \
@@ -379,6 +401,7 @@ namespace internal {
   F(HasExternalUnsignedIntElements, 1, 1) \
   F(HasExternalFloatElements, 1, 1) \
   F(HasExternalDoubleElements, 1, 1) \
+  F(HasFastProperties, 1, 1) \
   F(TransitionElementsSmiToDouble, 1, 1) \
   F(TransitionElementsDoubleToObject, 1, 1) \
   F(HaveSameMap, 2, 1) \
@@ -441,6 +464,7 @@ namespace internal {
   F(LiveEditPatchFunctionPositions, 2, 1) \
   F(LiveEditCheckAndDropActivations, 2, 1) \
   F(LiveEditCompareStrings, 2, 1) \
+  F(LiveEditRestartFrame, 2, 1) \
   F(GetFunctionCodePositionFromSource, 2, 1) \
   F(ExecuteInDebugContext, 2, 1) \
   \
@@ -636,13 +660,6 @@ class Runtime : public AllStatic {
   // Get the intrinsic function with the given FunctionId.
   static const Function* FunctionForId(FunctionId id);
 
-  static Handle<String> StringReplaceOneCharWithString(Isolate* isolate,
-                                                       Handle<String> subject,
-                                                       Handle<String> search,
-                                                       Handle<String> replace,
-                                                       bool* found,
-                                                       int recursion_limit);
-
   // General-purpose helper functions for runtime system.
   static int StringMatch(Isolate* isolate,
                          Handle<String> sub,
@@ -684,11 +701,6 @@ class Runtime : public AllStatic {
       Isolate* isolate,
       Handle<Object> object,
       Handle<Object> key);
-
-  // This function is used in FunctionNameUsing* tests.
-  static Object* FindSharedFunctionInfoInScript(Isolate* isolate,
-                                                Handle<Script> script,
-                                                int position);
 
   // Helper functions used stubs.
   static void PerformGC(Object* result);

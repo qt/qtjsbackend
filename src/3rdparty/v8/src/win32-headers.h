@@ -56,7 +56,9 @@
 #include <windows.h>
 
 #ifdef V8_WIN32_HEADERS_FULL
+#ifndef _WIN32_WCE
 #include <signal.h>  // For raise().
+#endif // _WIN32_WCE
 #include <time.h>  // For LocalOffset() implementation.
 #include <mmsystem.h>  // For timeGetTime().
 #ifdef __MINGW32__
@@ -65,10 +67,10 @@
 #undef _WIN32_WINNT
 #define _WIN32_WINNT 0x501
 #endif  // __MINGW32__
-#if !defined(__MINGW32__) || defined(__MINGW64_VERSION_MAJOR)
+#if (!defined(__MINGW32__) || defined(__MINGW64_VERSION_MAJOR)) && !defined(_WIN32_WCE)
 #include <dbghelp.h>  // For SymLoadModule64 and al.
 #include <errno.h>  // For STRUNCATE
-#endif  // !defined(__MINGW32__) || defined(__MINGW64_VERSION_MAJOR)
+#endif  // !defined(__MINGW32__) || defined(__MINGW64_VERSION_MAJOR) && !defined(_WIN32_WCE)
 #include <limits.h>  // For INT_MAX and al.
 #include <tlhelp32.h>  // For Module32First and al.
 
@@ -76,12 +78,25 @@
 // makes it impossible to have them elsewhere.
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#ifndef __MINGW32__
+#if !defined(__MINGW32__) && !defined(_WIN32_WCE)
 #include <wspiapi.h>
-#endif  // __MINGW32__
+#endif  // __MINGW32__ && !defined(_WIN32_WCE)
+#ifndef _WIN32_WCE
 #include <process.h>  // For _beginthreadex().
+#endif
 #include <stdlib.h>
 #endif  // V8_WIN32_HEADERS_FULL
+
+#ifdef _WIN32_WCE
+#ifdef DebugBreak
+#undef DebugBreak
+inline void DebugBreak() { __debugbreak(); };
+#endif // DebugBreak
+
+#ifndef _IOFBF
+#define _IOFBF 0x0000
+#endif
+#endif
 
 #undef VOID
 #undef DELETE
@@ -98,3 +113,4 @@
 #undef GetObject
 #undef CreateMutex
 #undef CreateSemaphore
+#undef interface

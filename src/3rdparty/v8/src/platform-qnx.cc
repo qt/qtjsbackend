@@ -125,12 +125,15 @@ static bool CPUInfoContainsString(const char * search_string) {
 
 bool OS::ArmCpuHasFeature(CpuFeature feature) {
   switch (feature) {
+    case VFP2:
     case VFP3:
       // All shipping devices currently support this and QNX has no easy way to
       // determine this at runtime.
       return true;
     case ARMv7:
       return (SYSPAGE_ENTRY(cpuinfo)->flags & ARM_CPU_FLAG_V7) != 0;
+    case SUDIV:
+      return CPUInfoContainsString("idiva");
     default:
       UNREACHABLE();
   }
@@ -138,6 +141,12 @@ bool OS::ArmCpuHasFeature(CpuFeature feature) {
   return false;
 }
 
+CpuImplementer OS::GetCpuImplementer() {
+  // We do NOT return QUALCOMM_IMPLEMENTER, even though /proc/cpuinfo
+  // has "CPU implementer : 0x51" in it, as that leads to a runtime
+  // error on the first JS function call.
+  return UNKNOWN_IMPLEMENTER;
+}
 
 bool OS::ArmUsingHardFloat() {
   // GCC versions 4.6 and above define __ARM_PCS or __ARM_PCS_VFP to specify
@@ -377,7 +386,7 @@ void OS::LogSharedLibraryAddresses() {
     return;
   }
 
-  /* Get the number of map entrys.  */
+  /* Get the number of map entries.  */
   if (devctl(proc_fd, DCMD_PROC_MAPINFO, NULL, 0, &num) != EOK) {
     close(proc_fd);
     return;
@@ -389,7 +398,7 @@ void OS::LogSharedLibraryAddresses() {
     return;
   }
 
-  /* Fill the map entrys.  */
+  /* Fill the map entries.  */
   if (devctl(proc_fd, DCMD_PROC_PAGEDATA, mapinfos, num * sizeof(procfs_mapinfo), &num) != EOK) {
     free(mapinfos);
     close(proc_fd);
@@ -593,6 +602,10 @@ bool VirtualMemory::UncommitRegion(void* base, size_t size) {
 
 bool VirtualMemory::ReleaseRegion(void* base, size_t size) {
   return munmap(base, size) == 0;
+}
+
+bool VirtualMemory::HasLazyCommits() {
+  return false;
 }
 
 
@@ -980,7 +993,7 @@ class SignalSender : public Thread {
 
   void Sleep(SleepInterval full_or_half) {
     // Convert ms to us and subtract 100 us to compensate delays
-    // occuring during signal delivery.
+    // occurring during signal delivery.
     useconds_t interval = interval_ * 1000 - 100;
     if (full_or_half == HALF_INTERVAL) interval /= 2;
     int result = usleep(interval);
