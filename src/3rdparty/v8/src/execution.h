@@ -41,9 +41,8 @@ enum InterruptFlag {
   DEBUGCOMMAND = 1 << 2,
   PREEMPT = 1 << 3,
   TERMINATE = 1 << 4,
-  RUNTIME_PROFILER_TICK = 1 << 5,
-  GC_REQUEST = 1 << 6,
-  CODE_READY = 1 << 7
+  GC_REQUEST = 1 << 5,
+  CODE_READY = 1 << 6
 };
 
 
@@ -70,14 +69,6 @@ class Execution : public AllStatic {
                              bool* pending_exception,
                              bool convert_receiver = false);
 
-  static Handle<Object> Call(Handle<Object> callable,
-                             Handle<Object> receiver,
-                             int argc,
-                             Handle<Object> argv[],
-                             bool* pending_exception,
-                             bool convert_receiver,
-                             Handle<Object> qml);
-
   // Construct object from function, the caller supplies an array of
   // arguments. Arguments are Object* type. After function returns,
   // pointers in 'args' might be invalid.
@@ -101,7 +92,7 @@ class Execution : public AllStatic {
                                 bool* caught_exception);
 
   // ECMA-262 9.2
-  static Handle<Object> ToBoolean(Handle<Object> obj);
+  static Handle<Object> ToBoolean(Isolate* isolate, Handle<Object> obj);
 
   // ECMA-262 9.3
   static Handle<Object> ToNumber(Handle<Object> obj, bool* exc);
@@ -202,8 +193,6 @@ class StackGuard {
   void Interrupt();
   bool IsTerminateExecution();
   void TerminateExecution();
-  bool IsRuntimeProfilerTick();
-  void RequestRuntimeProfilerTick();
   bool IsCodeReadyEvent();
   void RequestCodeReadyEvent();
 #ifdef ENABLE_DEBUGGER_SUPPORT

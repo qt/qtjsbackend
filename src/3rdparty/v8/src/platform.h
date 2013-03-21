@@ -62,7 +62,7 @@ int signbit(double x);
 
 
 // Windows specific stuff.
-#ifdef _WIN32
+#ifdef WIN32
 
 // Microsoft Visual C++ specific stuff.
 #ifdef _MSC_VER
@@ -94,7 +94,7 @@ inline int lrint(double flt) {
 // Random is missing on both Visual Studio and MinGW.
 int random();
 
-#endif  // _WIN32
+#endif  // WIN32
 
 #include "atomicops.h"
 #include "lazy-instance.h"
@@ -119,12 +119,16 @@ class Mutex;
 double ceiling(double x);
 double modulo(double x, double y);
 
-// Custom implementation of sin, cos, tan and log.
+// Custom implementation of math functions.
 double fast_sin(double input);
 double fast_cos(double input);
 double fast_tan(double input);
 double fast_log(double input);
+double fast_exp(double input);
 double fast_sqrt(double input);
+// The custom exp implementation needs 16KB of lookup data; initialize it
+// on demand.
+void lazily_initialize_fast_exp();
 
 // Forward declarations.
 class Socket;
@@ -235,11 +239,16 @@ class OS {
   // Sleep for a number of milliseconds.
   static void Sleep(const int milliseconds);
 
+  static int NumberOfCores();
+
   // Abort the current process.
   static void Abort();
 
   // Debug break.
   static void DebugBreak();
+
+  // Dump C++ current stack trace (only functional on Linux).
+  static void DumpBacktrace();
 
   // Walk the stack.
   static const int kStackWalkError = -1;
@@ -757,10 +766,17 @@ class Sampler {
   void Start();
   void Stop();
 
-  // Is the sampler used for profiling?
-  bool IsProfiling() const { return NoBarrier_Load(&profiling_) > 0; }
-  void IncreaseProfilingDepth() { NoBarrier_AtomicIncrement(&profiling_, 1); }
-  void DecreaseProfilingDepth() { NoBarrier_AtomicIncrement(&profiling_, -1); }
+  // Whether the sampling thread should use this Sampler for CPU profiling?
+  bool IsProfiling() const {
+    return NoBarrier_Load(&profiling_) > 0 &&
+        !NoBarrier_Load(&has_processing_thread_);
+  }
+  void IncreaseProfilingDepth() {
+    if (NoBarrier_AtomicIncrement(&profiling_, 1) == 1) StartProfiling();
+  }
+  void DecreaseProfilingDepth() {
+    if (!NoBarrier_AtomicIncrement(&profiling_, -1)) StopProfiling();
+  }
 
   // Whether the sampler is running (that is, consumes resources).
   bool IsActive() const { return NoBarrier_Load(&active_); }
@@ -776,6 +792,14 @@ class Sampler {
 
   PlatformData* platform_data() { return data_; }
 
+  // If true next sample must be initiated on the profiler event processor
+  // thread right after latest sample is processed.
+  static bool CanSampleOnProfilerEventsProcessorThread();
+  void DoSample();
+  void SetHasProcessingThread(bool value) {
+    NoBarrier_Store(&has_processing_thread_, value);
+  }
+
  protected:
   virtual void DoSampleStack(TickSample* sample) = 0;
 
@@ -783,9 +807,15 @@ class Sampler {
   void SetActive(bool value) { NoBarrier_Store(&active_, value); }
   void IncSamplesTaken() { if (++samples_taken_ < 0) samples_taken_ = 0; }
 
+  // Perform platform-specific initialization before DoSample() may be invoked.
+  void StartProfiling();
+  // Perform platform-specific cleanup after profiling.
+  void StopProfiling();
+
   Isolate* isolate_;
   const int interval_;
   Atomic32 profiling_;
+  Atomic32 has_processing_thread_;
   Atomic32 active_;
   PlatformData* data_;  // Platform specific data.
   int samples_taken_;  // Counts stack samples taken.

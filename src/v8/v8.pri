@@ -65,6 +65,7 @@ SOURCES += \
     $$V8SRC/checks.cc \
     $$V8SRC/circular-queue.cc \
     $$V8SRC/code-stubs.cc \
+    $$V8SRC/code-stubs-hydrogen.cc \
     $$V8SRC/codegen.cc \
     $$V8SRC/compilation-cache.cc \
     $$V8SRC/compiler.cc \
@@ -96,11 +97,11 @@ SOURCES += \
     $$V8SRC/handles.cc \
     $$V8SRC/heap-profiler.cc \
     $$V8SRC/heap.cc \
+    $$V8SRC/heap-snapshot-generator.cc \
     $$V8SRC/hydrogen.cc \
     $$V8SRC/hydrogen-instructions.cc \
     $$V8SRC/ic.cc \
     $$V8SRC/incremental-marking.cc \
-    $$V8SRC/inspector.cc \
     $$V8SRC/interface.cc \
     $$V8SRC/interpreter-irregexp.cc \
     $$V8SRC/isolate.cc \
@@ -108,10 +109,10 @@ SOURCES += \
     $$V8SRC/lithium-allocator.cc \
     $$V8SRC/lithium.cc \
     $$V8SRC/liveedit.cc \
-    $$V8SRC/liveobjectlist.cc \
     $$V8SRC/log-utils.cc \
     $$V8SRC/log.cc \
     $$V8SRC/mark-compact.cc \
+    $$V8SRC/marking-thread.cc \
     $$V8SRC/messages.cc \
     $$V8SRC/objects.cc \
     $$V8SRC/objects-printer.cc \
@@ -141,6 +142,7 @@ SOURCES += \
     $$V8SRC/string-stream.cc \
     $$V8SRC/strtod.cc \
     $$V8SRC/stub-cache.cc \
+    $$V8SRC/sweeper-thread.cc \
     $$V8SRC/token.cc \
     $$V8SRC/transitions.cc \
     $$V8SRC/type-info.cc \

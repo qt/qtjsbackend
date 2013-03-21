@@ -35,7 +35,7 @@
 namespace v8 {
 namespace internal {
 
-#if defined(_WIN32) && !defined(_WIN64) && !defined(_WIN32_WCE)
+#if defined(_WIN32) && !defined(_WIN64)
 
 #define V8_FAST_TLS_SUPPORTED 1
 

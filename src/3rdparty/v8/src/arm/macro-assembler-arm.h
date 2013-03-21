@@ -54,20 +54,6 @@ inline Operand SmiUntagOperand(Register object) {
 const Register cp = { 8 };  // JavaScript context pointer
 const Register kRootRegister = { 10 };  // Roots array pointer.
 
-// Flags used for the AllocateInNewSpace functions.
-enum AllocationFlags {
-  // No special flags.
-  NO_ALLOCATION_FLAGS = 0,
-  // Return the pointer to the allocated already tagged as a heap object.
-  TAG_OBJECT = 1 << 0,
-  // The content of the result register already contains the allocation top in
-  // new space.
-  RESULT_CONTAINS_TOP = 1 << 1,
-  // Specify that the requested size of the space to allocate is specified in
-  // words instead of bytes.
-  SIZE_IN_WORDS = 1 << 2
-};
-
 // Flags used for AllocateHeapNumber
 enum TaggingMode {
   // Tag the result.
@@ -178,7 +164,7 @@ class MacroAssembler: public Assembler {
   // Register move. May do nothing if the registers are identical.
   void Move(Register dst, Handle<Object> value);
   void Move(Register dst, Register src, Condition cond = al);
-  void Move(DoubleRegister dst, DoubleRegister src);
+  void Move(DwVfpRegister dst, DwVfpRegister src);
 
   // Load an object from the root table.
   void LoadRoot(Register destination,
@@ -322,6 +308,7 @@ class MacroAssembler: public Assembler {
 
   // Push a handle.
   void Push(Handle<Object> handle);
+  void Push(Smi* smi) { Push(Handle<Smi>(smi, isolate())); }
 
   // Push two registers.  Pushes leftmost register first (to highest address).
   void Push(Register src1, Register src2, Condition cond = al) {
@@ -473,11 +460,6 @@ class MacroAssembler: public Assembler {
             const MemOperand& dst,
             Condition cond = al);
 
-  // Clear specified FPSCR bits.
-  void ClearFPSCRBits(const uint32_t bits_to_clear,
-                      const Register scratch,
-                      const Condition cond = al);
-
   // Compare double values and move the result to the normal condition flags.
   void VFPCompareAndSetFlags(const DwVfpRegister src1,
                              const DwVfpRegister src2,
@@ -498,8 +480,7 @@ class MacroAssembler: public Assembler {
 
   void Vmov(const DwVfpRegister dst,
             const double imm,
-            const Register scratch = no_reg,
-            const Condition cond = al);
+            const Register scratch = no_reg);
 
   // Enter exit frame.
   // stack_space - extra stack space, used for alignment before call to C.
@@ -533,6 +514,7 @@ class MacroAssembler: public Assembler {
                            bool can_have_holes);
 
   void LoadGlobalFunction(int index, Register function);
+  void LoadArrayFunction(Register function);
 
   // Load the initial map from the global function. The registers
   // function and map can be the same, function is then overwritten.
@@ -831,14 +813,14 @@ class MacroAssembler: public Assembler {
   // case scratch2, scratch3 and scratch4 are unmodified.
   void StoreNumberToDoubleElements(Register value_reg,
                                    Register key_reg,
-                                   Register receiver_reg,
                                    // All regs below here overwritten.
                                    Register elements_reg,
                                    Register scratch1,
                                    Register scratch2,
                                    Register scratch3,
                                    Register scratch4,
-                                   Label* fail);
+                                   Label* fail,
+                                   int elements_offset = 0);
 
   // Compare an object's map with the specified map and its transitioned
   // elements maps if mode is ALLOW_ELEMENT_TRANSITION_MAPS. Condition flags are
@@ -958,6 +940,14 @@ class MacroAssembler: public Assembler {
                       DwVfpRegister double_scratch,
                       Label *not_int32);
 
+  // Try to convert a double to a signed 32-bit integer. If the double value
+  // can be exactly represented as an integer, the code jumps to 'done' and
+  // 'result' contains the integer value. Otherwise, the code falls through.
+  void TryFastDoubleToInt32(Register result,
+                            DwVfpRegister double_input,
+                            DwVfpRegister double_scratch,
+                            Label* done);
+
   // Truncates a double using a specific rounding mode, and writes the value
   // to the result register.
   // Clears the z flag (ne condition) if an overflow occurs.
@@ -988,7 +978,7 @@ class MacroAssembler: public Assembler {
   // Exits with 'result' holding the answer and all other registers clobbered.
   void EmitECMATruncate(Register result,
                         DwVfpRegister double_input,
-                        SwVfpRegister single_scratch,
+                        DwVfpRegister double_scratch,
                         Register scratch,
                         Register scratch2,
                         Register scratch3);
@@ -1002,11 +992,18 @@ class MacroAssembler: public Assembler {
                          Register source,
                          Register scratch);
 
+  // Check whether d16-d31 are available on the CPU. The result is given by the
+  // Z condition flag: Z==0 if d16-d31 available, Z==1 otherwise.
+  void CheckFor32DRegs(Register scratch);
+
+
   // ---------------------------------------------------------------------------
   // Runtime calls
 
   // Call a code stub.
-  void CallStub(CodeStub* stub, Condition cond = al);
+  void CallStub(CodeStub* stub,
+                TypeFeedbackId ast_id = TypeFeedbackId::None(),
+                Condition cond = al);
 
   // Call a code stub.
   void TailCallStub(CodeStub* stub, Condition cond = al);
@@ -1057,9 +1054,9 @@ class MacroAssembler: public Assembler {
   // whether soft or hard floating point ABI is used. These functions
   // abstract parameter passing for the three different ways we call
   // C functions from generated code.
-  void SetCallCDoubleArguments(DoubleRegister dreg);
-  void SetCallCDoubleArguments(DoubleRegister dreg1, DoubleRegister dreg2);
-  void SetCallCDoubleArguments(DoubleRegister dreg, Register reg);
+  void SetCallCDoubleArguments(DwVfpRegister dreg);
+  void SetCallCDoubleArguments(DwVfpRegister dreg1, DwVfpRegister dreg2);
+  void SetCallCDoubleArguments(DwVfpRegister dreg, Register reg);
 
   // Calls a C function and cleans up the space for arguments allocated
   // by PrepareCallCFunction. The called function is not allowed to trigger a
@@ -1075,7 +1072,7 @@ class MacroAssembler: public Assembler {
                      int num_reg_arguments,
                      int num_double_arguments);
 
-  void GetCFunctionDoubleResult(const DoubleRegister dst);
+  void GetCFunctionDoubleResult(const DwVfpRegister dst);
 
   // Calls an API function.  Allocates HandleScope, extracts returned value
   // from handle and propagates exceptions.  Restores context.  stack_space
@@ -1288,8 +1285,8 @@ class MacroAssembler: public Assembler {
   void ClampUint8(Register output_reg, Register input_reg);
 
   void ClampDoubleToUint8(Register result_reg,
-                          DoubleRegister input_reg,
-                          DoubleRegister temp_double_reg);
+                          DwVfpRegister input_reg,
+                          DwVfpRegister temp_double_reg);
 
 
   void LoadInstanceDescriptors(Register map, Register descriptors);
@@ -1311,6 +1308,15 @@ class MacroAssembler: public Assembler {
   // Expects object in r0 and returns map with validated enum cache
   // in r0.  Assumes that any other register can be used as a scratch.
   void CheckEnumCache(Register null_value, Label* call_runtime);
+
+  // AllocationSiteInfo support. Arrays may have an associated
+  // AllocationSiteInfo object that can be checked for in order to pretransition
+  // to another type.
+  // On entry, receiver_reg should point to the array object.
+  // scratch_reg gets clobbered.
+  // If allocation info is present, condition flags are set to eq
+  void TestJSArrayForAllocationSiteInfo(Register receiver_reg,
+                                        Register scratch_reg);
 
  private:
   void CallCFunctionHelper(Register function,
@@ -1364,9 +1370,9 @@ class MacroAssembler: public Assembler {
   // This handle will be patched with the code object on installation.
   Handle<Object> code_object_;
 
-  // Needs access to SafepointRegisterStackIndex for optimized frame
+  // Needs access to SafepointRegisterStackIndex for compiled frame
   // traversal.
-  friend class OptimizedFrame;
+  friend class StandardFrame;
 };
 
 
@@ -1395,7 +1401,6 @@ class CodePatcher {
 
  private:
   byte* address_;  // The address of the code being patched.
-  int instructions_;  // Number of instructions of the expected patch size.
   int size_;  // Number of bytes of the expected patch size.
   MacroAssembler masm_;  // Macro assembler used to generate the code.
 };
@@ -1411,11 +1416,6 @@ inline MemOperand ContextOperand(Register context, int index) {
 
 inline MemOperand GlobalObjectOperand()  {
   return ContextOperand(cp, Context::GLOBAL_OBJECT_INDEX);
-}
-
-
-static inline MemOperand QmlGlobalObjectOperand()  {
-  return ContextOperand(cp, Context::QML_GLOBAL_OBJECT_INDEX);
 }
 
 

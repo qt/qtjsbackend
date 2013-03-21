@@ -66,11 +66,9 @@ class NamedEntriesDetector {
 
 static const v8::HeapGraphNode* GetGlobalObject(
     const v8::HeapSnapshot* snapshot) {
-  bool snapshot_enabled = i::Snapshot::IsEnabled();
-
-  CHECK_EQ((snapshot_enabled ? 3 : 2), snapshot->GetRoot()->GetChildrenCount());
+  CHECK_EQ(2, snapshot->GetRoot()->GetChildrenCount());
   const v8::HeapGraphNode* global_obj =
-      snapshot->GetRoot()->GetChild(snapshot_enabled ? 1 : 0)->GetToNode();
+      snapshot->GetRoot()->GetChild(0)->GetToNode();
   CHECK_EQ(0, strncmp("Object", const_cast<i::HeapEntry*>(
       reinterpret_cast<const i::HeapEntry*>(global_obj))->name(), 6));
   return global_obj;
@@ -362,6 +360,44 @@ TEST(HeapSnapshotInternalReferences) {
 #define CHECK_NE_SNAPSHOT_OBJECT_ID(a, b) \
   CHECK((a) != (b))  // NOLINT
 
+TEST(HeapSnapshotAddressReuse) {
+  v8::HandleScope scope;
+  LocalContext env;
+
+  CompileRun(
+      "function A() {}\n"
+      "var a = [];\n"
+      "for (var i = 0; i < 10000; ++i)\n"
+      "  a[i] = new A();\n");
+  const v8::HeapSnapshot* snapshot1 =
+      v8::HeapProfiler::TakeSnapshot(v8_str("snapshot1"));
+  v8::SnapshotObjectId maxId1 = snapshot1->GetMaxSnapshotJSObjectId();
+
+  CompileRun(
+      "for (var i = 0; i < 10000; ++i)\n"
+      "  a[i] = new A();\n");
+  HEAP->CollectAllGarbage(i::Heap::kNoGCFlags);
+
+  const v8::HeapSnapshot* snapshot2 =
+      v8::HeapProfiler::TakeSnapshot(v8_str("snapshot2"));
+  const v8::HeapGraphNode* global2 = GetGlobalObject(snapshot2);
+
+  const v8::HeapGraphNode* array_node =
+      GetProperty(global2, v8::HeapGraphEdge::kProperty, "a");
+  CHECK_NE(NULL, array_node);
+  int wrong_count = 0;
+  for (int i = 0, count = array_node->GetChildrenCount(); i < count; ++i) {
+    const v8::HeapGraphEdge* prop = array_node->GetChild(i);
+    if (prop->GetType() != v8::HeapGraphEdge::kElement)
+      continue;
+    v8::SnapshotObjectId id = prop->GetToNode()->GetId();
+    if (id < maxId1)
+      ++wrong_count;
+  }
+  CHECK_EQ(0, wrong_count);
+}
+
+
 TEST(HeapEntryIdsAndArrayShift) {
   v8::HandleScope scope;
   LocalContext env;
@@ -603,28 +639,14 @@ TEST(HeapSnapshotJSONSerialization) {
       "  return null;\n"
       "}\n");
   // Get the string index using the path: <root> -> <global>.b.x.s
-  v8::Local<v8::Value> string_obj_pos_val;
-  if (i::Snapshot::IsEnabled()) {
-      // TODO(pvarga): Check shortcut_type issue at b when QML global object is used.
-      string_obj_pos_val = CompileRun(
-          "GetChildPosByProperty(\n"
-          "  GetChildPosByProperty(\n"
-          "    GetChildPosByProperty("
-          "      parsed.edges[edge_to_node_offset"
-          "                   + edge_fields_count],"
-          "      \"b\", property_type),\n"
-          "    \"x\", property_type),"
-          "  \"s\", property_type)");
-  } else {
-      string_obj_pos_val = CompileRun(
-          "GetChildPosByProperty(\n"
-          "  GetChildPosByProperty(\n"
-          "    GetChildPosByProperty("
-          "      parsed.edges[edge_to_node_offset],"
-          "      \"b\", property_type),\n"
-          "    \"x\", property_type),"
-          "  \"s\", property_type)");
-  }
+  v8::Local<v8::Value> string_obj_pos_val = CompileRun(
+      "GetChildPosByProperty(\n"
+      "  GetChildPosByProperty(\n"
+      "    GetChildPosByProperty("
+      "      parsed.edges[edge_to_node_offset],"
+      "      \"b\", property_type),\n"
+      "    \"x\", property_type),"
+      "  \"s\", property_type)");
   CHECK(!string_obj_pos_val.IsEmpty());
   int string_obj_pos =
       static_cast<int>(string_obj_pos_val->ToNumber()->Value());
@@ -1031,7 +1053,6 @@ class TestRetainedObjectInfo : public v8::RetainedObjectInfo {
 
  private:
   bool disposed_;
-  int category_;
   int hash_;
   const char* group_label_;
   const char* label_;
@@ -1062,20 +1083,21 @@ static const v8::HeapGraphNode* GetNode(const v8::HeapGraphNode* parent,
 TEST(HeapSnapshotRetainedObjectInfo) {
   v8::HandleScope scope;
   LocalContext env;
+  v8::Isolate* isolate = env->GetIsolate();
 
   v8::HeapProfiler::DefineWrapperClass(
       1, TestRetainedObjectInfo::WrapperInfoCallback);
   v8::HeapProfiler::DefineWrapperClass(
       2, TestRetainedObjectInfo::WrapperInfoCallback);
   v8::Persistent<v8::String> p_AAA =
-      v8::Persistent<v8::String>::New(v8_str("AAA"));
-  p_AAA.SetWrapperClassId(1);
+      v8::Persistent<v8::String>::New(isolate, v8_str("AAA"));
+  p_AAA.SetWrapperClassId(isolate, 1);
   v8::Persistent<v8::String> p_BBB =
-      v8::Persistent<v8::String>::New(v8_str("BBB"));
-  p_BBB.SetWrapperClassId(1);
+      v8::Persistent<v8::String>::New(isolate, v8_str("BBB"));
+  p_BBB.SetWrapperClassId(isolate, 1);
   v8::Persistent<v8::String> p_CCC =
-      v8::Persistent<v8::String>::New(v8_str("CCC"));
-  p_CCC.SetWrapperClassId(2);
+      v8::Persistent<v8::String>::New(isolate, v8_str("CCC"));
+  p_CCC.SetWrapperClassId(isolate, 2);
   CHECK_EQ(0, TestRetainedObjectInfo::instances.length());
   const v8::HeapSnapshot* snapshot =
       v8::HeapProfiler::TakeSnapshot(v8_str("retained"));
@@ -1124,8 +1146,9 @@ class GraphWithImplicitRefs {
   explicit GraphWithImplicitRefs(LocalContext* env) {
     CHECK_EQ(NULL, instance_);
     instance_ = this;
+    v8::Isolate* isolate = (*env)->GetIsolate();
     for (int i = 0; i < kObjectsCount; i++) {
-      objects_[i] = v8::Persistent<v8::Object>::New(v8::Object::New());
+      objects_[i] = v8::Persistent<v8::Object>::New(isolate, v8::Object::New());
     }
     (*env)->Global()->Set(v8_str("root_object"), objects_[0]);
   }
@@ -1133,7 +1156,7 @@ class GraphWithImplicitRefs {
     instance_ = NULL;
   }
 
-  static void gcPrologue() {
+  static void gcPrologue(v8::GCType type, v8::GCCallbackFlags flags) {
     instance_->AddImplicitReferences();
   }
 
@@ -1159,7 +1182,7 @@ TEST(HeapSnapshotImplicitReferences) {
   LocalContext env;
 
   GraphWithImplicitRefs graph(&env);
-  v8::V8::SetGlobalGCPrologueCallback(&GraphWithImplicitRefs::gcPrologue);
+  v8::V8::AddGCPrologueCallback(&GraphWithImplicitRefs::gcPrologue);
 
   const v8::HeapSnapshot* snapshot =
       v8::HeapProfiler::TakeSnapshot(v8_str("implicit_refs"));
@@ -1182,7 +1205,7 @@ TEST(HeapSnapshotImplicitReferences) {
     }
   }
   CHECK_EQ(2, implicit_targets_count);
-  v8::V8::SetGlobalGCPrologueCallback(NULL);
+  v8::V8::RemoveGCPrologueCallback(&GraphWithImplicitRefs::gcPrologue);
 }
 
 
@@ -1244,51 +1267,28 @@ TEST(DeleteHeapSnapshot) {
 }
 
 
-TEST(DocumentURL) {
+class NameResolver : public v8::HeapProfiler::ObjectNameResolver {
+ public:
+  virtual const char* GetName(v8::Handle<v8::Object> object) {
+    return "Global object name";
+  }
+};
+
+TEST(GlobalObjectName) {
   v8::HandleScope scope;
   LocalContext env;
 
   CompileRun("document = { URL:\"abcdefgh\" };");
 
+  NameResolver name_resolver;
   const v8::HeapSnapshot* snapshot =
-      v8::HeapProfiler::TakeSnapshot(v8_str("document"));
+      v8::HeapProfiler::TakeSnapshot(v8_str("document"),
+      v8::HeapSnapshot::kFull,
+      NULL,
+      &name_resolver);
   const v8::HeapGraphNode* global = GetGlobalObject(snapshot);
   CHECK_NE(NULL, global);
-  CHECK_EQ("Object / abcdefgh",
-           const_cast<i::HeapEntry*>(
-               reinterpret_cast<const i::HeapEntry*>(global))->name());
-}
-
-
-TEST(DocumentWithException) {
-  v8::HandleScope scope;
-  LocalContext env;
-
-  CompileRun(
-      "this.__defineGetter__(\"document\", function() { throw new Error(); })");
-  const v8::HeapSnapshot* snapshot =
-      v8::HeapProfiler::TakeSnapshot(v8_str("document"));
-  const v8::HeapGraphNode* global = GetGlobalObject(snapshot);
-  CHECK_NE(NULL, global);
-  CHECK_EQ("Object",
-           const_cast<i::HeapEntry*>(
-               reinterpret_cast<const i::HeapEntry*>(global))->name());
-}
-
-
-TEST(DocumentURLWithException) {
-  v8::HandleScope scope;
-  LocalContext env;
-
-  CompileRun(
-      "function URLWithException() {}\n"
-      "URLWithException.prototype = { get URL() { throw new Error(); } };\n"
-      "document = { URL: new URLWithException() };");
-  const v8::HeapSnapshot* snapshot =
-      v8::HeapProfiler::TakeSnapshot(v8_str("document"));
-  const v8::HeapGraphNode* global = GetGlobalObject(snapshot);
-  CHECK_NE(NULL, global);
-  CHECK_EQ("Object",
+  CHECK_EQ("Object / Global object name" ,
            const_cast<i::HeapEntry*>(
                reinterpret_cast<const i::HeapEntry*>(global))->name());
 }
@@ -1301,9 +1301,10 @@ TEST(NoHandleLeaks) {
   CompileRun("document = { URL:\"abcdefgh\" };");
 
   v8::Handle<v8::String> name(v8_str("leakz"));
-  int count_before = i::HandleScope::NumberOfHandles();
+  i::Isolate* isolate = i::Isolate::Current();
+  int count_before = i::HandleScope::NumberOfHandles(isolate);
   v8::HeapProfiler::TakeSnapshot(name);
-  int count_after = i::HandleScope::NumberOfHandles();
+  int count_after = i::HandleScope::NumberOfHandles(isolate);
   CHECK_EQ(count_before, count_after);
 }
 
@@ -1518,8 +1519,10 @@ bool HasWeakGlobalHandle() {
 }
 
 
-static void PersistentHandleCallback(v8::Persistent<v8::Value> handle, void*) {
-  handle.Dispose();
+static void PersistentHandleCallback(v8::Isolate* isolate,
+                                     v8::Persistent<v8::Value> handle,
+                                     void*) {
+  handle.Dispose(isolate);
 }
 
 
@@ -1530,8 +1533,8 @@ TEST(WeakGlobalHandle) {
   CHECK(!HasWeakGlobalHandle());
 
   v8::Persistent<v8::Object> handle =
-      v8::Persistent<v8::Object>::New(v8::Object::New());
-  handle.MakeWeak(NULL, PersistentHandleCallback);
+      v8::Persistent<v8::Object>::New(env->GetIsolate(), v8::Object::New());
+  handle.MakeWeak(env->GetIsolate(), NULL, PersistentHandleCallback);
 
   CHECK(HasWeakGlobalHandle());
 }
@@ -1587,8 +1590,6 @@ TEST(NoDebugObjectInSnapshot) {
   const v8::HeapGraphNode* root = snapshot->GetRoot();
   int globals_count = 0;
   for (int i = 0; i < root->GetChildrenCount(); ++i) {
-    // QML global object should be skipped here when snapshot is enabled.
-    if (i::Snapshot::IsEnabled() && i % 2 == 0) continue;
     const v8::HeapGraphEdge* edge = root->GetChild(i);
     if (edge->GetType() == v8::HeapGraphEdge::kShortcut) {
       ++globals_count;
@@ -1606,6 +1607,7 @@ TEST(NoDebugObjectInSnapshot) {
 TEST(PersistentHandleCount) {
   v8::HandleScope scope;
   LocalContext env;
+  v8::Isolate* isolate = env->GetIsolate();
 
   // V8 also uses global handles internally, so we can't test for an absolute
   // number.
@@ -1613,26 +1615,26 @@ TEST(PersistentHandleCount) {
 
   // Create some persistent handles.
   v8::Persistent<v8::String> p_AAA =
-      v8::Persistent<v8::String>::New(v8_str("AAA"));
+      v8::Persistent<v8::String>::New(isolate, v8_str("AAA"));
   CHECK_EQ(global_handle_count + 1,
            v8::HeapProfiler::GetPersistentHandleCount());
   v8::Persistent<v8::String> p_BBB =
-      v8::Persistent<v8::String>::New(v8_str("BBB"));
+      v8::Persistent<v8::String>::New(isolate, v8_str("BBB"));
   CHECK_EQ(global_handle_count + 2,
            v8::HeapProfiler::GetPersistentHandleCount());
   v8::Persistent<v8::String> p_CCC =
-      v8::Persistent<v8::String>::New(v8_str("CCC"));
+      v8::Persistent<v8::String>::New(isolate, v8_str("CCC"));
   CHECK_EQ(global_handle_count + 3,
            v8::HeapProfiler::GetPersistentHandleCount());
 
   // Dipose the persistent handles in a different order.
-  p_AAA.Dispose();
+  p_AAA.Dispose(env->GetIsolate());
   CHECK_EQ(global_handle_count + 2,
            v8::HeapProfiler::GetPersistentHandleCount());
-  p_CCC.Dispose();
+  p_CCC.Dispose(env->GetIsolate());
   CHECK_EQ(global_handle_count + 1,
            v8::HeapProfiler::GetPersistentHandleCount());
-  p_BBB.Dispose();
+  p_BBB.Dispose(env->GetIsolate());
   CHECK_EQ(global_handle_count, v8::HeapProfiler::GetPersistentHandleCount());
 }
 

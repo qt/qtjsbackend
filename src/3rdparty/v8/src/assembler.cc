@@ -91,6 +91,7 @@ namespace internal {
 struct DoubleConstant BASE_EMBEDDED {
   double min_int;
   double one_half;
+  double minus_one_half;
   double minus_zero;
   double zero;
   double uint8_max_value;
@@ -103,10 +104,15 @@ static DoubleConstant double_constants;
 
 const char* const RelocInfo::kFillerCommentString = "DEOPTIMIZATION PADDING";
 
+static bool math_exp_data_initialized = false;
+static Mutex* math_exp_data_mutex = NULL;
+static double* math_exp_constants_array = NULL;
+static double* math_exp_log_table_array = NULL;
+
 // -----------------------------------------------------------------------------
 // Implementation of AssemblerBase
 
-AssemblerBase::AssemblerBase(Isolate* isolate)
+AssemblerBase::AssemblerBase(Isolate* isolate, void* buffer, int buffer_size)
     : isolate_(isolate),
       jit_cookie_(0),
       emit_debug_code_(FLAG_debug_code),
@@ -114,6 +120,62 @@ AssemblerBase::AssemblerBase(Isolate* isolate)
   if (FLAG_mask_constants_with_cookie && isolate != NULL)  {
     jit_cookie_ = V8::RandomPrivate(isolate);
   }
+
+  if (buffer == NULL) {
+    // Do our own buffer management.
+    if (buffer_size <= kMinimalBufferSize) {
+      buffer_size = kMinimalBufferSize;
+      if (isolate->assembler_spare_buffer() != NULL) {
+        buffer = isolate->assembler_spare_buffer();
+        isolate->set_assembler_spare_buffer(NULL);
+      }
+    }
+    if (buffer == NULL) buffer = NewArray<byte>(buffer_size);
+    own_buffer_ = true;
+  } else {
+    // Use externally provided buffer instead.
+    ASSERT(buffer_size > 0);
+    own_buffer_ = false;
+  }
+  buffer_ = static_cast<byte*>(buffer);
+  buffer_size_ = buffer_size;
+
+  pc_ = buffer_;
+}
+
+
+AssemblerBase::~AssemblerBase() {
+  if (own_buffer_) {
+    if (isolate() != NULL &&
+        isolate()->assembler_spare_buffer() == NULL &&
+        buffer_size_ == kMinimalBufferSize) {
+      isolate()->set_assembler_spare_buffer(buffer_);
+    } else {
+      DeleteArray(buffer_);
+    }
+  }
+}
+
+
+// -----------------------------------------------------------------------------
+// Implementation of PredictableCodeSizeScope
+
+PredictableCodeSizeScope::PredictableCodeSizeScope(AssemblerBase* assembler,
+                                                   int expected_size)
+    : assembler_(assembler),
+      expected_size_(expected_size),
+      start_offset_(assembler->pc_offset()),
+      old_value_(assembler->predictable_code_size()) {
+  assembler_->set_predictable_code_size(true);
+}
+
+
+PredictableCodeSizeScope::~PredictableCodeSizeScope() {
+  // TODO(svenpanne) Remove the 'if' when everything works.
+  if (expected_size_ >= 0) {
+    CHECK_EQ(expected_size_, assembler_->pc_offset() - start_offset_);
+  }
+  assembler_->set_predictable_code_size(old_value_);
 }
 
 
@@ -628,11 +690,28 @@ RelocIterator::RelocIterator(const CodeDesc& desc, int mode_mask) {
 // Implementation of RelocInfo
 
 
+#ifdef DEBUG
+bool RelocInfo::RequiresRelocation(const CodeDesc& desc) {
+  // Ensure there are no code targets or embedded objects present in the
+  // deoptimization entries, they would require relocation after code
+  // generation.
+  int mode_mask = RelocInfo::kCodeTargetMask |
+                  RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT) |
+                  RelocInfo::ModeMask(RelocInfo::GLOBAL_PROPERTY_CELL) |
+                  RelocInfo::kApplyMask;
+  RelocIterator it(desc, mode_mask);
+  return !it.done();
+}
+#endif
+
+
 #ifdef ENABLE_DISASSEMBLER
 const char* RelocInfo::RelocModeName(RelocInfo::Mode rmode) {
   switch (rmode) {
-    case RelocInfo::NONE:
-      return "no reloc";
+    case RelocInfo::NONE32:
+      return "no reloc 32";
+    case RelocInfo::NONE64:
+      return "no reloc 64";
     case RelocInfo::EMBEDDED_OBJECT:
       return "embedded object";
     case RelocInfo::CONSTRUCT_CALL:
@@ -682,38 +761,38 @@ const char* RelocInfo::RelocModeName(RelocInfo::Mode rmode) {
 
 
 void RelocInfo::Print(FILE* out) {
-  FPrintF(out, "%p  %s", pc_, RelocModeName(rmode_));
+  PrintF(out, "%p  %s", pc_, RelocModeName(rmode_));
   if (IsComment(rmode_)) {
-    FPrintF(out, "  (%s)", reinterpret_cast<char*>(data_));
+    PrintF(out, "  (%s)", reinterpret_cast<char*>(data_));
   } else if (rmode_ == EMBEDDED_OBJECT) {
-    FPrintF(out, "  (");
+    PrintF(out, "  (");
     target_object()->ShortPrint(out);
-    FPrintF(out, ")");
+    PrintF(out, ")");
   } else if (rmode_ == EXTERNAL_REFERENCE) {
     ExternalReferenceEncoder ref_encoder;
-    FPrintF(out, " (%s)  (%p)",
+    PrintF(out, " (%s)  (%p)",
            ref_encoder.NameOfAddress(*target_reference_address()),
            *target_reference_address());
   } else if (IsCodeTarget(rmode_)) {
     Code* code = Code::GetCodeFromTargetAddress(target_address());
-    FPrintF(out, " (%s)  (%p)", Code::Kind2String(code->kind()),
+    PrintF(out, " (%s)  (%p)", Code::Kind2String(code->kind()),
            target_address());
     if (rmode_ == CODE_TARGET_WITH_ID) {
       PrintF(" (id=%d)", static_cast<int>(data_));
     }
   } else if (IsPosition(rmode_)) {
-    FPrintF(out, "  (%" V8_PTR_PREFIX "d)", data());
+    PrintF(out, "  (%" V8_PTR_PREFIX "d)", data());
   } else if (rmode_ == RelocInfo::RUNTIME_ENTRY &&
              Isolate::Current()->deoptimizer_data() != NULL) {
     // Depotimization bailouts are stored as runtime entries.
     int id = Deoptimizer::GetDeoptimizationId(
         target_address(), Deoptimizer::EAGER);
     if (id != Deoptimizer::kNotDeoptimizationEntry) {
-      FPrintF(out, "  (deoptimization bailout %d)", id);
+      PrintF(out, "  (deoptimization bailout %d)", id);
     }
   }
 
-  FPrintF(out, "\n");
+  PrintF(out, "\n");
 }
 #endif  // ENABLE_DISASSEMBLER
 
@@ -755,7 +834,8 @@ void RelocInfo::Verify() {
     case INTERNAL_REFERENCE:
     case CONST_POOL:
     case DEBUG_BREAK_SLOT:
-    case NONE:
+    case NONE32:
+    case NONE64:
       break;
     case NUMBER_OF_MODES:
       UNREACHABLE();
@@ -774,12 +854,77 @@ void RelocInfo::Verify() {
 void ExternalReference::SetUp() {
   double_constants.min_int = kMinInt;
   double_constants.one_half = 0.5;
+  double_constants.minus_one_half = -0.5;
   double_constants.minus_zero = -0.0;
   double_constants.uint8_max_value = 255;
   double_constants.zero = 0.0;
   double_constants.canonical_non_hole_nan = OS::nan_value();
   double_constants.the_hole_nan = BitCast<double>(kHoleNanInt64);
   double_constants.negative_infinity = -V8_INFINITY;
+
+  math_exp_data_mutex = OS::CreateMutex();
+}
+
+
+void ExternalReference::InitializeMathExpData() {
+  // Early return?
+  if (math_exp_data_initialized) return;
+
+  math_exp_data_mutex->Lock();
+  if (!math_exp_data_initialized) {
+    // If this is changed, generated code must be adapted too.
+    const int kTableSizeBits = 11;
+    const int kTableSize = 1 << kTableSizeBits;
+    const double kTableSizeDouble = static_cast<double>(kTableSize);
+
+    math_exp_constants_array = new double[9];
+    // Input values smaller than this always return 0.
+    math_exp_constants_array[0] = -708.39641853226408;
+    // Input values larger than this always return +Infinity.
+    math_exp_constants_array[1] = 709.78271289338397;
+    math_exp_constants_array[2] = V8_INFINITY;
+    // The rest is black magic. Do not attempt to understand it. It is
+    // loosely based on the "expd" function published at:
+    // http://herumi.blogspot.com/2011/08/fast-double-precision-exponential.html
+    const double constant3 = (1 << kTableSizeBits) / log(2.0);
+    math_exp_constants_array[3] = constant3;
+    math_exp_constants_array[4] =
+        static_cast<double>(static_cast<int64_t>(3) << 51);
+    math_exp_constants_array[5] = 1 / constant3;
+    math_exp_constants_array[6] = 3.0000000027955394;
+    math_exp_constants_array[7] = 0.16666666685227835;
+    math_exp_constants_array[8] = 1;
+
+    math_exp_log_table_array = new double[kTableSize];
+    for (int i = 0; i < kTableSize; i++) {
+      double value = pow(2, i / kTableSizeDouble);
+
+      uint64_t bits = BitCast<uint64_t, double>(value);
+      bits &= (static_cast<uint64_t>(1) << 52) - 1;
+      double mantissa = BitCast<double, uint64_t>(bits);
+
+      // <just testing>
+      uint64_t doublebits;
+      memcpy(&doublebits, &value, sizeof doublebits);
+      doublebits &= (static_cast<uint64_t>(1) << 52) - 1;
+      double mantissa2;
+      memcpy(&mantissa2, &doublebits, sizeof mantissa2);
+      CHECK_EQ(mantissa, mantissa2);
+      // </just testing>
+
+      math_exp_log_table_array[i] = mantissa;
+    }
+
+    math_exp_data_initialized = true;
+  }
+  math_exp_data_mutex->Unlock();
+}
+
+
+void ExternalReference::TearDownMathExpData() {
+  delete[] math_exp_constants_array;
+  delete[] math_exp_log_table_array;
+  delete math_exp_data_mutex;
 }
 
 
@@ -931,6 +1076,20 @@ ExternalReference ExternalReference::compute_output_frames_function(
 }
 
 
+ExternalReference ExternalReference::log_enter_external_function(
+    Isolate* isolate) {
+  return ExternalReference(
+      Redirect(isolate, FUNCTION_ADDR(Logger::EnterExternal)));
+}
+
+
+ExternalReference ExternalReference::log_leave_external_function(
+    Isolate* isolate) {
+  return ExternalReference(
+      Redirect(isolate, FUNCTION_ADDR(Logger::LeaveExternal)));
+}
+
+
 ExternalReference ExternalReference::keyed_lookup_cache_keys(Isolate* isolate) {
   return ExternalReference(isolate->keyed_lookup_cache()->keys_address());
 }
@@ -1000,18 +1159,21 @@ ExternalReference ExternalReference::new_space_allocation_limit_address(
 }
 
 
-ExternalReference ExternalReference::handle_scope_level_address() {
-  return ExternalReference(HandleScope::current_level_address());
+ExternalReference ExternalReference::handle_scope_level_address(
+    Isolate* isolate) {
+  return ExternalReference(HandleScope::current_level_address(isolate));
 }
 
 
-ExternalReference ExternalReference::handle_scope_next_address() {
-  return ExternalReference(HandleScope::current_next_address());
+ExternalReference ExternalReference::handle_scope_next_address(
+    Isolate* isolate) {
+  return ExternalReference(HandleScope::current_next_address(isolate));
 }
 
 
-ExternalReference ExternalReference::handle_scope_limit_address() {
-  return ExternalReference(HandleScope::current_limit_address());
+ExternalReference ExternalReference::handle_scope_limit_address(
+    Isolate* isolate) {
+  return ExternalReference(HandleScope::current_limit_address(isolate));
 }
 
 
@@ -1046,6 +1208,12 @@ ExternalReference ExternalReference::address_of_min_int() {
 
 ExternalReference ExternalReference::address_of_one_half() {
   return ExternalReference(reinterpret_cast<void*>(&double_constants.one_half));
+}
+
+
+ExternalReference ExternalReference::address_of_minus_one_half() {
+  return ExternalReference(
+      reinterpret_cast<void*>(&double_constants.minus_one_half));
 }
 
 
@@ -1217,9 +1385,42 @@ ExternalReference ExternalReference::math_log_double_function(
 }
 
 
+ExternalReference ExternalReference::math_exp_constants(int constant_index) {
+  ASSERT(math_exp_data_initialized);
+  return ExternalReference(
+      reinterpret_cast<void*>(math_exp_constants_array + constant_index));
+}
+
+
+ExternalReference ExternalReference::math_exp_log_table() {
+  ASSERT(math_exp_data_initialized);
+  return ExternalReference(reinterpret_cast<void*>(math_exp_log_table_array));
+}
+
+
 ExternalReference ExternalReference::page_flags(Page* page) {
   return ExternalReference(reinterpret_cast<Address>(page) +
                            MemoryChunk::kFlagsOffset);
+}
+
+
+ExternalReference ExternalReference::ForDeoptEntry(Address entry) {
+  return ExternalReference(entry);
+}
+
+
+double power_helper(double x, double y) {
+  int y_int = static_cast<int>(y);
+  if (y == y_int) {
+    return power_double_int(x, y_int);  // Returns 1 if exponent is 0.
+  }
+  if (y == 0.5) {
+    return (isinf(x)) ? V8_INFINITY : fast_sqrt(x + 0.0);  // Convert -0 to +0.
+  }
+  if (y == -0.5) {
+    return (isinf(x)) ? 0 : 1.0 / fast_sqrt(x + 0.0);  // Convert -0 to +0.
+  }
+  return power_double_double(x, y);
 }
 
 
@@ -1362,6 +1563,10 @@ void PositionsRecorder::RecordPosition(int pos) {
     gdbjit_lineinfo_->SetPosition(assembler_->pc_offset(), pos, false);
   }
 #endif
+  LOG_CODE_EVENT(assembler_->isolate(),
+                 CodeLinePosInfoAddPositionEvent(jit_handler_data_,
+                                                 assembler_->pc_offset(),
+                                                 pos));
 }
 
 
@@ -1374,6 +1579,11 @@ void PositionsRecorder::RecordStatementPosition(int pos) {
     gdbjit_lineinfo_->SetPosition(assembler_->pc_offset(), pos, true);
   }
 #endif
+  LOG_CODE_EVENT(assembler_->isolate(),
+                 CodeLinePosInfoAddStatementPositionEvent(
+                     jit_handler_data_,
+                     assembler_->pc_offset(),
+                     pos));
 }
 
 

@@ -46,7 +46,7 @@ StaticVisitorBase::VisitorId StaticVisitorBase::GetVisitorId(
     switch (instance_type & kStringRepresentationMask) {
       case kSeqStringTag:
         if ((instance_type & kStringEncodingMask) == kOneByteStringTag) {
-          return kVisitSeqAsciiString;
+          return kVisitSeqOneByteString;
         } else {
           return kVisitSeqTwoByteString;
         }
@@ -127,6 +127,11 @@ StaticVisitorBase::VisitorId StaticVisitorBase::GetVisitorId(
       return GetVisitorIdForSize(kVisitDataObject,
                                  kVisitDataObjectGeneric,
                                  Foreign::kSize);
+
+    case SYMBOL_TYPE:
+      return GetVisitorIdForSize(kVisitDataObject,
+                                 kVisitDataObjectGeneric,
+                                 Symbol::kSize);
 
     case FILLER_TYPE:
       return kVisitDataObjectGeneric;

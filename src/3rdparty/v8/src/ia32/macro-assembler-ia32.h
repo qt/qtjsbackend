@@ -35,24 +35,18 @@
 namespace v8 {
 namespace internal {
 
-// Flags used for the AllocateInNewSpace functions.
-enum AllocationFlags {
-  // No special flags.
-  NO_ALLOCATION_FLAGS = 0,
-  // Return the pointer to the allocated already tagged as a heap object.
-  TAG_OBJECT = 1 << 0,
-  // The content of the result register already contains the allocation top in
-  // new space.
-  RESULT_CONTAINS_TOP = 1 << 1
-};
-
-
 // Convenience for platform-independent signatures.  We do not normally
 // distinguish memory operands from other operands on ia32.
 typedef Operand MemOperand;
 
 enum RememberedSetAction { EMIT_REMEMBERED_SET, OMIT_REMEMBERED_SET };
 enum SmiCheck { INLINE_SMI_CHECK, OMIT_SMI_CHECK };
+
+
+enum RegisterValueType {
+  REGISTER_VALUE_IS_SMI,
+  REGISTER_VALUE_IS_INT32
+};
 
 
 bool AreAliased(Register r1, Register r2, Register r3, Register r4);
@@ -255,6 +249,8 @@ class MacroAssembler: public Assembler {
                            Register map_out,
                            bool can_have_holes);
 
+  void LoadGlobalContext(Register global_context);
+
   // Load the global function with the given index.
   void LoadGlobalFunction(int index, Register function);
 
@@ -388,7 +384,8 @@ class MacroAssembler: public Assembler {
                                    Register scratch1,
                                    XMMRegister scratch2,
                                    Label* fail,
-                                   bool specialize_for_processor);
+                                   bool specialize_for_processor,
+                                   int offset = 0);
 
   // Compare an object's map with the specified map and its transitioned
   // elements maps if mode is ALLOW_ELEMENT_TRANSITION_MAPS. FLAGS are set with
@@ -575,6 +572,7 @@ class MacroAssembler: public Assembler {
   void AllocateInNewSpace(int header_size,
                           ScaleFactor element_size,
                           Register element_count,
+                          RegisterValueType element_count_type,
                           Register result,
                           Register result_end,
                           Register scratch,
@@ -788,6 +786,7 @@ class MacroAssembler: public Assembler {
 
   // Push a handle value.
   void Push(Handle<Object> handle) { push(Immediate(handle)); }
+  void Push(Smi* smi) { Push(Handle<Smi>(smi, isolate())); }
 
   Handle<Object> CodeObject() {
     ASSERT(!code_object_.is_null());
@@ -862,6 +861,15 @@ class MacroAssembler: public Assembler {
   // in eax.  Assumes that any other register can be used as a scratch.
   void CheckEnumCache(Label* call_runtime);
 
+  // AllocationSiteInfo support. Arrays may have an associated
+  // AllocationSiteInfo object that can be checked for in order to pretransition
+  // to another type.
+  // On entry, receiver_reg should point to the array object.
+  // scratch_reg gets clobbered.
+  // If allocation info is present, conditional code is set to equal
+  void TestJSArrayForAllocationSiteInfo(Register receiver_reg,
+                                        Register scratch_reg);
+
  private:
   bool generating_stub_;
   bool allow_stub_calls_;
@@ -922,9 +930,9 @@ class MacroAssembler: public Assembler {
   Operand SafepointRegisterSlot(Register reg);
   static int SafepointRegisterStackIndex(int reg_code);
 
-  // Needs access to SafepointRegisterStackIndex for optimized frame
+  // Needs access to SafepointRegisterStackIndex for compiled frame
   // traversal.
-  friend class OptimizedFrame;
+  friend class StandardFrame;
 };
 
 
@@ -975,9 +983,6 @@ inline Operand GlobalObjectOperand() {
   return ContextOperand(esi, Context::GLOBAL_OBJECT_INDEX);
 }
 
-static inline Operand QmlGlobalObjectOperand() {
-  return ContextOperand(esi, Context::QML_GLOBAL_OBJECT_INDEX);
-}
 
 // Generates an Operand for saving parameters after PrepareCallApiFunction.
 Operand ApiParameterOperand(int index);

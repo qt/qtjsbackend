@@ -118,8 +118,8 @@ void MacroAssembler::PopSafepointRegisters() {
 
 void MacroAssembler::PushSafepointRegistersAndDoubles() {
   PushSafepointRegisters();
-  Subu(sp, sp, Operand(FPURegister::kNumAllocatableRegisters * kDoubleSize));
-  for (int i = 0; i < FPURegister::kNumAllocatableRegisters; i+=2) {
+  Subu(sp, sp, Operand(FPURegister::NumAllocatableRegisters() * kDoubleSize));
+  for (int i = 0; i < FPURegister::NumAllocatableRegisters(); i+=2) {
     FPURegister reg = FPURegister::FromAllocationIndex(i);
     sdc1(reg, MemOperand(sp, i * kDoubleSize));
   }
@@ -127,11 +127,11 @@ void MacroAssembler::PushSafepointRegistersAndDoubles() {
 
 
 void MacroAssembler::PopSafepointRegistersAndDoubles() {
-  for (int i = 0; i < FPURegister::kNumAllocatableRegisters; i+=2) {
+  for (int i = 0; i < FPURegister::NumAllocatableRegisters(); i+=2) {
     FPURegister reg = FPURegister::FromAllocationIndex(i);
     ldc1(reg, MemOperand(sp, i * kDoubleSize));
   }
-  Addu(sp, sp, Operand(FPURegister::kNumAllocatableRegisters * kDoubleSize));
+  Addu(sp, sp, Operand(FPURegister::NumAllocatableRegisters() * kDoubleSize));
   PopSafepointRegisters();
 }
 
@@ -167,7 +167,7 @@ MemOperand MacroAssembler::SafepointRegisterSlot(Register reg) {
 MemOperand MacroAssembler::SafepointRegistersAndDoublesSlot(Register reg) {
   UNIMPLEMENTED_MIPS();
   // General purpose registers are pushed last on the stack.
-  int doubles_size = FPURegister::kNumAllocatableRegisters * kDoubleSize;
+  int doubles_size = FPURegister::NumAllocatableRegisters() * kDoubleSize;
   int register_offset = SafepointRegisterStackIndex(reg.code()) * kPointerSize;
   return MemOperand(sp, doubles_size + register_offset);
 }
@@ -1395,49 +1395,68 @@ void MacroAssembler::ConvertToInt32(Register source,
 
 
 void MacroAssembler::EmitFPUTruncate(FPURoundingMode rounding_mode,
-                                     FPURegister result,
+                                     Register result,
                                      DoubleRegister double_input,
-                                     Register scratch1,
+                                     Register scratch,
+                                     DoubleRegister double_scratch,
                                      Register except_flag,
                                      CheckForInexactConversion check_inexact) {
+  ASSERT(!result.is(scratch));
+  ASSERT(!double_input.is(double_scratch));
+  ASSERT(!except_flag.is(scratch));
+
   ASSERT(CpuFeatures::IsSupported(FPU));
   CpuFeatures::Scope scope(FPU);
+  Label done;
+
+  // Clear the except flag (0 = no exception)
+  mov(except_flag, zero_reg);
+
+  // Test for values that can be exactly represented as a signed 32-bit integer.
+  cvt_w_d(double_scratch, double_input);
+  mfc1(result, double_scratch);
+  cvt_d_w(double_scratch, double_scratch);
+  BranchF(&done, NULL, eq, double_input, double_scratch);
 
   int32_t except_mask = kFCSRFlagMask;  // Assume interested in all exceptions.
 
   if (check_inexact == kDontCheckForInexactConversion) {
-    // Ingore inexact exceptions.
+    // Ignore inexact exceptions.
     except_mask &= ~kFCSRInexactFlagMask;
   }
 
   // Save FCSR.
-  cfc1(scratch1, FCSR);
+  cfc1(scratch, FCSR);
   // Disable FPU exceptions.
   ctc1(zero_reg, FCSR);
 
   // Do operation based on rounding mode.
   switch (rounding_mode) {
     case kRoundToNearest:
-      Round_w_d(result, double_input);
+      Round_w_d(double_scratch, double_input);
       break;
     case kRoundToZero:
-      Trunc_w_d(result, double_input);
+      Trunc_w_d(double_scratch, double_input);
       break;
     case kRoundToPlusInf:
-      Ceil_w_d(result, double_input);
+      Ceil_w_d(double_scratch, double_input);
       break;
     case kRoundToMinusInf:
-      Floor_w_d(result, double_input);
+      Floor_w_d(double_scratch, double_input);
       break;
   }  // End of switch-statement.
 
   // Retrieve FCSR.
   cfc1(except_flag, FCSR);
   // Restore FCSR.
-  ctc1(scratch1, FCSR);
+  ctc1(scratch, FCSR);
+  // Move the converted value into the result register.
+  mfc1(result, double_scratch);
 
   // Check for fpu exceptions.
   And(except_flag, except_flag, Operand(except_mask));
+
+  bind(&done);
 }
 
 
@@ -2736,7 +2755,7 @@ void MacroAssembler::DebugBreak() {
   PrepareCEntryFunction(ExternalReference(Runtime::kDebugBreak, isolate()));
   CEntryStub ces(1);
   ASSERT(AllowThisStubCall(&ces));
-  Call(ces.GetCode(), RelocInfo::DEBUG_BREAK);
+  Call(ces.GetCode(isolate()), RelocInfo::DEBUG_BREAK);
 }
 
 #endif  // ENABLE_DEBUGGER_SUPPORT
@@ -3109,9 +3128,9 @@ void MacroAssembler::AllocateAsciiString(Register result,
                                          Label* gc_required) {
   // Calculate the number of bytes needed for the characters in the string
   // while observing object alignment.
-  ASSERT((SeqAsciiString::kHeaderSize & kObjectAlignmentMask) == 0);
+  ASSERT((SeqOneByteString::kHeaderSize & kObjectAlignmentMask) == 0);
   ASSERT(kCharSize == 1);
-  addiu(scratch1, length, kObjectAlignmentMask + SeqAsciiString::kHeaderSize);
+  addiu(scratch1, length, kObjectAlignmentMask + SeqOneByteString::kHeaderSize);
   And(scratch1, scratch1, Operand(~kObjectAlignmentMask));
 
   // Allocate ASCII string in new space.
@@ -3215,7 +3234,8 @@ void MacroAssembler::AllocateHeapNumber(Register result,
                                         Register scratch1,
                                         Register scratch2,
                                         Register heap_number_map,
-                                        Label* need_gc) {
+                                        Label* need_gc,
+                                        TaggingMode tagging_mode) {
   // Allocate an object in the heap for the heap number and tag it as a heap
   // object.
   AllocateInNewSpace(HeapNumber::kSize,
@@ -3223,11 +3243,16 @@ void MacroAssembler::AllocateHeapNumber(Register result,
                      scratch1,
                      scratch2,
                      need_gc,
-                     TAG_OBJECT);
+                     tagging_mode == TAG_RESULT ? TAG_OBJECT :
+                                                  NO_ALLOCATION_FLAGS);
 
   // Store heap number map in the allocated object.
   AssertRegisterIsRoot(heap_number_map, Heap::kHeapNumberMapRootIndex);
-  sw(heap_number_map, FieldMemOperand(result, HeapObject::kMapOffset));
+  if (tagging_mode == TAG_RESULT) {
+    sw(heap_number_map, FieldMemOperand(result, HeapObject::kMapOffset));
+  } else {
+    sw(heap_number_map, MemOperand(result, HeapObject::kMapOffset));
+  }
 }
 
 
@@ -3380,13 +3405,13 @@ void MacroAssembler::CheckFastSmiElements(Register map,
 
 void MacroAssembler::StoreNumberToDoubleElements(Register value_reg,
                                                  Register key_reg,
-                                                 Register receiver_reg,
                                                  Register elements_reg,
                                                  Register scratch1,
                                                  Register scratch2,
                                                  Register scratch3,
                                                  Register scratch4,
-                                                 Label* fail) {
+                                                 Label* fail,
+                                                 int elements_offset) {
   Label smi_value, maybe_nan, have_double_value, is_nan, done;
   Register mantissa_reg = scratch2;
   Register exponent_reg = scratch3;
@@ -3412,8 +3437,10 @@ void MacroAssembler::StoreNumberToDoubleElements(Register value_reg,
   bind(&have_double_value);
   sll(scratch1, key_reg, kDoubleSizeLog2 - kSmiTagSize);
   Addu(scratch1, scratch1, elements_reg);
-  sw(mantissa_reg, FieldMemOperand(scratch1, FixedDoubleArray::kHeaderSize));
-  uint32_t offset = FixedDoubleArray::kHeaderSize + sizeof(kHoleNanLower32);
+  sw(mantissa_reg, FieldMemOperand(
+     scratch1, FixedDoubleArray::kHeaderSize - elements_offset));
+  uint32_t offset = FixedDoubleArray::kHeaderSize - elements_offset +
+      sizeof(kHoleNanLower32);
   sw(exponent_reg, FieldMemOperand(scratch1, offset));
   jmp(&done);
 
@@ -3433,7 +3460,8 @@ void MacroAssembler::StoreNumberToDoubleElements(Register value_reg,
 
   bind(&smi_value);
   Addu(scratch1, elements_reg,
-      Operand(FixedDoubleArray::kHeaderSize - kHeapObjectTag));
+      Operand(FixedDoubleArray::kHeaderSize - kHeapObjectTag -
+              elements_offset));
   sll(scratch2, key_reg, kDoubleSizeLog2 - kSmiTagSize);
   Addu(scratch1, scratch1, scratch2);
   // scratch1 is now effective address of the double element
@@ -3907,19 +3935,20 @@ void MacroAssembler::GetObjectType(Register object,
 // Runtime calls.
 
 void MacroAssembler::CallStub(CodeStub* stub,
+                              TypeFeedbackId ast_id,
                               Condition cond,
                               Register r1,
                               const Operand& r2,
                               BranchDelaySlot bd) {
   ASSERT(AllowThisStubCall(stub));  // Stub calls are not allowed in some stubs.
-  Call(stub->GetCode(), RelocInfo::CODE_TARGET, TypeFeedbackId::None(),
+  Call(stub->GetCode(isolate()), RelocInfo::CODE_TARGET, ast_id,
        cond, r1, r2, bd);
 }
 
 
 void MacroAssembler::TailCallStub(CodeStub* stub) {
   ASSERT(allow_stub_calls_ || stub->CompilingCallsToThisStubIsGCSafe());
-  Jump(stub->GetCode(), RelocInfo::CODE_TARGET);
+  Jump(stub->GetCode(isolate()), RelocInfo::CODE_TARGET);
 }
 
 
@@ -3931,13 +3960,13 @@ static int AddressOffset(ExternalReference ref0, ExternalReference ref1) {
 void MacroAssembler::CallApiFunctionAndReturn(ExternalReference function,
                                               int stack_space) {
   ExternalReference next_address =
-      ExternalReference::handle_scope_next_address();
+      ExternalReference::handle_scope_next_address(isolate());
   const int kNextOffset = 0;
   const int kLimitOffset = AddressOffset(
-      ExternalReference::handle_scope_limit_address(),
+      ExternalReference::handle_scope_limit_address(isolate()),
       next_address);
   const int kLevelOffset = AddressOffset(
-      ExternalReference::handle_scope_level_address(),
+      ExternalReference::handle_scope_level_address(isolate()),
       next_address);
 
   // Allocate HandleScope in callee-save registers.
@@ -3947,6 +3976,14 @@ void MacroAssembler::CallApiFunctionAndReturn(ExternalReference function,
   lw(s2, MemOperand(s3, kLevelOffset));
   Addu(s2, s2, Operand(1));
   sw(s2, MemOperand(s3, kLevelOffset));
+
+  if (FLAG_log_timer_events) {
+    FrameScope frame(this, StackFrame::MANUAL);
+    PushSafepointRegisters();
+    PrepareCallCFunction(0, a0);
+    CallCFunction(ExternalReference::log_enter_external_function(isolate()), 0);
+    PopSafepointRegisters();
+  }
 
   // The O32 ABI requires us to pass a pointer in a0 where the returned struct
   // (4 bytes) will be placed. This is also built into the Simulator.
@@ -3959,6 +3996,14 @@ void MacroAssembler::CallApiFunctionAndReturn(ExternalReference function,
   // DirectCEntry stub itself is generated early and never moves.
   DirectCEntryStub stub;
   stub.GenerateCall(this, function);
+
+  if (FLAG_log_timer_events) {
+    FrameScope frame(this, StackFrame::MANUAL);
+    PushSafepointRegisters();
+    PrepareCallCFunction(0, a0);
+    CallCFunction(ExternalReference::log_leave_external_function(isolate()), 0);
+    PopSafepointRegisters();
+  }
 
   // As mentioned above, on MIPS a pointer is returned - we need to dereference
   // it to get the actual return value (which is also a pointer).
@@ -4205,7 +4250,10 @@ void MacroAssembler::CallRuntimeSaveDoubles(Runtime::FunctionId id) {
   const Runtime::Function* function = Runtime::FunctionForId(id);
   PrepareCEntryArgs(function->nargs);
   PrepareCEntryFunction(ExternalReference(function, isolate()));
-  CEntryStub stub(1, kSaveFPRegs);
+  SaveFPRegsMode mode = CpuFeatures::IsSupported(FPU)
+      ? kSaveFPRegs
+      : kDontSaveFPRegs;
+  CEntryStub stub(1, mode);
   CallStub(&stub);
 }
 
@@ -4222,7 +4270,7 @@ void MacroAssembler::CallExternalReference(const ExternalReference& ext,
   PrepareCEntryFunction(ext);
 
   CEntryStub stub(1);
-  CallStub(&stub, al, zero_reg, Operand(zero_reg), bd);
+  CallStub(&stub, TypeFeedbackId::None(), al, zero_reg, Operand(zero_reg), bd);
 }
 
 
@@ -4251,7 +4299,7 @@ void MacroAssembler::JumpToExternalReference(const ExternalReference& builtin,
                                              BranchDelaySlot bd) {
   PrepareCEntryFunction(builtin);
   CEntryStub stub(1);
-  Jump(stub.GetCode(),
+  Jump(stub.GetCode(isolate()),
        RelocInfo::CODE_TARGET,
        al,
        zero_reg,
@@ -4584,16 +4632,17 @@ void MacroAssembler::EnterExitFrame(bool save_doubles,
 
   const int frame_alignment = MacroAssembler::ActivationFrameAlignment();
   if (save_doubles) {
+    CpuFeatures::Scope scope(FPU);
     // The stack  must be allign to 0 modulo 8 for stores with sdc1.
     ASSERT(kDoubleSize == frame_alignment);
     if (frame_alignment > 0) {
       ASSERT(IsPowerOf2(frame_alignment));
       And(sp, sp, Operand(-frame_alignment));  // Align stack.
     }
-    int space = FPURegister::kNumRegisters * kDoubleSize;
+    int space = FPURegister::kMaxNumRegisters * kDoubleSize;
     Subu(sp, sp, Operand(space));
     // Remember: we only need to save every 2nd double FPU value.
-    for (int i = 0; i < FPURegister::kNumRegisters; i+=2) {
+    for (int i = 0; i < FPURegister::kMaxNumRegisters; i+=2) {
       FPURegister reg = FPURegister::from_code(i);
       sdc1(reg, MemOperand(sp, i * kDoubleSize));
     }
@@ -4621,9 +4670,10 @@ void MacroAssembler::LeaveExitFrame(bool save_doubles,
                                     bool do_return) {
   // Optionally restore all double registers.
   if (save_doubles) {
+    CpuFeatures::Scope scope(FPU);
     // Remember: we only need to restore every 2nd double FPU value.
     lw(t8, MemOperand(fp, ExitFrameConstants::kSPOffset));
-    for (int i = 0; i < FPURegister::kNumRegisters; i+=2) {
+    for (int i = 0; i < FPURegister::kMaxNumRegisters; i+=2) {
       FPURegister reg = FPURegister::from_code(i);
       ldc1(reg, MemOperand(t8, i  * kDoubleSize + kPointerSize));
     }
@@ -5394,6 +5444,29 @@ void MacroAssembler::ClampDoubleToUint8(Register result_reg,
   cvt_w_d(temp_double_reg, input_reg);
   mfc1(result_reg, temp_double_reg);
   bind(&done);
+}
+
+
+void MacroAssembler::TestJSArrayForAllocationSiteInfo(
+    Register receiver_reg,
+    Register scratch_reg,
+    Condition cond,
+    Label* allocation_info_present) {
+  Label no_info_available;
+  ExternalReference new_space_start =
+      ExternalReference::new_space_start(isolate());
+  ExternalReference new_space_allocation_top =
+      ExternalReference::new_space_allocation_top_address(isolate());
+  Addu(scratch_reg, receiver_reg,
+       Operand(JSArray::kSize + AllocationSiteInfo::kSize - kHeapObjectTag));
+  Branch(&no_info_available, lt, scratch_reg, Operand(new_space_start));
+  li(at, Operand(new_space_allocation_top));
+  lw(at, MemOperand(at));
+  Branch(&no_info_available, gt, scratch_reg, Operand(at));
+  lw(scratch_reg, MemOperand(scratch_reg, -AllocationSiteInfo::kSize));
+  Branch(allocation_info_present, cond, scratch_reg,
+      Operand(Handle<Map>(isolate()->heap()->allocation_site_info_map())));
+  bind(&no_info_available);
 }
 
 

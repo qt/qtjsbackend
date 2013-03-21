@@ -389,6 +389,10 @@ static void Generate_JSConstructStubHelper(MacroAssembler* masm,
     __ CmpObjectType(rax, FIRST_SPEC_OBJECT_TYPE, rcx);
     __ j(above_equal, &exit);
 
+    // Symbols are "objects".
+    __ CmpInstanceType(rcx, SYMBOL_TYPE);
+    __ j(equal, &exit);
+
     // Throw away the result of the constructor invocation and use the
     // on-stack receiver as the result.
     __ bind(&use_receiver);
@@ -523,6 +527,10 @@ static void Generate_JSEntryTrampolineHelper(MacroAssembler* masm,
 
     // Invoke the code.
     if (is_construct) {
+      // No type feedback cell is available
+      Handle<Object> undefined_sentinel(
+          masm->isolate()->factory()->undefined_value());
+      __ Move(rbx, undefined_sentinel);
       // Expects rdi to hold function pointer.
       CallConstructStub stub(NO_CALL_FUNCTION_FLAGS);
       __ CallStub(&stub);
@@ -646,6 +654,25 @@ CODE_AGE_LIST(DEFINE_CODE_AGE_BUILTIN_GENERATOR)
 #undef DEFINE_CODE_AGE_BUILTIN_GENERATOR
 
 
+void Builtins::Generate_NotifyStubFailure(MacroAssembler* masm) {
+  // Enter an internal frame.
+  {
+    FrameScope scope(masm, StackFrame::INTERNAL);
+
+    // Preserve registers across notification, this is important for compiled
+    // stubs that tail call the runtime on deopts passing their parameters in
+    // registers.
+    __ Pushad();
+    __ CallRuntime(Runtime::kNotifyStubFailure, 0);
+    __ Popad();
+    // Tear down internal frame.
+  }
+
+  __ pop(MemOperand(rsp, 0));  // Ignore state offset
+  __ ret(0);  // Return to IC Miss stub, continuation still on stack.
+}
+
+
 static void Generate_NotifyDeoptimizedHelper(MacroAssembler* masm,
                                              Deoptimizer::BailoutType type) {
   // Enter an internal frame.
@@ -660,17 +687,17 @@ static void Generate_NotifyDeoptimizedHelper(MacroAssembler* masm,
   }
 
   // Get the full codegen state from the stack and untag it.
-  __ SmiToInteger32(rcx, Operand(rsp, 1 * kPointerSize));
+  __ SmiToInteger32(r10, Operand(rsp, 1 * kPointerSize));
 
   // Switch on the state.
   Label not_no_registers, not_tos_rax;
-  __ cmpq(rcx, Immediate(FullCodeGenerator::NO_REGISTERS));
+  __ cmpq(r10, Immediate(FullCodeGenerator::NO_REGISTERS));
   __ j(not_equal, &not_no_registers, Label::kNear);
   __ ret(1 * kPointerSize);  // Remove state.
 
   __ bind(&not_no_registers);
   __ movq(rax, Operand(rsp, 2 * kPointerSize));
-  __ cmpq(rcx, Immediate(FullCodeGenerator::TOS_REG));
+  __ cmpq(r10, Immediate(FullCodeGenerator::TOS_REG));
   __ j(not_equal, &not_tos_rax, Label::kNear);
   __ ret(2 * kPointerSize);  // Remove state, rax.
 
@@ -1484,30 +1511,62 @@ void Builtins::Generate_ArrayConstructCode(MacroAssembler* masm) {
   //  -- rsp[0] : return address
   //  -- rsp[8] : last argument
   // -----------------------------------
-  Label generic_constructor;
-
   if (FLAG_debug_code) {
     // The array construct code is only set for the builtin and internal
     // Array functions which always have a map.
+
     // Initial map for the builtin Array function should be a map.
-    __ movq(rbx, FieldOperand(rdi, JSFunction::kPrototypeOrInitialMapOffset));
+    __ movq(rcx, FieldOperand(rdi, JSFunction::kPrototypeOrInitialMapOffset));
     // Will both indicate a NULL and a Smi.
     STATIC_ASSERT(kSmiTag == 0);
-    Condition not_smi = NegateCondition(masm->CheckSmi(rbx));
+    Condition not_smi = NegateCondition(masm->CheckSmi(rcx));
     __ Check(not_smi, "Unexpected initial map for Array function");
-    __ CmpObjectType(rbx, MAP_TYPE, rcx);
+    __ CmpObjectType(rcx, MAP_TYPE, rcx);
     __ Check(equal, "Unexpected initial map for Array function");
+
+    if (FLAG_optimize_constructed_arrays) {
+      // We should either have undefined in ebx or a valid jsglobalpropertycell
+      Label okay_here;
+      Handle<Object> undefined_sentinel(
+          masm->isolate()->factory()->undefined_value());
+      Handle<Map> global_property_cell_map(
+          masm->isolate()->heap()->global_property_cell_map());
+      __ Cmp(rbx, undefined_sentinel);
+      __ j(equal, &okay_here);
+      __ Cmp(FieldOperand(rbx, 0), global_property_cell_map);
+      __ Assert(equal, "Expected property cell in register rbx");
+      __ bind(&okay_here);
+    }
   }
 
-  // Run the native code for the Array function called as constructor.
-  ArrayNativeCode(masm, &generic_constructor);
+  if (FLAG_optimize_constructed_arrays) {
+    Label not_zero_case, not_one_case;
+    __ testq(rax, rax);
+    __ j(not_zero, &not_zero_case);
+    ArrayNoArgumentConstructorStub no_argument_stub;
+    __ TailCallStub(&no_argument_stub);
 
-  // Jump to the generic construct code in case the specialized code cannot
-  // handle the construction.
-  __ bind(&generic_constructor);
-  Handle<Code> generic_construct_stub =
-      masm->isolate()->builtins()->JSConstructStubGeneric();
-  __ Jump(generic_construct_stub, RelocInfo::CODE_TARGET);
+    __ bind(&not_zero_case);
+    __ cmpq(rax, Immediate(1));
+    __ j(greater, &not_one_case);
+    ArraySingleArgumentConstructorStub single_argument_stub;
+    __ TailCallStub(&single_argument_stub);
+
+    __ bind(&not_one_case);
+    ArrayNArgumentsConstructorStub n_argument_stub;
+    __ TailCallStub(&n_argument_stub);
+  } else {
+    Label generic_constructor;
+    // Run the native code for the Array function called as constructor.
+    ArrayNativeCode(masm, &generic_constructor);
+
+    // Jump to the generic construct code in case the specialized code cannot
+    // handle the construction.
+    __ bind(&generic_constructor);
+    Handle<Code> generic_construct_stub =
+        masm->isolate()->builtins()->JSConstructStubGeneric();
+    __ Jump(generic_construct_stub, RelocInfo::CODE_TARGET);
+  }
 }
 
 
@@ -1620,7 +1679,7 @@ void Builtins::Generate_StringConstructCode(MacroAssembler* masm) {
   // Load the empty string into rbx, remove the receiver from the
   // stack, and jump back to the case where the argument is a string.
   __ bind(&no_arguments);
-  __ LoadRoot(rbx, Heap::kEmptyStringRootIndex);
+  __ LoadRoot(rbx, Heap::kempty_stringRootIndex);
   __ pop(rcx);
   __ lea(rsp, Operand(rsp, kPointerSize));
   __ push(rcx);

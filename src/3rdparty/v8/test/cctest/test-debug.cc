@@ -137,13 +137,15 @@ class DebugLocalContext {
   }
   inline ~DebugLocalContext() {
     context_->Exit();
-    context_.Dispose();
+    context_.Dispose(context_->GetIsolate());
   }
   inline v8::Context* operator->() { return *context_; }
   inline v8::Context* operator*() { return *context_; }
   inline bool IsReady() { return !context_.IsEmpty(); }
   void ExposeDebug() {
-    v8::internal::Debug* debug = v8::internal::Isolate::Current()->debug();
+    v8::internal::Isolate* isolate =
+        reinterpret_cast<v8::internal::Isolate*>(context_->GetIsolate());
+    v8::internal::Debug* debug = isolate->debug();
     // Expose the debug context global object in the global object for testing.
     debug->Load();
     debug->debug_context()->set_security_token(
@@ -152,10 +154,11 @@ class DebugLocalContext {
     Handle<JSGlobalProxy> global(Handle<JSGlobalProxy>::cast(
         v8::Utils::OpenHandle(*context_->Global())));
     Handle<v8::internal::String> debug_string =
-        FACTORY->LookupAsciiSymbol("debug");
-    SetProperty(global, debug_string,
-        Handle<Object>(debug->debug_context()->global_proxy()), DONT_ENUM,
-        ::v8::internal::kNonStrictMode);
+        FACTORY->InternalizeOneByteString(STATIC_ASCII_VECTOR("debug"));
+    SetProperty(isolate, global, debug_string,
+                Handle<Object>(debug->debug_context()->global_proxy(), isolate),
+                DONT_ENUM,
+                ::v8::internal::kNonStrictMode);
   }
 
  private:
@@ -197,10 +200,11 @@ static bool HasDebugInfo(v8::Handle<v8::Function> fun) {
 // number.
 static int SetBreakPoint(Handle<v8::internal::JSFunction> fun, int position) {
   static int break_point = 0;
-  v8::internal::Debug* debug = v8::internal::Isolate::Current()->debug();
+  v8::internal::Isolate* isolate = fun->GetIsolate();
+  v8::internal::Debug* debug = isolate->debug();
   debug->SetBreakPoint(
       fun,
-      Handle<Object>(v8::internal::Smi::FromInt(++break_point)),
+      Handle<Object>(v8::internal::Smi::FromInt(++break_point), isolate),
       &position);
   return break_point;
 }
@@ -281,9 +285,10 @@ static int SetScriptBreakPointByNameFromJS(const char* script_name,
 
 // Clear a break point.
 static void ClearBreakPoint(int break_point) {
-  v8::internal::Debug* debug = v8::internal::Isolate::Current()->debug();
+  v8::internal::Isolate* isolate = v8::internal::Isolate::Current();
+  v8::internal::Debug* debug = isolate->debug();
   debug->ClearBreakPoint(
-      Handle<Object>(v8::internal::Smi::FromInt(break_point)));
+      Handle<Object>(v8::internal::Smi::FromInt(break_point), isolate));
 }
 
 
@@ -425,7 +430,7 @@ void CheckDebuggerUnloaded(bool check_functions) {
   HEAP->CollectAllGarbage(Heap::kMakeHeapIterableMask);
 
   // Iterate the head and check that there are no debugger related objects left.
-  HeapIterator iterator;
+  HeapIterator iterator(HEAP);
   for (HeapObject* obj = iterator.next(); obj != NULL; obj = iterator.next()) {
     CHECK(!obj->IsDebugInfo());
     CHECK(!obj->IsBreakPointInfo());
@@ -2299,65 +2304,6 @@ TEST(ScriptBreakPointTopLevelCrash) {
   CheckDebuggerUnloaded();
 }
 
-// Test that breakpoint_relocation flag is honored
-TEST(ScriptBreakPointNoRelocation) {
-    i::FLAG_breakpoint_relocation = false;
-
-    v8::HandleScope scope;
-    DebugLocalContext env;
-    env.ExposeDebug();
-
-    // Create a function for checking the function when hitting a break point.
-    frame_function_name = CompileFunction(&env,
-                                          frame_function_name_source,
-                                          "frame_function_name");
-
-    v8::Debug::SetDebugEventListener(DebugEventBreakPointHitCount,
-                                     v8::Undefined());
-
-    v8::Local<v8::String> script1 = v8::String::New(
-      "a = 0                      // line 0\n"
-      "                           // line 1\n"
-      "                           // line 2\n"
-      "                           // line 3\n"
-      "function f() {             // line 4\n"
-      "  return 0;                // line 5\n"
-      "}                          // line 6");
-
-    // Set the script break point on the empty line
-    SetScriptBreakPointByNameFromJS("test.html", 2, -1);
-
-    // Compile the script and call the function.
-    v8::ScriptOrigin origin(v8::String::New("test.html"), v8::Integer::New(0));
-    v8::Script::Compile(script1, &origin)->Run();
-    v8::Local<v8::Function> f
-            = v8::Local<v8::Function>::Cast(env->Global()->Get(v8::String::New("f")));
-    f->Call(env->Global(), 0, NULL);
-
-    // Check that a break point was not hit
-    CHECK_EQ(0, break_point_hit_count);
-
-    v8::Local<v8::String> script2 = v8::String::New(
-      "a = 0                      // line 0\n"
-      "function g() {             // line 1\n"
-      "  return 0;                // line 2\n"
-      "}                          // line 3\n"
-      "function f() {             // line 4\n"
-      "  return 0;                // line 5\n"
-      "}                          // line 6");
-
-    // Compile the script and call the new function
-    v8::Script::Compile(script2, &origin)->Run();
-    v8::Local<v8::Function> g
-            = v8::Local<v8::Function>::Cast(env->Global()->Get(v8::String::New("g")));
-    g->Call(env->Global(), 0, NULL);
-
-    // Check that a break point was not hit
-    CHECK_EQ(1, break_point_hit_count);
-
-    v8::Debug::SetDebugEventListener(NULL);
-    CheckDebuggerUnloaded();
-}
 
 // Test that it is possible to remove the last break point for a function
 // inside the break handling of that break point.
@@ -4289,7 +4235,7 @@ TEST(NoBreakWhenBootstrapping) {
     const char* extension_names[] = { "simpletest" };
     v8::ExtensionConfiguration extensions(1, extension_names);
     v8::Persistent<v8::Context> context = v8::Context::New(&extensions);
-    context.Dispose();
+    context.Dispose(context->GetIsolate());
   }
   // Check that no DebugBreak events occured during the context creation.
   CHECK_EQ(0, break_point_hit_count);
@@ -6277,7 +6223,7 @@ static v8::Handle<v8::Value> expected_context_data;
 // Check that the expected context is the one generating the debug event.
 static void ContextCheckMessageHandler(const v8::Debug::Message& message) {
   CHECK(message.GetEventContext() == expected_context);
-  CHECK(message.GetEventContext()->GetData()->StrictEquals(
+  CHECK(message.GetEventContext()->GetEmbedderData(0)->StrictEquals(
       expected_context_data));
   message_handler_hit_count++;
 
@@ -6310,16 +6256,16 @@ TEST(ContextData) {
   context_2 = v8::Context::New(NULL, global_template, global_object);
 
   // Default data value is undefined.
-  CHECK(context_1->GetData()->IsUndefined());
-  CHECK(context_2->GetData()->IsUndefined());
+  CHECK(context_1->GetEmbedderData(0)->IsUndefined());
+  CHECK(context_2->GetEmbedderData(0)->IsUndefined());
 
   // Set and check different data values.
   v8::Handle<v8::String> data_1 = v8::String::New("1");
   v8::Handle<v8::String> data_2 = v8::String::New("2");
-  context_1->SetData(data_1);
-  context_2->SetData(data_2);
-  CHECK(context_1->GetData()->StrictEquals(data_1));
-  CHECK(context_2->GetData()->StrictEquals(data_2));
+  context_1->SetEmbedderData(0, data_1);
+  context_2->SetEmbedderData(0, data_2);
+  CHECK(context_1->GetEmbedderData(0)->StrictEquals(data_1));
+  CHECK(context_2->GetEmbedderData(0)->StrictEquals(data_2));
 
   // Simple test function which causes a break.
   const char* source = "function f() { debugger; }";
@@ -6474,12 +6420,12 @@ static void ExecuteScriptForContextCheck() {
   context_1 = v8::Context::New(NULL, global_template);
 
   // Default data value is undefined.
-  CHECK(context_1->GetData()->IsUndefined());
+  CHECK(context_1->GetEmbedderData(0)->IsUndefined());
 
   // Set and check a data value.
   v8::Handle<v8::String> data_1 = v8::String::New("1");
-  context_1->SetData(data_1);
-  CHECK(context_1->GetData()->StrictEquals(data_1));
+  context_1->SetEmbedderData(0, data_1);
+  CHECK(context_1->GetEmbedderData(0)->StrictEquals(data_1));
 
   // Simple test function with eval that causes a break.
   const char* source = "function f() { eval('debugger;'); }";
@@ -6520,7 +6466,7 @@ static int continue_command_send_count = 0;
 static void DebugEvalContextCheckMessageHandler(
     const v8::Debug::Message& message) {
   CHECK(message.GetEventContext() == expected_context);
-  CHECK(message.GetEventContext()->GetData()->StrictEquals(
+  CHECK(message.GetEventContext()->GetEmbedderData(0)->StrictEquals(
       expected_context_data));
   message_handler_hit_count++;
 
@@ -7127,7 +7073,7 @@ TEST(DebugEventContext) {
   expected_context = v8::Context::New();
   v8::Context::Scope context_scope(expected_context);
   v8::Script::Compile(v8::String::New("(function(){debugger;})();"))->Run();
-  expected_context.Dispose();
+  expected_context.Dispose(expected_context->GetIsolate());
   expected_context.Clear();
   v8::Debug::SetDebugEventListener(NULL);
   expected_context_data = v8::Handle<v8::Value>();

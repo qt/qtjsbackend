@@ -42,7 +42,7 @@ const char* ElementsKindToString(ElementsKind kind) {
 
 
 void PrintElementsKind(FILE* out, ElementsKind kind) {
-  FPrintF(out, "%s", ElementsKindToString(kind));
+  PrintF(out, "%s", ElementsKindToString(kind));
 }
 
 

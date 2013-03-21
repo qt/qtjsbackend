@@ -65,6 +65,14 @@ enum AllocationFlags {
   SIZE_IN_WORDS = 1 << 2
 };
 
+// Flags used for AllocateHeapNumber
+enum TaggingMode {
+  // Tag the result.
+  TAG_RESULT,
+  // Don't tag
+  DONT_TAG_RESULT
+};
+
 // Flags used for the ObjectToDoubleFPURegister function.
 enum ObjectToDoubleFlags {
   // No special flags.
@@ -109,11 +117,6 @@ inline MemOperand ContextOperand(Register context, int index) {
 
 inline MemOperand GlobalObjectOperand()  {
   return ContextOperand(cp, Context::GLOBAL_OBJECT_INDEX);
-}
-
-
-static inline MemOperand QmlGlobalObjectOperand()  {
-  return ContextOperand(cp, Context::QML_GLOBAL_OBJECT_INDEX);
 }
 
 
@@ -541,7 +544,8 @@ class MacroAssembler: public Assembler {
                           Register scratch1,
                           Register scratch2,
                           Register heap_number_map,
-                          Label* gc_required);
+                          Label* gc_required,
+                          TaggingMode tagging_mode = TAG_RESULT);
   void AllocateHeapNumberWithValue(Register result,
                                    FPURegister value,
                                    Register scratch1,
@@ -625,6 +629,7 @@ class MacroAssembler: public Assembler {
 
   // Push a handle.
   void Push(Handle<Object> handle);
+  void Push(Smi* smi) { Push(Handle<Smi>(smi, isolate())); }
 
   // Push two registers. Pushes leftmost register first (to highest address).
   void Push(Register src1, Register src2) {
@@ -757,14 +762,16 @@ class MacroAssembler: public Assembler {
                       FPURegister double_scratch,
                       Label *not_int32);
 
-  // Truncates a double using a specific rounding mode.
+  // Truncates a double using a specific rounding mode, and writes the value
+  // to the result register.
   // The except_flag will contain any exceptions caused by the instruction.
-  // If check_inexact is kDontCheckForInexactConversion, then the inexacat
+  // If check_inexact is kDontCheckForInexactConversion, then the inexact
   // exception is masked.
   void EmitFPUTruncate(FPURoundingMode rounding_mode,
-                       FPURegister result,
+                       Register result,
                        DoubleRegister double_input,
-                       Register scratch1,
+                       Register scratch,
+                       DoubleRegister double_scratch,
                        Register except_flag,
                        CheckForInexactConversion check_inexact
                            = kDontCheckForInexactConversion);
@@ -977,14 +984,14 @@ class MacroAssembler: public Assembler {
   // case scratch2, scratch3 and scratch4 are unmodified.
   void StoreNumberToDoubleElements(Register value_reg,
                                    Register key_reg,
-                                   Register receiver_reg,
                                    // All regs below here overwritten.
                                    Register elements_reg,
                                    Register scratch1,
                                    Register scratch2,
                                    Register scratch3,
                                    Register scratch4,
-                                   Label* fail);
+                                   Label* fail,
+                                   int elements_offset = 0);
 
   // Compare an object's map with the specified map and its transitioned
   // elements maps if mode is ALLOW_ELEMENT_TRANSITION_MAPS. Jumps to
@@ -1134,6 +1141,7 @@ class MacroAssembler: public Assembler {
 
   // Call a code stub.
   void CallStub(CodeStub* stub,
+                TypeFeedbackId ast_id = TypeFeedbackId::None(),
                 Condition cond = cc_always,
                 Register r1 = zero_reg,
                 const Operand& r2 = Operand(zero_reg),
@@ -1432,6 +1440,17 @@ class MacroAssembler: public Assembler {
   // in a0.  Assumes that any other register can be used as a scratch.
   void CheckEnumCache(Register null_value, Label* call_runtime);
 
+  // AllocationSiteInfo support. Arrays may have an associated
+  // AllocationSiteInfo object that can be checked for in order to pretransition
+  // to another type.
+  // On entry, receiver_reg should point to the array object.
+  // scratch_reg gets clobbered.
+  // If allocation info is present, jump to allocation_info_present
+  void TestJSArrayForAllocationSiteInfo(Register receiver_reg,
+                                        Register scratch_reg,
+                                        Condition cond,
+                                        Label* allocation_info_present);
+
  private:
   void CallCFunctionHelper(Register function,
                            int num_reg_arguments,
@@ -1506,9 +1525,9 @@ class MacroAssembler: public Assembler {
   // This handle will be patched with the code object on installation.
   Handle<Object> code_object_;
 
-  // Needs access to SafepointRegisterStackIndex for optimized frame
+  // Needs access to SafepointRegisterStackIndex for compiled frame
   // traversal.
-  friend class OptimizedFrame;
+  friend class StandardFrame;
 };
 
 

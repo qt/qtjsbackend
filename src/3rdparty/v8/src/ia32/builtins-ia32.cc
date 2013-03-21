@@ -257,6 +257,7 @@ static void Generate_JSConstructStubHelper(MacroAssembler* masm,
       __ AllocateInNewSpace(FixedArray::kHeaderSize,
                             times_pointer_size,
                             edx,
+                            REGISTER_VALUE_IS_INT32,
                             edi,
                             ecx,
                             no_reg,
@@ -381,6 +382,10 @@ static void Generate_JSConstructStubHelper(MacroAssembler* masm,
     // FIRST_SPEC_OBJECT_TYPE, it is not an object in the ECMA sense.
     __ CmpObjectType(eax, FIRST_SPEC_OBJECT_TYPE, ecx);
     __ j(above_equal, &exit);
+
+    // Symbols are "objects".
+    __ CmpInstanceType(ecx, SYMBOL_TYPE);
+    __ j(equal, &exit);
 
     // Throw away the result of the constructor invocation and use the
     // on-stack receiver as the result.
@@ -572,6 +577,25 @@ void Builtins::Generate_Make##C##CodeYoungAgainOddMarking(   \
 }
 CODE_AGE_LIST(DEFINE_CODE_AGE_BUILTIN_GENERATOR)
 #undef DEFINE_CODE_AGE_BUILTIN_GENERATOR
+
+
+void Builtins::Generate_NotifyStubFailure(MacroAssembler* masm) {
+  // Enter an internal frame.
+  {
+    FrameScope scope(masm, StackFrame::INTERNAL);
+
+    // Preserve registers across notification, this is important for compiled
+    // stubs that tail call the runtime on deopts passing their parameters in
+    // registers.
+    __ pushad();
+    __ CallRuntime(Runtime::kNotifyStubFailure, 0);
+    __ popad();
+    // Tear down internal frame.
+  }
+
+  __ pop(MemOperand(esp, 0));  // Ignore state offset
+  __ ret(0);  // Return to IC Miss stub, continuation still on stack.
+}
 
 
 static void Generate_NotifyDeoptimizedHelper(MacroAssembler* masm,
@@ -1083,8 +1107,9 @@ static void AllocateJSArray(MacroAssembler* masm,
   // requested elements.
   STATIC_ASSERT(kSmiTagSize == 1 && kSmiTag == 0);
   __ AllocateInNewSpace(JSArray::kSize + FixedArray::kHeaderSize,
-                        times_half_pointer_size,  // array_size is a smi.
+                        times_pointer_size,
                         array_size,
+                        REGISTER_VALUE_IS_SMI,
                         result,
                         elements_array_end,
                         scratch,
@@ -1454,34 +1479,66 @@ void Builtins::Generate_ArrayCode(MacroAssembler* masm) {
 void Builtins::Generate_ArrayConstructCode(MacroAssembler* masm) {
   // ----------- S t a t e -------------
   //  -- eax : argc
+  //  -- ebx : type info cell
   //  -- edi : constructor
   //  -- esp[0] : return address
   //  -- esp[4] : last argument
   // -----------------------------------
-  Label generic_constructor;
-
   if (FLAG_debug_code) {
     // The array construct code is only set for the global and natives
     // builtin Array functions which always have maps.
 
     // Initial map for the builtin Array function should be a map.
-    __ mov(ebx, FieldOperand(edi, JSFunction::kPrototypeOrInitialMapOffset));
+    __ mov(ecx, FieldOperand(edi, JSFunction::kPrototypeOrInitialMapOffset));
     // Will both indicate a NULL and a Smi.
-    __ test(ebx, Immediate(kSmiTagMask));
+    __ test(ecx, Immediate(kSmiTagMask));
     __ Assert(not_zero, "Unexpected initial map for Array function");
-    __ CmpObjectType(ebx, MAP_TYPE, ecx);
+    __ CmpObjectType(ecx, MAP_TYPE, ecx);
     __ Assert(equal, "Unexpected initial map for Array function");
+
+    if (FLAG_optimize_constructed_arrays) {
+      // We should either have undefined in ebx or a valid jsglobalpropertycell
+      Label okay_here;
+      Handle<Object> undefined_sentinel(
+          masm->isolate()->heap()->undefined_value(), masm->isolate());
+      Handle<Map> global_property_cell_map(
+          masm->isolate()->heap()->global_property_cell_map());
+      __ cmp(ebx, Immediate(undefined_sentinel));
+      __ j(equal, &okay_here);
+      __ cmp(FieldOperand(ebx, 0), Immediate(global_property_cell_map));
+      __ Assert(equal, "Expected property cell in register ebx");
+      __ bind(&okay_here);
+    }
   }
 
-  // Run the native code for the Array function called as constructor.
-  ArrayNativeCode(masm, true, &generic_constructor);
+  if (FLAG_optimize_constructed_arrays) {
+    Label not_zero_case, not_one_case;
+    __ test(eax, eax);
+    __ j(not_zero, &not_zero_case);
+    ArrayNoArgumentConstructorStub no_argument_stub;
+    __ TailCallStub(&no_argument_stub);
 
-  // Jump to the generic construct code in case the specialized code cannot
-  // handle the construction.
-  __ bind(&generic_constructor);
-  Handle<Code> generic_construct_stub =
-      masm->isolate()->builtins()->JSConstructStubGeneric();
-  __ jmp(generic_construct_stub, RelocInfo::CODE_TARGET);
+    __ bind(&not_zero_case);
+    __ cmp(eax, 1);
+    __ j(greater, &not_one_case);
+    ArraySingleArgumentConstructorStub single_argument_stub;
+    __ TailCallStub(&single_argument_stub);
+
+    __ bind(&not_one_case);
+    ArrayNArgumentsConstructorStub n_argument_stub;
+    __ TailCallStub(&n_argument_stub);
+  } else {
+    Label generic_constructor;
+    // Run the native code for the Array function called as constructor.
+    ArrayNativeCode(masm, true, &generic_constructor);
+
+    // Jump to the generic construct code in case the specialized code cannot
+    // handle the construction.
+    __ bind(&generic_constructor);
+    Handle<Code> generic_construct_stub =
+        masm->isolate()->builtins()->JSConstructStubGeneric();
+    __ jmp(generic_construct_stub, RelocInfo::CODE_TARGET);
+  }
 }
 
 

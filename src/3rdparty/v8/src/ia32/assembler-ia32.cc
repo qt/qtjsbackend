@@ -55,6 +55,39 @@ uint64_t CpuFeatures::supported_ = 0;
 uint64_t CpuFeatures::found_by_runtime_probing_ = 0;
 
 
+ExternalReference ExternalReference::cpu_features() {
+  ASSERT(CpuFeatures::initialized_);
+  return ExternalReference(&CpuFeatures::supported_);
+}
+
+
+int IntelDoubleRegister::NumAllocatableRegisters() {
+  if (CpuFeatures::IsSupported(SSE2)) {
+    return XMMRegister::kNumAllocatableRegisters;
+  } else {
+    return X87TopOfStackRegister::kNumAllocatableRegisters;
+  }
+}
+
+
+int IntelDoubleRegister::NumRegisters() {
+  if (CpuFeatures::IsSupported(SSE2)) {
+    return XMMRegister::kNumRegisters;
+  } else {
+    return X87TopOfStackRegister::kNumRegisters;
+  }
+}
+
+
+const char* IntelDoubleRegister::AllocationIndexToString(int index) {
+  if (CpuFeatures::IsSupported(SSE2)) {
+    return XMMRegister::AllocationIndexToString(index);
+  } else {
+    return X87TopOfStackRegister::AllocationIndexToString(index);
+  }
+}
+
+
 // The Probe method needs executable memory, so it uses Heap::CreateCode.
 // Allocation failure is silent and leads to safe default.
 void CpuFeatures::Probe() {
@@ -209,7 +242,7 @@ void RelocInfo::PatchCodeWithCall(Address target, int guard_bytes) {
 #endif
 
   // Patch the code.
-  patcher.masm()->call(target, RelocInfo::NONE);
+  patcher.masm()->call(target, RelocInfo::NONE32);
 
   // Check that the size of the code generated is as expected.
   ASSERT_EQ(kCallCodeSize,
@@ -228,11 +261,11 @@ void RelocInfo::PatchCodeWithCall(Address target, int guard_bytes) {
 
 Operand::Operand(Register base, int32_t disp, RelocInfo::Mode rmode) {
   // [base + disp/r]
-  if (disp == 0 && rmode == RelocInfo::NONE && !base.is(ebp)) {
+  if (disp == 0 && RelocInfo::IsNone(rmode) && !base.is(ebp)) {
     // [base]
     set_modrm(0, base);
     if (base.is(esp)) set_sib(times_1, esp, base);
-  } else if (is_int8(disp) && rmode == RelocInfo::NONE) {
+  } else if (is_int8(disp) && RelocInfo::IsNone(rmode)) {
     // [base + disp8]
     set_modrm(1, base);
     if (base.is(esp)) set_sib(times_1, esp, base);
@@ -253,11 +286,11 @@ Operand::Operand(Register base,
                  RelocInfo::Mode rmode) {
   ASSERT(!index.is(esp));  // illegal addressing mode
   // [base + index*scale + disp/r]
-  if (disp == 0 && rmode == RelocInfo::NONE && !base.is(ebp)) {
+  if (disp == 0 && RelocInfo::IsNone(rmode) && !base.is(ebp)) {
     // [base + index*scale]
     set_modrm(0, esp);
     set_sib(scale, index, base);
-  } else if (is_int8(disp) && rmode == RelocInfo::NONE) {
+  } else if (is_int8(disp) && RelocInfo::IsNone(rmode)) {
     // [base + index*scale + disp8]
     set_modrm(1, esp);
     set_sib(scale, index, base);
@@ -312,63 +345,23 @@ Register Operand::reg() const {
 static void InitCoverageLog();
 #endif
 
-Assembler::Assembler(Isolate* arg_isolate, void* buffer, int buffer_size)
-    : AssemblerBase(arg_isolate),
+Assembler::Assembler(Isolate* isolate, void* buffer, int buffer_size)
+    : AssemblerBase(isolate, buffer, buffer_size),
       positions_recorder_(this) {
-  if (buffer == NULL) {
-    // Do our own buffer management.
-    if (buffer_size <= kMinimalBufferSize) {
-      buffer_size = kMinimalBufferSize;
-
-      if (isolate()->assembler_spare_buffer() != NULL) {
-        buffer = isolate()->assembler_spare_buffer();
-        isolate()->set_assembler_spare_buffer(NULL);
-      }
-    }
-    if (buffer == NULL) {
-      buffer_ = NewArray<byte>(buffer_size);
-    } else {
-      buffer_ = static_cast<byte*>(buffer);
-    }
-    buffer_size_ = buffer_size;
-    own_buffer_ = true;
-  } else {
-    // Use externally provided buffer instead.
-    ASSERT(buffer_size > 0);
-    buffer_ = static_cast<byte*>(buffer);
-    buffer_size_ = buffer_size;
-    own_buffer_ = false;
-  }
-
   // Clear the buffer in debug mode unless it was provided by the
   // caller in which case we can't be sure it's okay to overwrite
   // existing code in it; see CodePatcher::CodePatcher(...).
 #ifdef DEBUG
   if (own_buffer_) {
-    memset(buffer_, 0xCC, buffer_size);  // int3
+    memset(buffer_, 0xCC, buffer_size_);  // int3
   }
 #endif
 
-  // Set up buffer pointers.
-  ASSERT(buffer_ != NULL);
-  pc_ = buffer_;
-  reloc_info_writer.Reposition(buffer_ + buffer_size, pc_);
+  reloc_info_writer.Reposition(buffer_ + buffer_size_, pc_);
 
 #ifdef GENERATED_CODE_COVERAGE
   InitCoverageLog();
 #endif
-}
-
-
-Assembler::~Assembler() {
-  if (own_buffer_) {
-    if (isolate()->assembler_spare_buffer() == NULL &&
-        buffer_size_ == kMinimalBufferSize) {
-      isolate()->set_assembler_spare_buffer(buffer_);
-    } else {
-      DeleteArray(buffer_);
-    }
-  }
 }
 
 
@@ -1193,7 +1186,7 @@ void Assembler::test(Register reg, const Immediate& imm) {
   EnsureSpace ensure_space(this);
   // Only use test against byte for registers that have a byte
   // variant: eax, ebx, ecx, and edx.
-  if (imm.rmode_ == RelocInfo::NONE &&
+  if (RelocInfo::IsNone(imm.rmode_) &&
       is_uint8(imm.x_) &&
       reg.is_byte_register()) {
     uint8_t imm8 = imm.x_;
@@ -2006,7 +1999,27 @@ void Assembler::addsd(XMMRegister dst, XMMRegister src) {
 }
 
 
+void Assembler::addsd(XMMRegister dst, const Operand& src) {
+  ASSERT(CpuFeatures::IsEnabled(SSE2));
+  EnsureSpace ensure_space(this);
+  EMIT(0xF2);
+  EMIT(0x0F);
+  EMIT(0x58);
+  emit_sse_operand(dst, src);
+}
+
+
 void Assembler::mulsd(XMMRegister dst, XMMRegister src) {
+  ASSERT(CpuFeatures::IsEnabled(SSE2));
+  EnsureSpace ensure_space(this);
+  EMIT(0xF2);
+  EMIT(0x0F);
+  EMIT(0x59);
+  emit_sse_operand(dst, src);
+}
+
+
+void Assembler::mulsd(XMMRegister dst, const Operand& src) {
   ASSERT(CpuFeatures::IsEnabled(SSE2));
   EnsureSpace ensure_space(this);
   EMIT(0xF2);
@@ -2123,6 +2136,15 @@ void Assembler::movmskpd(Register dst, XMMRegister src) {
 }
 
 
+void Assembler::movmskps(Register dst, XMMRegister src) {
+  ASSERT(CpuFeatures::IsEnabled(SSE2));
+  EnsureSpace ensure_space(this);
+  EMIT(0x0F);
+  EMIT(0x50);
+  emit_sse_operand(dst, src);
+}
+
+
 void Assembler::pcmpeqd(XMMRegister dst, XMMRegister src) {
   ASSERT(CpuFeatures::IsEnabled(SSE2));
   EnsureSpace ensure_space(this);
@@ -2219,7 +2241,8 @@ void Assembler::prefetch(const Operand& src, int level) {
   EnsureSpace ensure_space(this);
   EMIT(0x0F);
   EMIT(0x18);
-  XMMRegister code = { level };  // Emit hint number in Reg position of RegR/M.
+  // Emit hint number in Reg position of RegR/M.
+  XMMRegister code = XMMRegister::from_code(level);
   emit_sse_operand(code, src);
 }
 
@@ -2412,7 +2435,7 @@ void Assembler::psrlq(XMMRegister dst, XMMRegister src) {
 }
 
 
-void Assembler::pshufd(XMMRegister dst, XMMRegister src, int8_t shuffle) {
+void Assembler::pshufd(XMMRegister dst, XMMRegister src, uint8_t shuffle) {
   ASSERT(CpuFeatures::IsEnabled(SSE2));
   EnsureSpace ensure_space(this);
   EMIT(0x66);
@@ -2464,7 +2487,7 @@ void Assembler::emit_sse_operand(Register dst, XMMRegister src) {
 
 
 void Assembler::Print() {
-  Disassembler::Decode(stdout, buffer_, pc_);
+  Disassembler::Decode(isolate(), stdout, buffer_, pc_);
 }
 
 
@@ -2597,7 +2620,7 @@ void Assembler::emit_operand(Register reg, const Operand& adr) {
   pc_ += length;
 
   // Emit relocation information if necessary.
-  if (length >= sizeof(int32_t) && adr.rmode_ != RelocInfo::NONE) {
+  if (length >= sizeof(int32_t) && !RelocInfo::IsNone(adr.rmode_)) {
     pc_ -= sizeof(int32_t);  // pc_ must be *at* disp32
     RecordRelocInfo(adr.rmode_);
     pc_ += sizeof(int32_t);
@@ -2626,7 +2649,7 @@ void Assembler::dd(uint32_t data) {
 
 
 void Assembler::RecordRelocInfo(RelocInfo::Mode rmode, intptr_t data) {
-  ASSERT(rmode != RelocInfo::NONE);
+  ASSERT(!RelocInfo::IsNone(rmode));
   // Don't record external references unless the heap will be serialized.
   if (rmode == RelocInfo::EXTERNAL_REFERENCE) {
 #ifdef DEBUG

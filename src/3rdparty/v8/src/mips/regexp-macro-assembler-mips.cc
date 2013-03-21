@@ -262,7 +262,7 @@ void RegExpMacroAssemblerMIPS::CheckCharacters(Vector<const uc16> str,
     if (mode_ == ASCII) {
       __ lbu(a1, MemOperand(a0, 0));
       __ addiu(a0, a0, char_size());
-      ASSERT(str[i] <= String::kMaxAsciiCharCode);
+      ASSERT(str[i] <= String::kMaxOneByteCharCode);
       BranchOrBacktrack(on_failure, ne, a1, Operand(str[i]));
     } else {
       __ lhu(a1, MemOperand(a0, 0));
@@ -341,7 +341,17 @@ void RegExpMacroAssemblerMIPS::CheckNotBackReferenceIgnoreCase(
     __ Or(t0, t0, Operand(0x20));  // Also convert input character.
     __ Branch(&fail, ne, t0, Operand(a3));
     __ Subu(a3, a3, Operand('a'));
+#ifndef ENABLE_LATIN_1
     __ Branch(&fail, hi, a3, Operand('z' - 'a'));  // Is a3 a lowercase letter?
+#else
+    __ Branch(&loop_check, ls, a3, Operand('z' - 'a'));
+    // Latin-1: Check for values in range [224,254] but not 247.
+    __ Subu(a3, a3, Operand(224 - 'a'));
+    // Weren't Latin-1 letters.
+    __ Branch(&fail, hi, a3, Operand(254 - 224));
+    // Check for 247.
+    __ Branch(&fail, eq, a3, Operand(247 - 224));
+#endif
 
     __ bind(&loop_check);
     __ Branch(&loop, lt, a0, Operand(a1));
@@ -511,7 +521,7 @@ void RegExpMacroAssemblerMIPS::CheckBitInTable(
     Handle<ByteArray> table,
     Label* on_bit_set) {
   __ li(a0, Operand(table));
-  if (mode_ != ASCII || kTableMask != String::kMaxAsciiCharCode) {
+  if (mode_ != ASCII || kTableMask != String::kMaxOneByteCharCode) {
     __ And(a1, current_character(), Operand(kTableSize - 1));
     __ Addu(a0, a0, a1);
   } else {
@@ -1155,7 +1165,7 @@ int RegExpMacroAssemblerMIPS::CheckStackGuardState(Address* return_address,
 
   Handle<String> subject(frame_entry<String*>(re_frame, kInputString));
   // Current string.
-  bool is_ascii = subject->IsAsciiRepresentationUnderneath();
+  bool is_ascii = subject->IsOneByteRepresentationUnderneath();
 
   ASSERT(re_code->instruction_start() <= *return_address);
   ASSERT(*return_address <=
@@ -1186,7 +1196,7 @@ int RegExpMacroAssemblerMIPS::CheckStackGuardState(Address* return_address,
   }
 
   // String might have changed.
-  if (subject_tmp->IsAsciiRepresentation() != is_ascii) {
+  if (subject_tmp->IsOneByteRepresentation() != is_ascii) {
     // If we changed between an ASCII and an UC16 string, the specialized
     // code cannot be used, and we need to restart regexp matching from
     // scratch (including, potentially, compiling a new version of the code).

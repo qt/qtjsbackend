@@ -130,8 +130,8 @@ class Variable: public ZoneObject {
   bool is_arguments() const { return kind_ == ARGUMENTS; }
 
   // True if the variable is named eval and not known to be shadowed.
-  bool is_possibly_eval() const {
-    return IsVariable(FACTORY->eval_symbol());
+  bool is_possibly_eval(Isolate* isolate) const {
+    return IsVariable(isolate->factory()->eval_string());
   }
 
   Variable* local_if_not_shadowed() const {
@@ -156,9 +156,6 @@ class Variable: public ZoneObject {
   }
 
   static int CompareIndex(Variable* const* v, Variable* const* w);
-
-  bool is_qml_global() const { return is_qml_global_; }
-  void set_is_qml_global(bool is_qml_global) { is_qml_global_ = is_qml_global; }
 
  private:
   Scope* scope_;
@@ -185,9 +182,6 @@ class Variable: public ZoneObject {
 
   // Module type info.
   Interface* interface_;
-
-  // QML info
-  bool is_qml_global_;
 };
 
 

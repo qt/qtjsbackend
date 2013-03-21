@@ -140,6 +140,9 @@ static void GetICCounts(JSFunction* function,
 
 void RuntimeProfiler::Optimize(JSFunction* function, const char* reason) {
   ASSERT(function->IsOptimizable());
+  // If we are in manual mode, don't auto-optimize anything.
+  if (FLAG_manual_parallel_recompilation) return;
+
   if (FLAG_trace_opt) {
     PrintF("[marking ");
     function->PrintName();
@@ -193,16 +196,9 @@ void RuntimeProfiler::AttemptOnStackReplacement(JSFunction* function) {
 
   // Get the stack check stub code object to match against.  We aren't
   // prepared to generate it, but we don't expect to have to.
-  bool found_code = false;
   Code* stack_check_code = NULL;
-  if (FLAG_count_based_interrupts) {
-    InterruptStub interrupt_stub;
-    found_code = interrupt_stub.FindCodeInCache(&stack_check_code);
-  } else  // NOLINT
-  {  // NOLINT
-    StackCheckStub check_stub;
-    found_code = check_stub.FindCodeInCache(&stack_check_code);
-  }
+  InterruptStub interrupt_stub;
+  bool found_code = interrupt_stub.FindCodeInCache(&stack_check_code, isolate_);
   if (found_code) {
     Code* replacement_code =
         isolate_->builtins()->builtin(Builtins::kOnStackReplacement);
@@ -376,12 +372,6 @@ void RuntimeProfiler::OptimizeNow() {
 }
 
 
-void RuntimeProfiler::NotifyTick() {
-  if (FLAG_count_based_interrupts) return;
-  isolate_->stack_guard()->RequestRuntimeProfilerTick();
-}
-
-
 void RuntimeProfiler::SetUp() {
   ASSERT(has_been_globally_set_up_);
   if (!FLAG_watch_ic_patching) {
@@ -440,11 +430,6 @@ void RuntimeProfiler::HandleWakeUp(Isolate* isolate) {
 }
 
 
-bool RuntimeProfiler::IsSomeIsolateInJS() {
-  return NoBarrier_Load(&state_) > 0;
-}
-
-
 bool RuntimeProfiler::WaitForSomeIsolateToEnterJS() {
   Atomic32 old_state = NoBarrier_CompareAndSwap(&state_, 0, -1);
   ASSERT(old_state >= -1);
@@ -491,14 +476,6 @@ void RuntimeProfiler::UpdateSamplesAfterCompact(ObjectVisitor* visitor) {
   for (int i = 0; i < kSamplerWindowSize; i++) {
     visitor->VisitPointer(&sampler_window_[i]);
   }
-}
-
-
-bool RuntimeProfilerRateLimiter::SuspendIfNecessary() {
-  if (!RuntimeProfiler::IsSomeIsolateInJS()) {
-    return RuntimeProfiler::WaitForSomeIsolateToEnterJS();
-  }
-  return false;
 }
 
 

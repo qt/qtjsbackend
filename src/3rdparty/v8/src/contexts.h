@@ -152,10 +152,11 @@ enum BindingFlags {
   V(CONTEXT_EXTENSION_FUNCTION_INDEX, JSFunction, context_extension_function) \
   V(OUT_OF_MEMORY_INDEX, Object, out_of_memory) \
   V(MAP_CACHE_INDEX, Object, map_cache) \
-  V(CONTEXT_DATA_INDEX, Object, data) \
+  V(EMBEDDER_DATA_INDEX, FixedArray, embedder_data) \
   V(ALLOW_CODE_GEN_FROM_STRINGS_INDEX, Object, allow_code_gen_from_strings) \
   V(ERROR_MESSAGE_FOR_CODE_GEN_FROM_STRINGS_INDEX, Object, \
     error_message_for_code_gen_from_strings) \
+  V(SYMBOL_DELEGATE_INDEX, JSObject, symbol_delegate) \
   V(TO_COMPLETE_PROPERTY_DESCRIPTOR_INDEX, JSFunction, \
     to_complete_property_descriptor) \
   V(DERIVED_HAS_TRAP_INDEX, JSFunction, derived_has_trap) \
@@ -226,7 +227,6 @@ class Context: public FixedArray {
     // (with contexts), or the variable name (catch contexts), the serialized
     // scope info (block contexts), or the module instance (module contexts).
     EXTENSION_INDEX,
-    QML_GLOBAL_OBJECT_INDEX,
     GLOBAL_OBJECT_INDEX,
     MIN_CONTEXT_SLOTS,
 
@@ -284,9 +284,10 @@ class Context: public FixedArray {
     OPAQUE_REFERENCE_FUNCTION_INDEX,
     CONTEXT_EXTENSION_FUNCTION_INDEX,
     OUT_OF_MEMORY_INDEX,
-    CONTEXT_DATA_INDEX,
+    EMBEDDER_DATA_INDEX,
     ALLOW_CODE_GEN_FROM_STRINGS_INDEX,
     ERROR_MESSAGE_FOR_CODE_GEN_FROM_STRINGS_INDEX,
+    SYMBOL_DELEGATE_INDEX,
     TO_COMPLETE_PROPERTY_DESCRIPTOR_INDEX,
     DERIVED_HAS_TRAP_INDEX,
     DERIVED_GET_TRAP_INDEX,
@@ -339,13 +340,6 @@ class Context: public FixedArray {
     set(GLOBAL_OBJECT_INDEX, object);
   }
 
-  JSObject* qml_global_object() {
-    return reinterpret_cast<JSObject *>(get(QML_GLOBAL_OBJECT_INDEX));
-  }
-  void set_qml_global_object(JSObject *qml_global) {
-    set(QML_GLOBAL_OBJECT_INDEX, qml_global);
-  }
-
   // Returns a JSGlobalProxy object or null.
   JSObject* global_proxy();
   void set_global_proxy(JSObject* global);
@@ -353,12 +347,19 @@ class Context: public FixedArray {
   // The builtins object.
   JSBuiltinsObject* builtins();
 
+  // Get the innermost global context by traversing the context chain.
+  Context* global_context();
+
   // Compute the native context by traversing the context chain.
   Context* native_context();
 
-  // Predicates for context types.  IsNativeContext is defined on Object
+  // Predicates for context types.  IsNativeContext is also defined on Object
   // because we frequently have to know if arbitrary objects are natives
   // contexts.
+  bool IsNativeContext() {
+    Map* map = this->map();
+    return map == map->GetHeap()->native_context_map();
+  }
   bool IsFunctionContext() {
     Map* map = this->map();
     return map == map->GetHeap()->function_context_map();
@@ -458,6 +459,9 @@ class Context: public FixedArray {
   static bool IsBootstrappingOrValidParentContext(Object* object, Context* kid);
   static bool IsBootstrappingOrGlobalObject(Object* object);
 #endif
+
+  STATIC_CHECK(kHeaderSize == Internals::kContextHeaderSize);
+  STATIC_CHECK(EMBEDDER_DATA_INDEX == Internals::kContextEmbedderDataIndex);
 };
 
 } }  // namespace v8::internal

@@ -190,8 +190,9 @@ function NoSideEffectToString(obj) {
   if (IS_BOOLEAN(obj)) return x ? 'true' : 'false';
   if (IS_UNDEFINED(obj)) return 'undefined';
   if (IS_NULL(obj)) return 'null';
+  if (IS_FUNCTION(obj)) return  %_CallFunction(obj, FunctionToString);
   if (IS_OBJECT(obj) && %GetDataProperty(obj, "toString") === ObjectToString) {
-    var constructor = obj.constructor;
+    var constructor = %GetDataProperty(obj, "constructor");
     if (typeof constructor == "function") {
       var constructorName = constructor.name;
       if (IS_STRING(constructorName) && constructorName !== "") {
@@ -251,13 +252,8 @@ function ToDetailString(obj) {
 
 
 function MakeGenericError(constructor, type, args) {
-  if (IS_UNDEFINED(args)) {
-    args = [];
-  }
-  var e = new constructor(FormatMessage(type, args));
-  e.type = type;
-  e.arguments = args;
-  return e;
+  if (IS_UNDEFINED(args)) args = [];
+  return new constructor(FormatMessage(type, args));
 }
 
 
@@ -566,7 +562,7 @@ function ScriptNameOrSourceURL() {
         %_RegExpExec(sourceUrlPattern, source, sourceUrlPos - 4, matchInfo);
     if (match) {
       this.cachedNameOrSourceURL =
-          SubString(source, matchInfo[CAPTURE(2)], matchInfo[CAPTURE(3)]);
+          %_SubString(source, matchInfo[CAPTURE(2)], matchInfo[CAPTURE(3)]);
     }
   }
   return this.cachedNameOrSourceURL;
@@ -755,29 +751,6 @@ function GetStackTraceLine(recv, fun, pos, isGlobal) {
 // ----------------------------------------------------------------------------
 // Error implementation
 
-// Defines accessors for a property that is calculated the first time
-// the property is read.
-function DefineOneShotAccessor(obj, name, fun) {
-  // Note that the accessors consistently operate on 'obj', not 'this'.
-  // Since the object may occur in someone else's prototype chain we
-  // can't rely on 'this' being the same as 'obj'.
-  var value;
-  var value_factory = fun;
-  var getter = function() {
-    if (value_factory == null) {
-      return value;
-    }
-    value = value_factory(obj);
-    value_factory = null;
-    return value;
-  };
-  var setter = function(v) {
-    value_factory = null;
-    value = v;
-  };
-  %DefineOrRedefineAccessorProperty(obj, name, getter, setter, DONT_ENUM);
-}
-
 function CallSite(receiver, fun, pos) {
   this.receiver = receiver;
   this.fun = fun;
@@ -847,7 +820,8 @@ function CallSiteGetMethodName() {
        %_CallFunction(this.receiver,
                       ownName,
                       ObjectLookupSetter) === this.fun ||
-       this.receiver[ownName] === this.fun)) {
+       (IS_OBJECT(this.receiver) &&
+        %GetDataProperty(this.receiver, ownName) === this.fun))) {
     // To handle DontEnum properties we guess that the method has
     // the same name as the function.
     return ownName;
@@ -856,8 +830,8 @@ function CallSiteGetMethodName() {
   for (var prop in this.receiver) {
     if (%_CallFunction(this.receiver, prop, ObjectLookupGetter) === this.fun ||
         %_CallFunction(this.receiver, prop, ObjectLookupSetter) === this.fun ||
-        (!%_CallFunction(this.receiver, prop, ObjectLookupGetter) &&
-         this.receiver[prop] === this.fun)) {
+        (IS_OBJECT(this.receiver) &&
+         %GetDataProperty(this.receiver, prop) === this.fun)) {
       // If we find more than one match bail out to avoid confusion.
       if (name) {
         return null;
@@ -910,10 +884,10 @@ function CallSiteGetPosition() {
 }
 
 function CallSiteIsConstructor() {
-  var constructor = this.receiver ? this.receiver.constructor : null;
-  if (!constructor) {
-    return false;
-  }
+  var receiver = this.receiver;
+  var constructor =
+      IS_OBJECT(receiver) ? %GetDataProperty(receiver, "constructor") : null;
+  if (!constructor) return false;
   return this.fun === constructor;
 }
 
@@ -960,12 +934,14 @@ function CallSiteToString() {
     var typeName = GetTypeName(this, true);
     var methodName = this.getMethodName();
     if (functionName) {
-      if (typeName && functionName.indexOf(typeName) != 0) {
+      if (typeName &&
+          %_CallFunction(functionName, typeName, StringIndexOf) != 0) {
         line += typeName + ".";
       }
       line += functionName;
-      if (methodName && functionName.lastIndexOf("." + methodName) !=
-          functionName.length - methodName.length - 1) {
+      if (methodName &&
+          (%_CallFunction(functionName, "." + methodName, StringIndexOf) !=
+           functionName.length - methodName.length - 1)) {
         line += " [as " + methodName + "]";
       }
     } else {
@@ -1043,17 +1019,37 @@ function FormatEvalOrigin(script) {
   return eval_origin;
 }
 
-function FormatStackTrace(error, frames) {
-  var lines = [];
+
+function FormatErrorString(error) {
   try {
-    lines.push(error.toString());
+    return %_CallFunction(error, ErrorToString);
   } catch (e) {
     try {
-      lines.push("<error: " + e + ">");
+      return "<error: " + e + ">";
     } catch (ee) {
-      lines.push("<error>");
+      return "<error>";
     }
   }
+}
+
+
+function GetStackFrames(raw_stack) {
+  var frames = new InternalArray();
+  for (var i = 0; i < raw_stack.length; i += 4) {
+    var recv = raw_stack[i];
+    var fun = raw_stack[i + 1];
+    var code = raw_stack[i + 2];
+    var pc = raw_stack[i + 3];
+    var pos = %FunctionGetPositionForOffset(code, pc);
+    frames.push(new CallSite(recv, fun, pos));
+  }
+  return frames;
+}
+
+
+function FormatStackTrace(error_string, frames) {
+  var lines = new InternalArray();
+  lines.push(error_string);
   for (var i = 0; i < frames.length; i++) {
     var frame = frames[i];
     var line;
@@ -1069,25 +1065,9 @@ function FormatStackTrace(error, frames) {
     }
     lines.push("    at " + line);
   }
-  return lines.join("\n");
+  return %_CallFunction(lines, "\n", ArrayJoin);
 }
 
-function FormatRawStackTrace(error, raw_stack) {
-  var frames = [ ];
-  for (var i = 0; i < raw_stack.length; i += 4) {
-    var recv = raw_stack[i];
-    var fun = raw_stack[i + 1];
-    var code = raw_stack[i + 2];
-    var pc = raw_stack[i + 3];
-    var pos = %FunctionGetPositionForOffset(code, pc);
-    frames.push(new CallSite(recv, fun, pos));
-  }
-  if (IS_FUNCTION($Error.prepareStackTrace)) {
-    return $Error.prepareStackTrace(error, frames);
-  } else {
-    return FormatStackTrace(error, frames);
-  }
-}
 
 function GetTypeName(obj, requireConstructor) {
   var constructor = obj.receiver.constructor;
@@ -1103,18 +1083,58 @@ function GetTypeName(obj, requireConstructor) {
   return constructorName;
 }
 
+
+// Flag to prevent recursive call of Error.prepareStackTrace.
+var formatting_custom_stack_trace = false;
+
+
 function captureStackTrace(obj, cons_opt) {
   var stackTraceLimit = $Error.stackTraceLimit;
   if (!stackTraceLimit || !IS_NUMBER(stackTraceLimit)) return;
   if (stackTraceLimit < 0 || stackTraceLimit > 10000) {
     stackTraceLimit = 10000;
   }
-  var raw_stack = %CollectStackTrace(obj,
-                                     cons_opt ? cons_opt : captureStackTrace,
-                                     stackTraceLimit);
-  DefineOneShotAccessor(obj, 'stack', function (obj) {
-    return FormatRawStackTrace(obj, raw_stack);
-  });
+  var stack = %CollectStackTrace(obj,
+                                 cons_opt ? cons_opt : captureStackTrace,
+                                 stackTraceLimit);
+
+  // Don't be lazy if the error stack formatting is custom (observable).
+  if (IS_FUNCTION($Error.prepareStackTrace) && !formatting_custom_stack_trace) {
+    var array = [];
+    %MoveArrayContents(GetStackFrames(stack), array);
+    formatting_custom_stack_trace = true;
+    try {
+      obj.stack = $Error.prepareStackTrace(obj, array);
+    } catch (e) {
+      throw e;  // The custom formatting function threw.  Rethrow.
+    } finally {
+      formatting_custom_stack_trace = false;
+    }
+    return;
+  }
+
+  var error_string = FormatErrorString(obj);
+  // Note that 'obj' and 'this' maybe different when called on objects that
+  // have the error object on its prototype chain.  The getter replaces itself
+  // with a data property as soon as the stack trace has been formatted.
+  // The getter must not change the object layout as it may be called after GC.
+  var getter = function() {
+    if (IS_STRING(stack)) return stack;
+    // Stack is still a raw array awaiting to be formatted.
+    stack = FormatStackTrace(error_string, GetStackFrames(stack));
+    // Release context value.
+    error_string = void 0;
+    return stack;
+  };
+  %MarkOneShotGetter(getter);
+
+  // The 'stack' property of the receiver is set as data property.  If
+  // the receiver is the same as holder, this accessor pair is replaced.
+  var setter = function(v) {
+    %DefineOrRedefineDataProperty(this, 'stack', v, NONE);
+  };
+
+  %DefineOrRedefineAccessorProperty(obj, 'stack', getter, setter, DONT_ENUM);
 }
 
 
@@ -1153,8 +1173,6 @@ function SetUpError() {
         // object. This avoids going through getters and setters defined
         // on prototype objects.
         %IgnoreAttributesAndSetProperty(this, 'stack', void 0, DONT_ENUM);
-        %IgnoreAttributesAndSetProperty(this, 'arguments', void 0, DONT_ENUM);
-        %IgnoreAttributesAndSetProperty(this, 'type', void 0, DONT_ENUM);
         if (!IS_UNDEFINED(m)) {
           %IgnoreAttributesAndSetProperty(
             this, 'message', ToString(m), DONT_ENUM);
@@ -1214,7 +1232,6 @@ function GetPropertyWithoutInvokingMonkeyGetters(error, name) {
 function ErrorToStringDetectCycle(error) {
   if (!%PushIfAbsent(visited_errors, error)) throw cyclic_error_marker;
   try {
-    var type = GetPropertyWithoutInvokingMonkeyGetters(error, "type");
     var name = GetPropertyWithoutInvokingMonkeyGetters(error, "name");
     name = IS_UNDEFINED(name) ? "Error" : TO_STRING_INLINE(name);
     var message = GetPropertyWithoutInvokingMonkeyGetters(error, "message");
@@ -1249,4 +1266,46 @@ InstallFunctions($Error.prototype, DONT_ENUM, ['toString', ErrorToString]);
 
 // Boilerplate for exceptions for stack overflows. Used from
 // Isolate::StackOverflow().
-var kStackOverflowBoilerplate = MakeRangeError('stack_overflow', []);
+function SetUpStackOverflowBoilerplate() {
+  var boilerplate = MakeRangeError('stack_overflow', []);
+
+  // The raw stack trace is stored as hidden property of the copy of this
+  // boilerplate error object.  Note that the receiver 'this' may not be that
+  // error object copy, but can be found on the prototype chain of 'this'.
+  // When the stack trace is formatted, this accessor property is replaced by
+  // a data property.
+  var error_string = boilerplate.name + ": " + boilerplate.message;
+
+  // The getter must not change the object layout as it may be called after GC.
+  function getter() {
+    var holder = this;
+    while (!IS_ERROR(holder)) {
+      holder = %GetPrototype(holder);
+      if (holder == null) return MakeSyntaxError('illegal_access', []);
+    }
+    var stack = %GetOverflowedStackTrace(holder);
+    if (IS_STRING(stack)) return stack;
+    if (IS_ARRAY(stack)) {
+      var result = FormatStackTrace(error_string, GetStackFrames(stack));
+      %SetOverflowedStackTrace(holder, result);
+      return result;
+    }
+    return void 0;
+  }
+  %MarkOneShotGetter(getter);
+
+  // The 'stack' property of the receiver is set as data property.  If
+  // the receiver is the same as holder, this accessor pair is replaced.
+  function setter(v) {
+    %DefineOrRedefineDataProperty(this, 'stack', v, NONE);
+    // Release the stack trace that is stored as hidden property, if exists.
+    %SetOverflowedStackTrace(this, void 0);
+  }
+
+  %DefineOrRedefineAccessorProperty(
+      boilerplate, 'stack', getter, setter, DONT_ENUM);
+
+  return boilerplate;
+}
+
+var kStackOverflowBoilerplate = SetUpStackOverflowBoilerplate();

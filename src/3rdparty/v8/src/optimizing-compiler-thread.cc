@@ -25,11 +25,6 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-// For Windows CE, Windows headers need to be included first as they define ASSERT
-#ifdef _WIN32_WCE
-# include "win32-headers.h"
-#endif
-
 #include "optimizing-compiler-thread.h"
 
 #include "v8.h"
@@ -53,6 +48,8 @@ void OptimizingCompilerThread::Run() {
 
   while (true) {
     input_queue_semaphore_->Wait();
+    Logger::TimerEventScope timer(
+        isolate_, Logger::TimerEventScope::v8_recompile_parallel);
     if (Acquire_Load(&stop_thread_)) {
       stop_semaphore_->Signal();
       if (FLAG_trace_parallel_recompilation) {
@@ -77,7 +74,13 @@ void OptimizingCompilerThread::Run() {
     USE(status);
 
     output_queue_.Enqueue(optimizing_compiler);
-    isolate_->stack_guard()->RequestCodeReadyEvent();
+    if (!FLAG_manual_parallel_recompilation) {
+      isolate_->stack_guard()->RequestCodeReadyEvent();
+    } else {
+      // In manual mode, do not trigger a code ready event.
+      // Instead, wait for the optimized functions to be installed manually.
+      output_queue_semaphore_->Signal();
+    }
 
     if (FLAG_trace_parallel_recompilation) {
       time_spent_compiling_ += OS::Ticks() - compiling_start;
@@ -104,6 +107,9 @@ void OptimizingCompilerThread::InstallOptimizedFunctions() {
   HandleScope handle_scope(isolate_);
   int functions_installed = 0;
   while (!output_queue_.IsEmpty()) {
+    if (FLAG_manual_parallel_recompilation) {
+      output_queue_semaphore_->Wait();
+    }
     OptimizingCompiler* compiler = NULL;
     output_queue_.Dequeue(&compiler);
     Compiler::InstallOptimizedCode(compiler);
@@ -115,8 +121,22 @@ void OptimizingCompilerThread::InstallOptimizedFunctions() {
 }
 
 
+Handle<SharedFunctionInfo>
+    OptimizingCompilerThread::InstallNextOptimizedFunction() {
+  ASSERT(FLAG_manual_parallel_recompilation);
+  output_queue_semaphore_->Wait();
+  OptimizingCompiler* compiler = NULL;
+  output_queue_.Dequeue(&compiler);
+  Handle<SharedFunctionInfo> shared = compiler->info()->shared_info();
+  Compiler::InstallOptimizedCode(compiler);
+  return shared;
+}
+
+
 void OptimizingCompilerThread::QueueForOptimization(
     OptimizingCompiler* optimizing_compiler) {
+  ASSERT(IsQueueAvailable());
+  Barrier_AtomicIncrement(&queue_length_, static_cast<Atomic32>(1));
   input_queue_.Enqueue(optimizing_compiler);
   input_queue_semaphore_->Signal();
 }

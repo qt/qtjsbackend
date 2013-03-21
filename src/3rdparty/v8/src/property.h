@@ -48,9 +48,9 @@ class Descriptor BASE_EMBEDDED {
     return Smi::cast(value)->value();
   }
 
-  MUST_USE_RESULT MaybeObject* KeyToSymbol() {
-    if (!StringShape(key_).IsSymbol()) {
-      MaybeObject* maybe_result = HEAP->LookupSymbol(key_);
+  MUST_USE_RESULT MaybeObject* KeyToInternalizedString() {
+    if (!StringShape(key_).IsInternalized()) {
+      MaybeObject* maybe_result = HEAP->InternalizeString(key_);
       if (!maybe_result->To(&key_)) return maybe_result;
     }
     return key_;
@@ -132,6 +132,56 @@ class CallbacksDescriptor:  public Descriptor {
 };
 
 
+// Holds a property index value distinguishing if it is a field index or an
+// index inside the object header.
+class PropertyIndex {
+ public:
+  static PropertyIndex NewFieldIndex(int index) {
+    return PropertyIndex(index, false);
+  }
+  static PropertyIndex NewHeaderIndex(int index) {
+    return PropertyIndex(index, true);
+  }
+
+  bool is_field_index() { return (index_ & kHeaderIndexBit) == 0; }
+  bool is_header_index() { return (index_ & kHeaderIndexBit) != 0; }
+
+  int field_index() {
+    ASSERT(is_field_index());
+    return value();
+  }
+  int header_index() {
+    ASSERT(is_header_index());
+    return value();
+  }
+
+  bool is_inobject(Handle<JSObject> holder) {
+    if (is_header_index()) return true;
+    return field_index() < holder->map()->inobject_properties();
+  }
+
+  int translate(Handle<JSObject> holder) {
+    if (is_header_index()) return header_index();
+    int index = field_index() - holder->map()->inobject_properties();
+    if (index >= 0) return index;
+    return index + holder->map()->instance_size() / kPointerSize;
+  }
+
+ private:
+  static const int kHeaderIndexBit = 1 << 31;
+  static const int kIndexMask = ~kHeaderIndexBit;
+
+  int value() { return index_ & kIndexMask; }
+
+  PropertyIndex(int index, bool is_header_based)
+      : index_(index | (is_header_based ? kHeaderIndexBit : 0)) {
+    ASSERT(index <= kIndexMask);
+  }
+
+  int index_;
+};
+
+
 class LookupResult BASE_EMBEDDED {
  public:
   explicit LookupResult(Isolate* isolate)
@@ -145,9 +195,11 @@ class LookupResult BASE_EMBEDDED {
   }
 
   ~LookupResult() {
-    ASSERT(isolate_->top_lookup_result() == this);
-    isolate_->SetTopLookupResult(next_);
+    ASSERT(isolate()->top_lookup_result() == this);
+    isolate()->SetTopLookupResult(next_);
   }
+
+  Isolate* isolate() const { return isolate_; }
 
   void DescriptorResult(JSObject* holder, PropertyDetails details, int number) {
     lookup_type_ = DESCRIPTOR_TYPE;
@@ -161,16 +213,6 @@ class LookupResult BASE_EMBEDDED {
     details_ = PropertyDetails(NONE, TRANSITION);
     holder_ = holder;
     number_ = number;
-  }
-
-  void ConstantResult(JSObject* holder) {
-    lookup_type_ = CONSTANT_TYPE;
-    holder_ = holder;
-    details_ =
-        PropertyDetails(static_cast<PropertyAttributes>(DONT_ENUM |
-                                                        DONT_DELETE),
-                        CALLBACKS);
-    number_ = -1;
   }
 
   void DictionaryResult(JSObject* holder, int entry) {
@@ -272,13 +314,33 @@ class LookupResult BASE_EMBEDDED {
     return IsFound() && !IsTransition();
   }
 
+  bool IsDataProperty() {
+    switch (type()) {
+      case FIELD:
+      case NORMAL:
+      case CONSTANT_FUNCTION:
+        return true;
+      case CALLBACKS: {
+        Object* callback = GetCallbackObject();
+        return callback->IsAccessorInfo() || callback->IsForeign();
+      }
+      case HANDLER:
+      case INTERCEPTOR:
+      case TRANSITION:
+      case NONEXISTENT:
+        return false;
+    }
+    UNREACHABLE();
+    return false;
+  }
+
   bool IsCacheable() { return cacheable_; }
   void DisallowCaching() { cacheable_ = false; }
 
   Object* GetLazyValue() {
     switch (type()) {
       case FIELD:
-        return holder()->FastPropertyAt(GetFieldIndex());
+        return holder()->FastPropertyAt(GetFieldIndex().field_index());
       case NORMAL: {
         Object* value;
         value = holder()->property_dictionary()->ValueAt(GetDictionaryEntry());
@@ -289,9 +351,15 @@ class LookupResult BASE_EMBEDDED {
       }
       case CONSTANT_FUNCTION:
         return GetConstantFunction();
-      default:
-        return Isolate::Current()->heap()->the_hole_value();
+      case CALLBACKS:
+      case HANDLER:
+      case INTERCEPTOR:
+      case TRANSITION:
+      case NONEXISTENT:
+        return isolate()->heap()->the_hole_value();
     }
+    UNREACHABLE();
+    return NULL;
   }
 
   Map* GetTransitionTarget() {
@@ -334,10 +402,11 @@ class LookupResult BASE_EMBEDDED {
     return number_;
   }
 
-  int GetFieldIndex() {
+  PropertyIndex GetFieldIndex() {
     ASSERT(lookup_type_ == DESCRIPTOR_TYPE);
     ASSERT(IsField());
-    return Descriptor::IndexFromValue(GetValue());
+    return PropertyIndex::NewFieldIndex(
+        Descriptor::IndexFromValue(GetValue()));
   }
 
   int GetLocalFieldIndexFromMap(Map* map) {
@@ -362,10 +431,7 @@ class LookupResult BASE_EMBEDDED {
   }
 
   Object* GetCallbackObject() {
-    if (lookup_type_ == CONSTANT_TYPE) {
-      return HEAP->prototype_accessors();
-    }
-    ASSERT(!IsTransition());
+    ASSERT(type() == CALLBACKS && !IsTransition());
     return GetValue();
   }
 
@@ -401,8 +467,7 @@ class LookupResult BASE_EMBEDDED {
     TRANSITION_TYPE,
     DICTIONARY_TYPE,
     HANDLER_TYPE,
-    INTERCEPTOR_TYPE,
-    CONSTANT_TYPE
+    INTERCEPTOR_TYPE
   } lookup_type_;
 
   JSReceiver* holder_;

@@ -91,30 +91,55 @@ MaybeObject* Heap::AllocateStringFromUtf8(Vector<const char> str,
   if (non_ascii_start >= length) {
     // If the string is ASCII, we do not need to convert the characters
     // since UTF8 is backwards compatible with ASCII.
-    return AllocateStringFromAscii(str, pretenure);
+    return AllocateStringFromOneByte(str, pretenure);
   }
   // Non-ASCII and we need to decode.
   return AllocateStringFromUtf8Slow(str, non_ascii_start, pretenure);
 }
 
 
-MaybeObject* Heap::AllocateSymbol(Vector<const char> str,
-                                  int chars,
-                                  uint32_t hash_field) {
-  unibrow::Utf8InputBuffer<> buffer(str.start(),
-                                    static_cast<unsigned>(str.length()));
-  return AllocateInternalSymbol(&buffer, chars, hash_field);
+template<>
+bool inline Heap::IsOneByte(Vector<const char> str, int chars) {
+  // TODO(dcarney): incorporate Latin-1 check when Latin-1 is supported?
+  // ASCII only check.
+  return chars == str.length();
 }
 
 
-MaybeObject* Heap::AllocateAsciiSymbol(Vector<const char> str,
-                                       uint32_t hash_field) {
-  if (str.length() > SeqAsciiString::kMaxLength) {
-    return Failure::OutOfMemoryException();
+template<>
+bool inline Heap::IsOneByte(String* str, int chars) {
+  return str->IsOneByteRepresentation();
+}
+
+
+MaybeObject* Heap::AllocateInternalizedStringFromUtf8(
+    Vector<const char> str, int chars, uint32_t hash_field) {
+  if (IsOneByte(str, chars)) {
+    return AllocateOneByteInternalizedString(
+        Vector<const uint8_t>::cast(str), hash_field);
+  }
+  return AllocateInternalizedStringImpl<false>(str, chars, hash_field);
+}
+
+
+template<typename T>
+MaybeObject* Heap::AllocateInternalizedStringImpl(
+    T t, int chars, uint32_t hash_field) {
+  if (IsOneByte(t, chars)) {
+    return AllocateInternalizedStringImpl<true>(t, chars, hash_field);
+  }
+  return AllocateInternalizedStringImpl<false>(t, chars, hash_field);
+}
+
+
+MaybeObject* Heap::AllocateOneByteInternalizedString(Vector<const uint8_t> str,
+                                                     uint32_t hash_field) {
+  if (str.length() > SeqOneByteString::kMaxLength) {
+    return Failure::OutOfMemoryException(0x2);
   }
   // Compute map and object size.
-  Map* map = ascii_symbol_map();
-  int size = SeqAsciiString::SizeFor(str.length());
+  Map* map = ascii_internalized_string_map();
+  int size = SeqOneByteString::SizeFor(str.length());
 
   // Allocate string.
   Object* result;
@@ -130,25 +155,24 @@ MaybeObject* Heap::AllocateAsciiSymbol(Vector<const char> str,
   String* answer = String::cast(result);
   answer->set_length(str.length());
   answer->set_hash_field(hash_field);
-  SeqString::cast(answer)->set_symbol_id(0);
 
   ASSERT_EQ(size, answer->Size());
 
   // Fill in the characters.
-  memcpy(answer->address() + SeqAsciiString::kHeaderSize,
+  memcpy(answer->address() + SeqOneByteString::kHeaderSize,
          str.start(), str.length());
 
   return answer;
 }
 
 
-MaybeObject* Heap::AllocateTwoByteSymbol(Vector<const uc16> str,
-                                         uint32_t hash_field) {
+MaybeObject* Heap::AllocateTwoByteInternalizedString(Vector<const uc16> str,
+                                                     uint32_t hash_field) {
   if (str.length() > SeqTwoByteString::kMaxLength) {
-    return Failure::OutOfMemoryException();
+    return Failure::OutOfMemoryException(0x3);
   }
   // Compute map and object size.
-  Map* map = symbol_map();
+  Map* map = internalized_string_map();
   int size = SeqTwoByteString::SizeFor(str.length());
 
   // Allocate string.
@@ -240,41 +264,27 @@ MaybeObject* Heap::NumberFromInt32(
 
 MaybeObject* Heap::NumberFromUint32(
     uint32_t value, PretenureFlag pretenure) {
-  if ((int32_t)value >= 0 && Smi::IsValid((int32_t)value)) {
-    return Smi::FromInt((int32_t)value);
+  if (static_cast<int32_t>(value) >= 0 &&
+      Smi::IsValid(static_cast<int32_t>(value))) {
+    return Smi::FromInt(static_cast<int32_t>(value));
   }
   // Bypass NumberFromDouble to avoid various redundant checks.
   return AllocateHeapNumber(FastUI2D(value), pretenure);
 }
 
 
-void Heap::FinalizeExternalString(HeapObject* string) {
-  ASSERT(string->IsExternalString() || string->map()->has_external_resource());
+void Heap::FinalizeExternalString(String* string) {
+  ASSERT(string->IsExternalString());
+  v8::String::ExternalStringResourceBase** resource_addr =
+      reinterpret_cast<v8::String::ExternalStringResourceBase**>(
+          reinterpret_cast<byte*>(string) +
+          ExternalString::kResourceOffset -
+          kHeapObjectTag);
 
-  if (string->IsExternalString()) {
-    v8::String::ExternalStringResourceBase** resource_addr =
-        reinterpret_cast<v8::String::ExternalStringResourceBase**>(
-            reinterpret_cast<byte*>(string) +
-            ExternalString::kResourceOffset -
-            kHeapObjectTag);
-
-    // Dispose of the C++ object if it has not already been disposed.
-    if (*resource_addr != NULL) {
-      (*resource_addr)->Dispose();
-      *resource_addr = NULL;
-    }
-  } else {
-    JSObject *object = JSObject::cast(string);
-    Object *value = object->GetExternalResourceObject();
-    v8::Object::ExternalResource *resource = 0;
-    if (value->IsSmi()) {
-        resource = reinterpret_cast<v8::Object::ExternalResource*>(Internals::GetExternalPointerFromSmi(value));
-    } else if (value->IsForeign()) {
-        resource = reinterpret_cast<v8::Object::ExternalResource*>(Foreign::cast(value)->foreign_address());
-    }
-    if (resource) {
-        resource->Dispose();
-    }
+  // Dispose of the C++ object if it has not already been disposed.
+  if (*resource_addr != NULL) {
+    (*resource_addr)->Dispose();
+    *resource_addr = NULL;
   }
 }
 
@@ -446,6 +456,15 @@ void Heap::ScavengeObject(HeapObject** p, HeapObject* object) {
 }
 
 
+MaybeObject* Heap::AllocateEmptyJSArrayWithAllocationSite(
+      ElementsKind elements_kind,
+      Handle<Object> allocation_site_payload) {
+  return AllocateJSArrayAndStorageWithAllocationSite(elements_kind, 0, 0,
+      allocation_site_payload,
+      DONT_INITIALIZE_ARRAY_ELEMENTS);
+}
+
+
 bool Heap::CollectGarbage(AllocationSpace space, const char* gc_reason) {
   const char* collector_reason = NULL;
   GarbageCollector collector = SelectGarbageCollector(space, &collector_reason);
@@ -476,7 +495,7 @@ intptr_t Heap::AdjustAmountOfExternalAllocatedMemory(
     intptr_t change_in_bytes) {
   ASSERT(HasBeenSetUp());
   intptr_t amount = amount_of_external_allocated_memory_ + change_in_bytes;
-  if (change_in_bytes >= 0) {
+  if (change_in_bytes > 0) {
     // Avoid overflow.
     if (amount > amount_of_external_allocated_memory_) {
       amount_of_external_allocated_memory_ = amount;
@@ -603,16 +622,6 @@ void ExternalStringTable::AddString(String* string) {
 }
 
 
-void ExternalStringTable::AddObject(HeapObject* object) {
-  ASSERT(object->map()->has_external_resource());
-  if (heap_->InNewSpace(object)) {
-    new_space_strings_.Add(object);
-  } else {
-    old_space_strings_.Add(object);
-  }
-}
-
-
 void ExternalStringTable::Iterate(ObjectVisitor* v) {
   if (!new_space_strings_.is_empty()) {
     Object** start = &new_space_strings_[0];
@@ -634,39 +643,56 @@ void ExternalStringTable::Verify() {
     // TODO(yangguo): check that the object is indeed an external string.
     ASSERT(heap_->InNewSpace(obj));
     ASSERT(obj != HEAP->the_hole_value());
+#ifndef ENABLE_LATIN_1
     if (obj->IsExternalAsciiString()) {
       ExternalAsciiString* string = ExternalAsciiString::cast(obj);
       ASSERT(String::IsAscii(string->GetChars(), string->length()));
     }
+#endif
   }
   for (int i = 0; i < old_space_strings_.length(); ++i) {
     Object* obj = Object::cast(old_space_strings_[i]);
     // TODO(yangguo): check that the object is indeed an external string.
     ASSERT(!heap_->InNewSpace(obj));
     ASSERT(obj != HEAP->the_hole_value());
+#ifndef ENABLE_LATIN_1
     if (obj->IsExternalAsciiString()) {
       ExternalAsciiString* string = ExternalAsciiString::cast(obj);
       ASSERT(String::IsAscii(string->GetChars(), string->length()));
     }
+#endif
   }
 #endif
 }
 
 
-void ExternalStringTable::AddOldObject(HeapObject* object) {
-  ASSERT(object->IsExternalString() || object->map()->has_external_resource());
-  ASSERT(!heap_->InNewSpace(object));
-  old_space_strings_.Add(object);
+void ExternalStringTable::AddOldString(String* string) {
+  ASSERT(string->IsExternalString());
+  ASSERT(!heap_->InNewSpace(string));
+  old_space_strings_.Add(string);
 }
 
 
-void ExternalStringTable::ShrinkNewObjects(int position) {
+void ExternalStringTable::ShrinkNewStrings(int position) {
   new_space_strings_.Rewind(position);
 #ifdef VERIFY_HEAP
   if (FLAG_verify_heap) {
     Verify();
   }
 #endif
+}
+
+
+void ErrorObjectList::Add(JSObject* object) {
+  list_.Add(object);
+}
+
+
+void ErrorObjectList::Iterate(ObjectVisitor* v) {
+  if (!list_.is_empty()) {
+    Object** start = &list_[0];
+    v->VisitPointers(start, start + list_.length());
+  }
 }
 
 
@@ -763,6 +789,18 @@ AlwaysAllocateScope::~AlwaysAllocateScope() {
   HEAP->always_allocate_scope_depth_--;
   ASSERT(HEAP->always_allocate_scope_depth_ == 0);
 }
+
+
+#ifdef VERIFY_HEAP
+NoWeakEmbeddedMapsVerificationScope::NoWeakEmbeddedMapsVerificationScope() {
+  HEAP->no_weak_embedded_maps_verification_scope_depth_++;
+}
+
+
+NoWeakEmbeddedMapsVerificationScope::~NoWeakEmbeddedMapsVerificationScope() {
+  HEAP->no_weak_embedded_maps_verification_scope_depth_--;
+}
+#endif
 
 
 void VerifyPointersVisitor::VisitPointers(Object** start, Object** end) {

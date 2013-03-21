@@ -68,7 +68,7 @@ void StaticNewSpaceVisitor<StaticVisitor>::Initialize() {
                   SharedFunctionInfo::BodyDescriptor,
                   int>::Visit);
 
-  table_.Register(kVisitSeqAsciiString, &VisitSeqAsciiString);
+  table_.Register(kVisitSeqOneByteString, &VisitSeqOneByteString);
 
   table_.Register(kVisitSeqTwoByteString, &VisitSeqTwoByteString);
 
@@ -110,10 +110,7 @@ void StaticMarkingVisitor<StaticVisitor>::Initialize() {
                   SlicedString::BodyDescriptor,
                   void>::Visit);
 
-  table_.Register(kVisitFixedArray,
-                  &FlexibleBodyVisitor<StaticVisitor,
-                  FixedArray::BodyDescriptor,
-                  void>::Visit);
+  table_.Register(kVisitFixedArray, &FixedArrayVisitor::Visit);
 
   table_.Register(kVisitFixedDoubleArray, &DataObjectVisitor::Visit);
 
@@ -123,7 +120,7 @@ void StaticMarkingVisitor<StaticVisitor>::Initialize() {
 
   table_.Register(kVisitFreeSpace, &DataObjectVisitor::Visit);
 
-  table_.Register(kVisitSeqAsciiString, &DataObjectVisitor::Visit);
+  table_.Register(kVisitSeqOneByteString, &DataObjectVisitor::Visit);
 
   table_.Register(kVisitSeqTwoByteString, &DataObjectVisitor::Visit);
 
@@ -178,8 +175,12 @@ void StaticMarkingVisitor<StaticVisitor>::VisitEmbeddedPointer(
   ASSERT(rinfo->rmode() == RelocInfo::EMBEDDED_OBJECT);
   ASSERT(!rinfo->target_object()->IsConsString());
   HeapObject* object = HeapObject::cast(rinfo->target_object());
-  heap->mark_compact_collector()->RecordRelocSlot(rinfo, object);
-  StaticVisitor::MarkObject(heap, object);
+  if (!FLAG_weak_embedded_maps_in_optimized_code || !FLAG_collect_maps ||
+      rinfo->host()->kind() != Code::OPTIMIZED_FUNCTION ||
+      !object->IsMap() || !Map::cast(object)->CanTransition()) {
+    heap->mark_compact_collector()->RecordRelocSlot(rinfo, object);
+    StaticVisitor::MarkObject(heap, object);
+  }
 }
 
 
@@ -214,7 +215,8 @@ void StaticMarkingVisitor<StaticVisitor>::VisitCodeTarget(
   // when they might be keeping a Context alive, or when the heap is about
   // to be serialized.
   if (FLAG_cleanup_code_caches_at_gc && target->is_inline_cache_stub()
-      && (target->ic_state() == MEGAMORPHIC || heap->flush_monomorphic_ics() ||
+      && (target->ic_state() == MEGAMORPHIC || target->ic_state() == GENERIC ||
+          target->ic_state() == POLYMORPHIC || heap->flush_monomorphic_ics() ||
           Serializer::enabled() || target->ic_age() != heap->global_ic_age())) {
     IC::Clear(rinfo->pc());
     target = Code::GetCodeFromTargetAddress(rinfo->target_address());
@@ -264,12 +266,9 @@ void StaticMarkingVisitor<StaticVisitor>::VisitMap(
     map_object->ClearCodeCache(heap);
   }
 
-  // When map collection is enabled we have to mark through map's
-  // transitions and back pointers in a special way to make these links
-  // weak.  Only maps for subclasses of JSReceiver can have transitions.
-  STATIC_ASSERT(LAST_TYPE == LAST_JS_RECEIVER_TYPE);
-  if (FLAG_collect_maps &&
-      map_object->instance_type() >= FIRST_JS_RECEIVER_TYPE) {
+  // When map collection is enabled we have to mark through map's transitions
+  // and back pointers in a special way to make these links weak.
+  if (FLAG_collect_maps && map_object->CanTransition()) {
     MarkMapContents(heap, map_object);
   } else {
     StaticVisitor::VisitPointers(heap,
@@ -301,6 +300,13 @@ void StaticMarkingVisitor<StaticVisitor>::VisitSharedFunctionInfo(
   SharedFunctionInfo* shared = SharedFunctionInfo::cast(object);
   if (shared->ic_age() != heap->global_ic_age()) {
     shared->ResetForNewContext(heap->global_ic_age());
+  }
+  if (FLAG_cache_optimized_code) {
+    // Flush optimized code map on major GC.
+    // TODO(mstarzinger): We may experiment with rebuilding it or with
+    // retaining entries which should survive as we iterate through
+    // optimized functions anyway.
+    shared->ClearOptimizedCodeMap();
   }
   MarkCompactCollector* collector = heap->mark_compact_collector();
   if (collector->is_code_flushing_enabled()) {
@@ -389,6 +395,41 @@ void StaticMarkingVisitor<StaticVisitor>::MarkMapContents(
     // Already marked by marking map->GetBackPointer() above.
     ASSERT(transitions->IsMap() || transitions->IsUndefined());
   }
+
+  // Since descriptor arrays are potentially shared, ensure that only the
+  // descriptors that appeared for this map are marked. The first time a
+  // non-empty descriptor array is marked, its header is also visited. The slot
+  // holding the descriptor array will be implicitly recorded when the pointer
+  // fields of this map are visited.
+  DescriptorArray* descriptors = map->instance_descriptors();
+  if (StaticVisitor::MarkObjectWithoutPush(heap, descriptors) &&
+      descriptors->length() > 0) {
+    StaticVisitor::VisitPointers(heap,
+        descriptors->GetFirstElementAddress(),
+        descriptors->GetDescriptorEndSlot(0));
+  }
+  int start = 0;
+  int end = map->NumberOfOwnDescriptors();
+  Object* back_pointer = map->GetBackPointer();
+  if (!back_pointer->IsUndefined()) {
+    Map* parent_map = Map::cast(back_pointer);
+    if (descriptors == parent_map->instance_descriptors()) {
+      start = parent_map->NumberOfOwnDescriptors();
+    }
+  }
+  if (start < end) {
+    StaticVisitor::VisitPointers(heap,
+        descriptors->GetDescriptorStartSlot(start),
+        descriptors->GetDescriptorEndSlot(end));
+  }
+
+  // Mark prototype dependent codes array but do not push it onto marking
+  // stack, this will make references from it weak. We will clean dead
+  // codes when we iterate over maps in ClearNonLiveTransitions.
+  Object** slot = HeapObject::RawField(map, Map::kDependentCodeOffset);
+  HeapObject* obj = HeapObject::cast(*slot);
+  heap->mark_compact_collector()->RecordSlot(slot, slot, obj);
+  StaticVisitor::MarkObjectWithoutPush(heap, obj);
 
   // Mark the pointer fields of the Map. Since the transitions array has
   // been marked already, it is fine that one of these fields contains a
@@ -634,7 +675,7 @@ void Code::CodeIterateBody(ObjectVisitor* v) {
                   RelocInfo::ModeMask(RelocInfo::RUNTIME_ENTRY);
 
   // There are two places where we iterate code bodies: here and the
-  // templated CodeIterateBody (below).  They should be kept in sync.
+  // templated CodeIterateBody (below). They should be kept in sync.
   IteratePointer(v, kRelocationInfoOffset);
   IteratePointer(v, kHandlerTableOffset);
   IteratePointer(v, kDeoptimizationDataOffset);
@@ -657,8 +698,8 @@ void Code::CodeIterateBody(Heap* heap) {
                   RelocInfo::ModeMask(RelocInfo::DEBUG_BREAK_SLOT) |
                   RelocInfo::ModeMask(RelocInfo::RUNTIME_ENTRY);
 
-  // There are two places where we iterate code bodies: here and the
-  // non-templated CodeIterateBody (above).  They should be kept in sync.
+  // There are two places where we iterate code bodies: here and the non-
+  // templated CodeIterateBody (above). They should be kept in sync.
   StaticVisitor::VisitPointer(
       heap,
       reinterpret_cast<Object**>(this->address() + kRelocationInfoOffset));

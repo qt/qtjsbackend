@@ -34,6 +34,11 @@
 using namespace v8::internal;
 
 
+static Isolate* GetIsolateFrom(LocalContext* context) {
+  return reinterpret_cast<Isolate*>((*context)->GetIsolate());
+}
+
+
 static Handle<JSWeakMap> AllocateJSWeakMap() {
   Handle<Map> map = FACTORY->NewMap(JS_WEAK_MAP_TYPE, JSWeakMap::kSize);
   Handle<JSObject> weakmap_obj = FACTORY->NewJSObjectFromMap(map);
@@ -57,10 +62,12 @@ static void PutIntoWeakMap(Handle<JSWeakMap> weakmap,
 }
 
 static int NumberOfWeakCalls = 0;
-static void WeakPointerCallback(v8::Persistent<v8::Value> handle, void* id) {
+static void WeakPointerCallback(v8::Isolate* isolate,
+                                v8::Persistent<v8::Value> handle,
+                                void* id) {
   ASSERT(id == reinterpret_cast<void*>(1234));
   NumberOfWeakCalls++;
-  handle.Dispose();
+  handle.Dispose(isolate);
 }
 
 
@@ -69,7 +76,7 @@ TEST(Weakness) {
   LocalContext context;
   v8::HandleScope scope;
   Handle<JSWeakMap> weakmap = AllocateJSWeakMap();
-  GlobalHandles* global_handles = Isolate::Current()->global_handles();
+  GlobalHandles* global_handles = GetIsolateFrom(&context)->global_handles();
 
   // Keep global reference to the key.
   Handle<Object> key;
@@ -86,7 +93,7 @@ TEST(Weakness) {
     v8::HandleScope scope;
     PutIntoWeakMap(weakmap,
                    Handle<JSObject>(JSObject::cast(*key)),
-                   Handle<Smi>(Smi::FromInt(23)));
+                   Handle<Smi>(Smi::FromInt(23), GetIsolateFrom(&context)));
   }
   CHECK_EQ(1, ObjectHashTable::cast(weakmap->table())->NumberOfElements());
 
@@ -102,6 +109,7 @@ TEST(Weakness) {
     v8::HandleScope scope;
     global_handles->MakeWeak(key.location(),
                              reinterpret_cast<void*>(1234),
+                             NULL,
                              &WeakPointerCallback);
   }
   CHECK(global_handles->IsWeak(key.location()));
@@ -136,7 +144,8 @@ TEST(Shrinking) {
     Handle<Map> map = FACTORY->NewMap(JS_OBJECT_TYPE, JSObject::kHeaderSize);
     for (int i = 0; i < 32; i++) {
       Handle<JSObject> object = FACTORY->NewJSObjectFromMap(map);
-      PutIntoWeakMap(weakmap, object, Handle<Smi>(Smi::FromInt(i)));
+      PutIntoWeakMap(weakmap, object,
+                     Handle<Smi>(Smi::FromInt(i), GetIsolateFrom(&context)));
     }
   }
 
@@ -164,7 +173,7 @@ TEST(Regress2060a) {
   LocalContext context;
   v8::HandleScope scope;
   Handle<JSFunction> function =
-      FACTORY->NewFunction(FACTORY->function_symbol(), FACTORY->null_value());
+      FACTORY->NewFunction(FACTORY->function_string(), FACTORY->null_value());
   Handle<JSObject> key = FACTORY->NewJSObject(function);
   Handle<JSWeakMap> weakmap = AllocateJSWeakMap();
 
@@ -200,7 +209,7 @@ TEST(Regress2060b) {
   LocalContext context;
   v8::HandleScope scope;
   Handle<JSFunction> function =
-      FACTORY->NewFunction(FACTORY->function_symbol(), FACTORY->null_value());
+      FACTORY->NewFunction(FACTORY->function_string(), FACTORY->null_value());
 
   // Start second old-space page so that keys land on evacuation candidate.
   Page* first_page = HEAP->old_pointer_space()->anchor()->next_page();
@@ -215,7 +224,9 @@ TEST(Regress2060b) {
   }
   Handle<JSWeakMap> weakmap = AllocateJSWeakMap();
   for (int i = 0; i < 32; i++) {
-    PutIntoWeakMap(weakmap, keys[i], Handle<Smi>(Smi::FromInt(i)));
+    PutIntoWeakMap(weakmap,
+                   keys[i],
+                   Handle<Smi>(Smi::FromInt(i), GetIsolateFrom(&context)));
   }
 
   // Force compacting garbage collection. The subsequent collections are used

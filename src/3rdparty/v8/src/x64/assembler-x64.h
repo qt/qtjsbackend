@@ -95,21 +95,24 @@ struct Register {
   //  r10 - fixed scratch register
   //  r12 - smi constant register
   //  r13 - root register
+  static const int kMaxNumAllocatableRegisters = 10;
+  static int NumAllocatableRegisters() {
+    return kMaxNumAllocatableRegisters;
+  }
   static const int kNumRegisters = 16;
-  static const int kNumAllocatableRegisters = 10;
 
   static int ToAllocationIndex(Register reg) {
     return kAllocationIndexByRegisterCode[reg.code()];
   }
 
   static Register FromAllocationIndex(int index) {
-    ASSERT(index >= 0 && index < kNumAllocatableRegisters);
+    ASSERT(index >= 0 && index < kMaxNumAllocatableRegisters);
     Register result = { kRegisterCodeByAllocationIndex[index] };
     return result;
   }
 
   static const char* AllocationIndexToString(int index) {
-    ASSERT(index >= 0 && index < kNumAllocatableRegisters);
+    ASSERT(index >= 0 && index < kMaxNumAllocatableRegisters);
     const char* const names[] = {
       "rax",
       "rbx",
@@ -157,7 +160,7 @@ struct Register {
   int code_;
 
  private:
-  static const int kRegisterCodeByAllocationIndex[kNumAllocatableRegisters];
+  static const int kRegisterCodeByAllocationIndex[kMaxNumAllocatableRegisters];
   static const int kAllocationIndexByRegisterCode[kNumRegisters];
 };
 
@@ -199,8 +202,11 @@ const Register no_reg = { kRegister_no_reg_Code };
 
 
 struct XMMRegister {
-  static const int kNumRegisters = 16;
-  static const int kNumAllocatableRegisters = 15;
+  static const int kMaxNumRegisters = 16;
+  static const int kMaxNumAllocatableRegisters = 15;
+  static int NumAllocatableRegisters() {
+    return kMaxNumAllocatableRegisters;
+  }
 
   static int ToAllocationIndex(XMMRegister reg) {
     ASSERT(reg.code() != 0);
@@ -208,13 +214,13 @@ struct XMMRegister {
   }
 
   static XMMRegister FromAllocationIndex(int index) {
-    ASSERT(0 <= index && index < kNumAllocatableRegisters);
+    ASSERT(0 <= index && index < kMaxNumAllocatableRegisters);
     XMMRegister result = { index + 1 };
     return result;
   }
 
   static const char* AllocationIndexToString(int index) {
-    ASSERT(index >= 0 && index < kNumAllocatableRegisters);
+    ASSERT(index >= 0 && index < kMaxNumAllocatableRegisters);
     const char* const names[] = {
       "xmm1",
       "xmm2",
@@ -237,11 +243,11 @@ struct XMMRegister {
 
   static XMMRegister from_code(int code) {
     ASSERT(code >= 0);
-    ASSERT(code < kNumRegisters);
+    ASSERT(code < kMaxNumRegisters);
     XMMRegister r = { code };
     return r;
   }
-  bool is_valid() const { return 0 <= code_ && code_ < kNumRegisters; }
+  bool is_valid() const { return 0 <= code_ && code_ < kMaxNumRegisters; }
   bool is(XMMRegister reg) const { return code_ == reg.code_; }
   int code() const {
     ASSERT(is_valid());
@@ -524,6 +530,7 @@ class CpuFeatures : public AllStatic {
   static uint64_t supported_;
   static uint64_t found_by_runtime_probing_;
 
+  friend class ExternalReference;
   DISALLOW_COPY_AND_ASSIGN(CpuFeatures);
 };
 
@@ -556,7 +563,7 @@ class Assembler : public AssemblerBase {
   // is too small, a fatal error occurs. No deallocation of the buffer is done
   // upon destruction of the assembler.
   Assembler(Isolate* isolate, void* buffer, int buffer_size);
-  ~Assembler();
+  virtual ~Assembler() { }
 
   // GetCode emits any pending (non-emitted) code and fills the descriptor
   // desc. GetCode() is idempotent; it returns the same result if no other
@@ -726,6 +733,7 @@ class Assembler : public AssemblerBase {
   void movzxbl(Register dst, const Operand& src);
   void movzxwq(Register dst, const Operand& src);
   void movzxwl(Register dst, const Operand& src);
+  void movzxwl(Register dst, Register src);
 
   // Repeated moves.
 
@@ -1363,8 +1371,10 @@ class Assembler : public AssemblerBase {
   void cvtsd2siq(Register dst, XMMRegister src);
 
   void addsd(XMMRegister dst, XMMRegister src);
+  void addsd(XMMRegister dst, const Operand& src);
   void subsd(XMMRegister dst, XMMRegister src);
   void mulsd(XMMRegister dst, XMMRegister src);
+  void mulsd(XMMRegister dst, const Operand& src);
   void divsd(XMMRegister dst, XMMRegister src);
 
   void andpd(XMMRegister dst, XMMRegister src);
@@ -1386,6 +1396,7 @@ class Assembler : public AssemblerBase {
   void roundsd(XMMRegister dst, XMMRegister src, RoundingMode mode);
 
   void movmskpd(Register dst, XMMRegister src);
+  void movmskps(Register dst, XMMRegister src);
 
   // The first argument is the reg field, the second argument is the r/m field.
   void emit_sse_operand(XMMRegister dst, XMMRegister src);
@@ -1416,8 +1427,6 @@ class Assembler : public AssemblerBase {
   void db(uint8_t data);
   void dd(uint32_t data);
 
-  int pc_offset() const { return static_cast<int>(pc_ - buffer_); }
-
   PositionsRecorder* positions_recorder() { return &positions_recorder_; }
 
   // Check if there is less than kGap bytes available in the buffer.
@@ -1436,7 +1445,6 @@ class Assembler : public AssemblerBase {
 
   // Avoid overflows for displacements etc.
   static const int kMaximalBufferSize = 512*MB;
-  static const int kMinimalBufferSize = 4*KB;
 
   byte byte_at(int pos)  { return buffer_[pos]; }
   void set_byte_at(int pos, byte value) { buffer_[pos] = value; }
@@ -1628,15 +1636,7 @@ class Assembler : public AssemblerBase {
   friend class EnsureSpace;
   friend class RegExpMacroAssemblerX64;
 
-  // Code buffer:
-  // The buffer into which code and relocation info are generated.
-  byte* buffer_;
-  int buffer_size_;
-  // True if the assembler owns the buffer, false if buffer is external.
-  bool own_buffer_;
-
   // code generation
-  byte* pc_;  // the program counter; moves forward
   RelocInfoWriter reloc_info_writer;
 
   List< Handle<Code> > code_targets_;

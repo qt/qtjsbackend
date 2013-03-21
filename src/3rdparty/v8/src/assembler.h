@@ -56,7 +56,8 @@ struct StatsCounter;
 
 class AssemblerBase: public Malloced {
  public:
-  explicit AssemblerBase(Isolate* isolate);
+  AssemblerBase(Isolate* isolate, void* buffer, int buffer_size);
+  virtual ~AssemblerBase();
 
   Isolate* isolate() const { return isolate_; }
   int jit_cookie() const { return jit_cookie_; }
@@ -71,6 +72,20 @@ class AssemblerBase: public Malloced {
   // cross-snapshotting.
   static void QuietNaN(HeapObject* nan) { }
 
+  int pc_offset() const { return static_cast<int>(pc_ - buffer_); }
+
+  static const int kMinimalBufferSize = 4*KB;
+
+ protected:
+  // The buffer into which code and relocation info are generated. It could
+  // either be owned by the assembler or be provided externally.
+  byte* buffer_;
+  int buffer_size_;
+  bool own_buffer_;
+
+  // The program counter, which points into the buffer above and moves forward.
+  byte* pc_;
+
  private:
   Isolate* isolate_;
   int jit_cookie_;
@@ -83,18 +98,13 @@ class AssemblerBase: public Malloced {
 // snapshot and the running VM.
 class PredictableCodeSizeScope {
  public:
-  explicit PredictableCodeSizeScope(AssemblerBase* assembler)
-      : assembler_(assembler) {
-    old_value_ = assembler_->predictable_code_size();
-    assembler_->set_predictable_code_size(true);
-  }
-
-  ~PredictableCodeSizeScope() {
-    assembler_->set_predictable_code_size(old_value_);
-  }
+  PredictableCodeSizeScope(AssemblerBase* assembler, int expected_size);
+  ~PredictableCodeSizeScope();
 
  private:
   AssemblerBase* assembler_;
+  int expected_size_;
+  int start_offset_;
   bool old_value_;
 };
 
@@ -238,7 +248,8 @@ class RelocInfo BASE_EMBEDDED {
     // add more as needed
     // Pseudo-types
     NUMBER_OF_MODES,  // There are at most 15 modes with noncompact encoding.
-    NONE,  // never recorded
+    NONE32,  // never recorded 32-bit value
+    NONE64,  // never recorded 64-bit value
     CODE_AGE_SEQUENCE,  // Not stored in RelocInfo array, used explictly by
                         // code aging.
     FIRST_REAL_RELOC_MODE = CODE_TARGET,
@@ -257,6 +268,9 @@ class RelocInfo BASE_EMBEDDED {
 
   RelocInfo(byte* pc, Mode rmode, intptr_t data, Code* host)
       : pc_(pc), rmode_(rmode), data_(data), host_(host) {
+  }
+  RelocInfo(byte* pc, double data64)
+      : pc_(pc), rmode_(NONE64), data64_(data64), host_(NULL) {
   }
 
   static inline bool IsRealRelocMode(Mode mode) {
@@ -305,6 +319,9 @@ class RelocInfo BASE_EMBEDDED {
   static inline bool IsDebugBreakSlot(Mode mode) {
     return mode == DEBUG_BREAK_SLOT;
   }
+  static inline bool IsNone(Mode mode) {
+    return mode == NONE32 || mode == NONE64;
+  }
   static inline bool IsCodeAgeSequence(Mode mode) {
     return mode == CODE_AGE_SEQUENCE;
   }
@@ -315,6 +332,7 @@ class RelocInfo BASE_EMBEDDED {
   void set_pc(byte* pc) { pc_ = pc; }
   Mode rmode() const {  return rmode_; }
   intptr_t data() const { return data_; }
+  double data64() const { return data64_; }
   Code* host() const { return host_; }
 
   // Apply a relocation by delta bytes
@@ -391,6 +409,12 @@ class RelocInfo BASE_EMBEDDED {
   // debugger.
   INLINE(bool IsPatchedDebugBreakSlotSequence());
 
+#ifdef DEBUG
+  // Check whether the given code contains relocation information that
+  // either is position-relative or movable by the garbage collector.
+  static bool RequiresRelocation(const CodeDesc& desc);
+#endif
+
 #ifdef ENABLE_DISASSEMBLER
   // Printing
   static const char* RelocModeName(Mode rmode);
@@ -413,7 +437,10 @@ class RelocInfo BASE_EMBEDDED {
   // comment).
   byte* pc_;
   Mode rmode_;
-  intptr_t data_;
+  union {
+    intptr_t data_;
+    double data64_;
+  };
   Code* host_;
   // Code and Embedded Object pointers on some platforms are stored split
   // across two consecutive 32-bit instructions. Heap management
@@ -594,6 +621,8 @@ class ExternalReference BASE_EMBEDDED {
   };
 
   static void SetUp();
+  static void InitializeMathExpData();
+  static void TearDownMathExpData();
 
   typedef void* ExternalReferenceRedirector(void* original, Type type);
 
@@ -649,6 +678,10 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference new_deoptimizer_function(Isolate* isolate);
   static ExternalReference compute_output_frames_function(Isolate* isolate);
 
+  // Log support.
+  static ExternalReference log_enter_external_function(Isolate* isolate);
+  static ExternalReference log_leave_external_function(Isolate* isolate);
+
   // Static data in the keyed lookup cache.
   static ExternalReference keyed_lookup_cache_keys(Isolate* isolate);
   static ExternalReference keyed_lookup_cache_field_offsets(Isolate* isolate);
@@ -691,9 +724,9 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference power_double_double_function(Isolate* isolate);
   static ExternalReference power_double_int_function(Isolate* isolate);
 
-  static ExternalReference handle_scope_next_address();
-  static ExternalReference handle_scope_limit_address();
-  static ExternalReference handle_scope_level_address();
+  static ExternalReference handle_scope_next_address(Isolate* isolate);
+  static ExternalReference handle_scope_limit_address(Isolate* isolate);
+  static ExternalReference handle_scope_level_address(Isolate* isolate);
 
   static ExternalReference scheduled_exception_address(Isolate* isolate);
   static ExternalReference address_of_pending_message_obj(Isolate* isolate);
@@ -703,6 +736,7 @@ class ExternalReference BASE_EMBEDDED {
   // Static variables containing common double constants.
   static ExternalReference address_of_min_int();
   static ExternalReference address_of_one_half();
+  static ExternalReference address_of_minus_one_half();
   static ExternalReference address_of_minus_zero();
   static ExternalReference address_of_zero();
   static ExternalReference address_of_uint8_max_value();
@@ -715,7 +749,14 @@ class ExternalReference BASE_EMBEDDED {
   static ExternalReference math_tan_double_function(Isolate* isolate);
   static ExternalReference math_log_double_function(Isolate* isolate);
 
+  static ExternalReference math_exp_constants(int constant_index);
+  static ExternalReference math_exp_log_table();
+
   static ExternalReference page_flags(Page* page);
+
+  static ExternalReference ForDeoptEntry(Address entry);
+
+  static ExternalReference cpu_features();
 
   Address address() const {return reinterpret_cast<Address>(address_);}
 
@@ -810,6 +851,7 @@ class PositionsRecorder BASE_EMBEDDED {
 #ifdef ENABLE_GDB_JIT_INTERFACE
     gdbjit_lineinfo_ = NULL;
 #endif
+    jit_handler_data_ = NULL;
   }
 
 #ifdef ENABLE_GDB_JIT_INTERFACE
@@ -829,7 +871,15 @@ class PositionsRecorder BASE_EMBEDDED {
     return lineinfo;
   }
 #endif
+  void AttachJITHandlerData(void* user_data) {
+    jit_handler_data_ = user_data;
+  }
 
+  void* DetachJITHandlerData() {
+    void* old_data = jit_handler_data_;
+    jit_handler_data_ = NULL;
+    return old_data;
+  }
   // Set current position to pos.
   void RecordPosition(int pos);
 
@@ -852,6 +902,9 @@ class PositionsRecorder BASE_EMBEDDED {
   GDBJITLineInfo* gdbjit_lineinfo_;
 #endif
 
+  // Currently jit_handler_data_ is used to store JITHandler-specific data
+  // over the lifetime of a PositionsRecorder
+  void* jit_handler_data_;
   friend class PreservePositionScope;
 
   DISALLOW_COPY_AND_ASSIGN(PositionsRecorder);
@@ -916,6 +969,7 @@ inline int NumberOfBitsSet(uint32_t x) {
 bool EvalComparison(Token::Value op, double op1, double op2);
 
 // Computes pow(x, y) with the special cases in the spec for Math.pow.
+double power_helper(double x, double y);
 double power_double_int(double x, int y);
 double power_double_double(double x, double y);
 

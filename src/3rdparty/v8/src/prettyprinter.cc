@@ -42,6 +42,7 @@ PrettyPrinter::PrettyPrinter() {
   output_ = NULL;
   size_ = 0;
   pos_ = 0;
+  InitializeAstVisitor();
 }
 
 
@@ -119,6 +120,14 @@ void PrettyPrinter::VisitModulePath(ModulePath* node) {
 void PrettyPrinter::VisitModuleUrl(ModuleUrl* node) {
   Print("at ");
   PrintLiteral(node->url(), true);
+}
+
+
+void PrettyPrinter::VisitModuleStatement(ModuleStatement* node) {
+  Print("module ");
+  PrintLiteral(node->proxy()->name(), false);
+  Print(" ");
+  Visit(node->body());
 }
 
 
@@ -353,7 +362,7 @@ void PrettyPrinter::VisitThrow(Throw* node) {
 void PrettyPrinter::VisitProperty(Property* node) {
   Expression* key = node->key();
   Literal* literal = key->AsLiteral();
-  if (literal != NULL && literal->handle()->IsSymbol()) {
+  if (literal != NULL && literal->handle()->IsInternalizedString()) {
     Print("(");
     Visit(node->obj());
     Print(").");
@@ -672,9 +681,6 @@ void AstPrinter::PrintLiteralWithModeIndented(const char* info,
     EmbeddedVector<char, 256> buf;
     int pos = OS::SNPrintF(buf, "%s (mode = %s", info,
                            Variable::Mode2String(var->mode()));
-    if (var->is_qml_global()) {
-      pos += OS::SNPrintF(buf + pos, ":QML");
-    }
     OS::SNPrintF(buf + pos, ")");
     PrintLiteralIndented(buf.start(), value, true);
   }
@@ -822,6 +828,13 @@ void AstPrinter::VisitModulePath(ModulePath* node) {
 
 void AstPrinter::VisitModuleUrl(ModuleUrl* node) {
   PrintLiteralIndented("URL", node->url(), true);
+}
+
+
+void AstPrinter::VisitModuleStatement(ModuleStatement* node) {
+  IndentedScope indent(this, "MODULE");
+  PrintLiteralIndented("NAME", node->proxy()->name(), true);
+  PrintStatements(node->body()->statements());
 }
 
 
@@ -1055,7 +1068,7 @@ void AstPrinter::VisitProperty(Property* node) {
   IndentedScope indent(this, "PROPERTY", node);
   Visit(node->obj());
   Literal* literal = node->key()->AsLiteral();
-  if (literal != NULL && literal->handle()->IsSymbol()) {
+  if (literal != NULL && literal->handle()->IsInternalizedString()) {
     PrintLiteralIndented("NAME", literal->handle(), false);
   } else {
     PrintIndentedVisit("KEY", node->key());

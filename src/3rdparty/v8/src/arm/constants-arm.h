@@ -29,14 +29,14 @@
 #define V8_ARM_CONSTANTS_ARM_H_
 
 // ARM EABI is required.
-#if defined(__arm__) && !defined(__ARM_EABI__) && !defined(_WIN32_WCE)
+#if defined(__arm__) && !defined(__ARM_EABI__)
 #error ARM EABI support is required.
 #endif
 
 // This means that interwork-compatible jump instructions are generated.  We
 // want to generate them on the simulator too so it makes snapshots that can
 // be used on real hardware.
-#if defined(__THUMB_INTERWORK__) || !defined(__arm__) || defined(_WIN32_WCE)
+#if defined(__THUMB_INTERWORK__) || !defined(__arm__)
 # define USE_THUMB_INTERWORK 1
 #endif
 
@@ -65,10 +65,8 @@
 #endif
 
 // Simulator should support ARM5 instructions and unaligned access by default.
-#if !defined(__arm__) || defined(_WIN32_WCE)
-# if !defined(_WIN32_WCE)
-#  define CAN_USE_ARMV5_INSTRUCTIONS 1
-# endif
+#if !defined(__arm__)
+# define CAN_USE_ARMV5_INSTRUCTIONS 1
 # define CAN_USE_THUMB_INSTRUCTIONS 1
 
 # ifndef CAN_USE_UNALIGNED_ACCESSES
@@ -104,7 +102,7 @@ const int kNumRegisters = 16;
 
 // VFP support.
 const int kNumVFPSingleRegisters = 32;
-const int kNumVFPDoubleRegisters = 16;
+const int kNumVFPDoubleRegisters = 32;
 const int kNumVFPRegisters = kNumVFPSingleRegisters + kNumVFPDoubleRegisters;
 
 // PC is register 15.
@@ -269,7 +267,8 @@ enum {
   kCoprocessorMask = 15 << 8,
   kOpCodeMask = 15 << 21,  // In data-processing instructions.
   kImm24Mask  = (1 << 24) - 1,
-  kOff12Mask  = (1 << 12) - 1
+  kOff12Mask  = (1 << 12) - 1,
+  kOff8Mask  = (1 << 8) - 1
 };
 
 
@@ -466,6 +465,9 @@ extern const Instr kMovLrPc;
 // ldr rd, [pc, #offset]
 extern const Instr kLdrPCMask;
 extern const Instr kLdrPCPattern;
+// vldr dd, [pc, #offset]
+extern const Instr kVldrDPCMask;
+extern const Instr kVldrDPCPattern;
 // blxcc rm
 extern const Instr kBlxRegMask;
 

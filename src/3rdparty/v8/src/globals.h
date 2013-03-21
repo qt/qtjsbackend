@@ -74,7 +74,7 @@ namespace internal {
 #define V8_HOST_ARCH_IA32 1
 #define V8_HOST_ARCH_32_BIT 1
 #define V8_HOST_CAN_READ_UNALIGNED 1
-#elif defined(__ARMEL__) || defined(_M_ARM)
+#elif defined(__ARMEL__)
 #define V8_HOST_ARCH_ARM 1
 #define V8_HOST_ARCH_32_BIT 1
 // Some CPU-OS combinations allow unaligned access on ARM. We assume
@@ -128,7 +128,7 @@ namespace internal {
 // Setting USE_SIMULATOR explicitly from the build script will force
 // the use of a simulated environment.
 #if !defined(USE_SIMULATOR)
-#if (defined(V8_TARGET_ARCH_ARM) && !defined(V8_HOST_ARCH_ARM) && !defined(_WIN32_WCE))
+#if (defined(V8_TARGET_ARCH_ARM) && !defined(V8_HOST_ARCH_ARM))
 #define USE_SIMULATOR 1
 #endif
 #if (defined(V8_TARGET_ARCH_MIPS) && !defined(V8_HOST_ARCH_MIPS))
@@ -253,15 +253,13 @@ const int kBinary32ExponentShift = 23;
 // other bits set.
 const uint64_t kQuietNaNMask = static_cast<uint64_t>(0xfff) << 51;
 
-// ASCII/UTF-16 constants
+// Latin1/UTF-16 constants
 // Code-point values in Unicode 4.0 are 21 bits wide.
 // Code units in UTF-16 are 16 bits wide.
 typedef uint16_t uc16;
 typedef int32_t uc32;
-const int kASCIISize    = kCharSize;
+const int kOneByteSize    = kCharSize;
 const int kUC16Size     = sizeof(uc16);      // NOLINT
-const uc32 kMaxAsciiCharCode = 0x7f;
-const uint32_t kMaxAsciiCharCodeU = 0x7fu;
 
 
 // The expression OFFSET_OF(type, field) computes the byte-offset
@@ -397,12 +395,6 @@ enum LanguageMode {
 enum StrictModeFlag {
   kNonStrictMode,
   kStrictMode
-};
-
-// The QML Compilation Mode
-enum QmlModeFlag {
-  kNonQmlMode,
-  kQmlMode
 };
 
 

@@ -30,6 +30,7 @@
 #include "disassembler.h"
 #include "disasm.h"
 #include "jsregexp.h"
+#include "macro-assembler.h"
 #include "objects-visiting.h"
 
 namespace v8 {
@@ -79,6 +80,9 @@ void HeapObject::HeapObjectVerify() {
   }
 
   switch (instance_type) {
+    case SYMBOL_TYPE:
+      Symbol::cast(this)->SymbolVerify();
+      break;
     case MAP_TYPE:
       Map::cast(this)->MapVerify();
       break;
@@ -212,6 +216,13 @@ void HeapObject::VerifyHeapPointer(Object* p) {
 }
 
 
+void Symbol::SymbolVerify() {
+  CHECK(IsSymbol());
+  CHECK(HasHashCode());
+  CHECK_GT(Hash(), 0);
+}
+
+
 void HeapNumber::HeapNumberVerify() {
   CHECK(IsHeapNumber());
 }
@@ -311,6 +322,9 @@ void Map::MapVerify() {
     SLOW_ASSERT(transitions()->IsSortedNoDuplicates());
     SLOW_ASSERT(transitions()->IsConsistentWithBackPointers(this));
   }
+  ASSERT(!is_observed() || instance_type() < FIRST_JS_OBJECT_TYPE ||
+         instance_type() > LAST_JS_OBJECT_TYPE ||
+         has_slow_elements_kind() || has_external_array_elements());
 }
 
 
@@ -322,6 +336,15 @@ void Map::SharedMapVerify() {
   CHECK_EQ(0, unused_property_fields());
   CHECK_EQ(StaticVisitorBase::GetVisitorId(instance_type(), instance_size()),
       visitor_id());
+}
+
+
+void Map::VerifyOmittedPrototypeChecks() {
+  if (!FLAG_omit_prototype_checks_for_leaf_maps) return;
+  if (HasTransitionArray() || is_dictionary_map()) {
+    CHECK_EQ(0, dependent_code()->number_of_entries(
+        DependentCode::kPrototypeCheckGroup));
+  }
 }
 
 
@@ -456,21 +479,23 @@ void JSMessageObject::JSMessageObjectVerify() {
 void String::StringVerify() {
   CHECK(IsString());
   CHECK(length() >= 0 && length() <= Smi::kMaxValue);
-  if (IsSymbol()) {
+  if (IsInternalizedString()) {
     CHECK(!HEAP->InNewSpace(this));
   }
   if (IsConsString()) {
     ConsString::cast(this)->ConsStringVerify();
   } else if (IsSlicedString()) {
     SlicedString::cast(this)->SlicedStringVerify();
-  } else if (IsSeqAsciiString()) {
-    SeqAsciiString::cast(this)->SeqAsciiStringVerify();
+  } else if (IsSeqOneByteString()) {
+    SeqOneByteString::cast(this)->SeqOneByteStringVerify();
   }
 }
 
 
-void SeqAsciiString::SeqAsciiStringVerify() {
+void SeqOneByteString::SeqOneByteStringVerify() {
+#ifndef ENABLE_LATIN_1
   CHECK(String::IsAscii(GetChars(), length()));
+#endif
 }
 
 
@@ -590,6 +615,22 @@ void Code::CodeVerify() {
 }
 
 
+void Code::VerifyEmbeddedMapsDependency() {
+  int mode_mask = RelocInfo::ModeMask(RelocInfo::EMBEDDED_OBJECT);
+  for (RelocIterator it(this, mode_mask); !it.done(); it.next()) {
+    RelocInfo::Mode mode = it.rinfo()->rmode();
+    if (mode == RelocInfo::EMBEDDED_OBJECT &&
+      it.rinfo()->target_object()->IsMap()) {
+      Map* map = Map::cast(it.rinfo()->target_object());
+      if (map->CanTransition()) {
+        CHECK(map->dependent_code()->Contains(
+            DependentCode::kWeaklyEmbeddedGroup, this));
+      }
+    }
+  }
+}
+
+
 void JSArray::JSArrayVerify() {
   JSObjectVerify();
   CHECK(length()->IsNumber() || length()->IsUndefined());
@@ -686,13 +727,31 @@ void Foreign::ForeignVerify() {
 
 
 void AccessorInfo::AccessorInfoVerify() {
-  CHECK(IsAccessorInfo());
-  VerifyPointer(getter());
-  VerifyPointer(setter());
   VerifyPointer(name());
-  VerifyPointer(data());
   VerifyPointer(flag());
   VerifyPointer(expected_receiver_type());
+}
+
+
+void ExecutableAccessorInfo::ExecutableAccessorInfoVerify() {
+  CHECK(IsExecutableAccessorInfo());
+  AccessorInfoVerify();
+  VerifyPointer(getter());
+  VerifyPointer(setter());
+  VerifyPointer(data());
+}
+
+
+void DeclaredAccessorDescriptor::DeclaredAccessorDescriptorVerify() {
+  CHECK(IsDeclaredAccessorDescriptor());
+  VerifySmiField(kInternalFieldOffset);
+}
+
+
+void DeclaredAccessorInfo::DeclaredAccessorInfoVerify() {
+  CHECK(IsDeclaredAccessorInfo());
+  AccessorInfoVerify();
+  VerifyPointer(descriptor());
 }
 
 
@@ -768,6 +827,13 @@ void SignatureInfo::SignatureInfoVerify() {
 void TypeSwitchInfo::TypeSwitchInfoVerify() {
   CHECK(IsTypeSwitchInfo());
   VerifyPointer(types());
+}
+
+
+void AllocationSiteInfo::AllocationSiteInfoVerify() {
+  CHECK(IsAllocationSiteInfo());
+  VerifyHeapPointer(payload());
+  CHECK(payload()->IsObject());
 }
 
 

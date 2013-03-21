@@ -35,7 +35,10 @@
 namespace v8 {
 namespace internal {
 
+static const int kPrologueOffsetNotSet = -1;
+
 class ScriptDataImpl;
+class HydrogenCodeStub;
 
 // CompilationInfo encapsulates some information known at compile time.  It
 // is constructed based on the resources available at compile-time.
@@ -44,6 +47,7 @@ class CompilationInfo {
   CompilationInfo(Handle<Script> script, Zone* zone);
   CompilationInfo(Handle<SharedFunctionInfo> shared_info, Zone* zone);
   CompilationInfo(Handle<JSFunction> closure, Zone* zone);
+  CompilationInfo(HydrogenCodeStub* stub, Isolate* isolate, Zone* zone);
 
   virtual ~CompilationInfo();
 
@@ -63,7 +67,6 @@ class CompilationInfo {
     return LanguageModeField::decode(flags_);
   }
   bool is_in_loop() const { return IsInLoop::decode(flags_); }
-  bool is_qml_mode() const { return IsQmlMode::decode(flags_); }
   FunctionLiteral* function() const { return function_; }
   Scope* scope() const { return scope_; }
   Scope* global_scope() const { return global_scope_; }
@@ -71,10 +74,15 @@ class CompilationInfo {
   Handle<JSFunction> closure() const { return closure_; }
   Handle<SharedFunctionInfo> shared_info() const { return shared_info_; }
   Handle<Script> script() const { return script_; }
+  HydrogenCodeStub* code_stub() {return code_stub_; }
   v8::Extension* extension() const { return extension_; }
   ScriptDataImpl* pre_parse_data() const { return pre_parse_data_; }
   Handle<Context> context() const { return context_; }
   BailoutId osr_ast_id() const { return osr_ast_id_; }
+  int opt_count() const { return opt_count_; }
+  int num_parameters() const;
+  int num_heap_slots() const;
+  Code::Flags flags() const;
 
   void MarkAsEval() {
     ASSERT(!is_lazy());
@@ -94,15 +102,42 @@ class CompilationInfo {
     ASSERT(is_lazy());
     flags_ |= IsInLoop::encode(true);
   }
-  void MarkAsQmlMode() {
-    flags_ |= IsQmlMode::encode(true);
-  }
   void MarkAsNative() {
     flags_ |= IsNative::encode(true);
   }
+
   bool is_native() const {
     return IsNative::decode(flags_);
   }
+
+  bool is_calling() const {
+    return is_deferred_calling() || is_non_deferred_calling();
+  }
+
+  void MarkAsDeferredCalling() {
+    flags_ |= IsDeferredCalling::encode(true);
+  }
+
+  bool is_deferred_calling() const {
+    return IsDeferredCalling::decode(flags_);
+  }
+
+  void MarkAsNonDeferredCalling() {
+    flags_ |= IsNonDeferredCalling::encode(true);
+  }
+
+  bool is_non_deferred_calling() const {
+    return IsNonDeferredCalling::decode(flags_);
+  }
+
+  void MarkAsSavesCallerDoubles() {
+    flags_ |= SavesCallerDoubles::encode(true);
+  }
+
+  bool saves_caller_doubles() const {
+    return SavesCallerDoubles::decode(flags_);
+  }
+
   void SetFunction(FunctionLiteral* literal) {
     ASSERT(function_ == NULL);
     function_ = literal;
@@ -153,6 +188,7 @@ class CompilationInfo {
   // Accessors for the different compilation modes.
   bool IsOptimizing() const { return mode_ == OPTIMIZE; }
   bool IsOptimizable() const { return mode_ == BASE; }
+  bool IsStub() const { return mode_ == STUB; }
   void SetOptimizing(BailoutId osr_ast_id) {
     SetMode(OPTIMIZE);
     osr_ast_id_ = osr_ast_id;
@@ -190,6 +226,16 @@ class CompilationInfo {
   const char* bailout_reason() const { return bailout_reason_; }
   void set_bailout_reason(const char* reason) { bailout_reason_ = reason; }
 
+  int prologue_offset() const {
+    ASSERT_NE(kPrologueOffsetNotSet, prologue_offset_);
+    return prologue_offset_;
+  }
+
+  void set_prologue_offset(int prologue_offset) {
+    ASSERT_EQ(kPrologueOffsetNotSet, prologue_offset_);
+    prologue_offset_ = prologue_offset;
+  }
+
  private:
   Isolate* isolate_;
 
@@ -201,24 +247,11 @@ class CompilationInfo {
   enum Mode {
     BASE,
     OPTIMIZE,
-    NONOPT
+    NONOPT,
+    STUB
   };
 
-  void Initialize(Mode mode) {
-    mode_ = V8::UseCrankshaft() ? mode : NONOPT;
-    ASSERT(!script_.is_null());
-    if (script_->type()->value() == Script::TYPE_NATIVE) {
-      MarkAsNative();
-    }
-    if (!shared_info_.is_null()) {
-      ASSERT(language_mode() == CLASSIC_MODE);
-      SetLanguageMode(shared_info_->language_mode());
-    }
-    if (!shared_info_.is_null() && shared_info_->qml_mode()) {
-      MarkAsQmlMode();
-    }
-    set_bailout_reason("unknown");
-  }
+  void Initialize(Isolate* isolate, Mode mode, Zone* zone);
 
   void SetMode(Mode mode) {
     ASSERT(V8::UseCrankshaft());
@@ -244,8 +277,15 @@ class CompilationInfo {
   // If compiling for debugging produce just full code matching the
   // initial mode setting.
   class IsCompilingForDebugging: public BitField<bool, 8, 1> {};
-  // Qml mode
-  class IsQmlMode: public BitField<bool, 9, 1> {};
+  // If the compiled code contains calls that require building a frame
+  class IsCalling: public BitField<bool, 9, 1> {};
+  // If the compiled code contains calls that require building a frame
+  class IsDeferredCalling: public BitField<bool, 10, 1> {};
+  // If the compiled code contains calls that require building a frame
+  class IsNonDeferredCalling: public BitField<bool, 11, 1> {};
+  // If the compiled code saves double caller registers that it clobbers.
+  class SavesCallerDoubles: public BitField<bool, 12, 1> {};
+
 
   unsigned flags_;
 
@@ -257,6 +297,8 @@ class CompilationInfo {
   Scope* scope_;
   // The global scope provided as a convenience.
   Scope* global_scope_;
+  // For compiled stubs, the stub object
+  HydrogenCodeStub* code_stub_;
   // The compiled code.
   Handle<Code> code_;
 
@@ -293,6 +335,12 @@ class CompilationInfo {
 
   const char* bailout_reason_;
 
+  int prologue_offset_;
+
+  // A copy of shared_info()->opt_count() to avoid handle deref
+  // during graph optimization.
+  int opt_count_;
+
   DISALLOW_COPY_AND_ASSIGN(CompilationInfo);
 };
 
@@ -301,6 +349,8 @@ class CompilationInfo {
 // Zone on construction and deallocates it on exit.
 class CompilationInfoWithZone: public CompilationInfo {
  public:
+  INLINE(void* operator new(size_t size)) { return Malloced::New(size); }
+
   explicit CompilationInfoWithZone(Handle<Script> script)
       : CompilationInfo(script, &zone_),
         zone_(script->GetIsolate()),
@@ -312,6 +362,10 @@ class CompilationInfoWithZone: public CompilationInfo {
   explicit CompilationInfoWithZone(Handle<JSFunction> closure)
       : CompilationInfo(closure, &zone_),
         zone_(closure->GetIsolate()),
+        zone_scope_(&zone_, DELETE_ON_EXIT) {}
+  explicit CompilationInfoWithZone(HydrogenCodeStub* stub, Isolate* isolate)
+      : CompilationInfo(stub, isolate, &zone_),
+        zone_(isolate),
         zone_scope_(&zone_, DELETE_ON_EXIT) {}
 
  private:
@@ -338,7 +392,7 @@ class CompilationHandleScope BASE_EMBEDDED {
 
 
 class HGraph;
-class HGraphBuilder;
+class HOptimizedGraphBuilder;
 class LChunk;
 
 // A helper class that calls the three compilation phases in
@@ -370,6 +424,7 @@ class OptimizingCompiler: public ZoneObject {
 
   Status last_status() const { return last_status_; }
   CompilationInfo* info() const { return info_; }
+  Isolate* isolate() const { return info()->isolate(); }
 
   MUST_USE_RESULT Status AbortOptimization() {
     info_->AbortOptimization();
@@ -380,7 +435,7 @@ class OptimizingCompiler: public ZoneObject {
  private:
   CompilationInfo* info_;
   TypeFeedbackOracle* oracle_;
-  HGraphBuilder* graph_builder_;
+  HOptimizedGraphBuilder* graph_builder_;
   HGraph* graph_;
   LChunk* chunk_;
   int64_t time_taken_to_create_graph_;
@@ -442,16 +497,14 @@ class Compiler : public AllStatic {
                                             v8::Extension* extension,
                                             ScriptDataImpl* pre_data,
                                             Handle<Object> script_data,
-                                            NativesFlag is_natives_code,
-                                            v8::Script::CompileFlags = v8::Script::Default);
+                                            NativesFlag is_natives_code);
 
   // Compile a String source within a context for Eval.
   static Handle<SharedFunctionInfo> CompileEval(Handle<String> source,
                                                 Handle<Context> context,
                                                 bool is_global,
                                                 LanguageMode language_mode,
-                                                int scope_position,
-                                                bool qml_mode);
+                                                int scope_position);
 
   // Compile from function info (used for lazy compilation). Returns true on
   // success and false if the compilation resulted in a stack overflow.
