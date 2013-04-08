@@ -81,7 +81,7 @@
 
 #endif  // _WIN32
 
-#if defined(__GNUC__) && !defined(DEBUG)
+#if defined(__GNUC__) && !defined(__MINGW32__) && !defined(__MINGW64__) && !defined(DEBUG)
 #define V8_INLINE(declarator) inline __attribute__((always_inline)) declarator
 #elif defined(_MSC_VER) && !defined(DEBUG)
 #define V8_INLINE(declarator) __forceinline declarator
