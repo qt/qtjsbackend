@@ -1032,6 +1032,9 @@ SignalSender* SignalSender::instance_ = NULL;
 struct sigaction SignalSender::old_signal_handler_;
 bool SignalSender::signal_handler_installed_ = false;
 
+void OS::DumpBacktrace() {
+  // Currently unsupported.
+}
 
 void OS::SetUp() {
   // Seed the random number generator. We preserve microsecond resolution.
