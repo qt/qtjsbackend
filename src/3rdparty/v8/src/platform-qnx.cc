@@ -134,6 +134,10 @@ bool OS::ArmCpuHasFeature(CpuFeature feature) {
       return (SYSPAGE_ENTRY(cpuinfo)->flags & ARM_CPU_FLAG_V7) != 0;
     case SUDIV:
       return CPUInfoContainsString("idiva");
+    case VFP32DREGS:
+      // We could even return true here, shipping devices have all
+      // 32 double-precision registers afaik.
+      return !CPUInfoContainsString("d16");
     default:
       UNREACHABLE();
   }
