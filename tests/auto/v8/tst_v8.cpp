@@ -69,6 +69,7 @@ private slots:
     void completehash();
     void stringhashcomparison();
     void qmlmodevariables();
+    void qmlmodeinlinelocal();
 };
 
 void tst_v8::eval()
@@ -144,6 +145,11 @@ void tst_v8::stringhashcomparison()
 void tst_v8::qmlmodevariables()
 {
     QVERIFY(v8test_qmlmodevariables());
+}
+
+void tst_v8::qmlmodeinlinelocal()
+{
+    QVERIFY(v8test_qmlmodeinlinelocal());
 }
 
 int main(int argc, char *argv[])

@@ -1210,3 +1210,37 @@ cleanup:
 
     ENDTEST();
 }
+
+// test for https://bugreports.qt-project.org/browse/QTBUG-31366
+// assert/crash when inlining local functions in qml mode
+bool v8test_qmlmodeinlinelocal()
+{
+    BEGINTEST();
+
+    HandleScope handle_scope;
+    Persistent<Context> context = Context::New();
+    Context::Scope context_scope(context);
+
+    Local<Object> qmlglobal = Object::New();
+
+    Local<String> source = String::New(
+        "function func() {"
+            "function local_function () {"
+            "}"
+            // high enough to get it to opt; 10000 seems to be too low
+            "for (var i = 0; i < 100000; ++i) local_function();"
+        "}"
+        "func();"
+      );
+
+    Local<Script> script = Script::Compile(source, NULL, NULL, Handle<String>(), Script::QmlMode);
+
+    TryCatch tc;
+    script->Run(qmlglobal);
+    VERIFY(!tc.HasCaught());
+
+cleanup:
+    context.Dispose();
+
+    ENDTEST();
+}
