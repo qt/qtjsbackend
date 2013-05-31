@@ -566,7 +566,7 @@ void Call::RecordTypeFeedback(TypeFeedbackOracle* oracle,
   Property* property = expression()->AsProperty();
   if (property == NULL) {
     if (VariableProxy *proxy = expression()->AsVariableProxy()) {
-        if (proxy->var()->is_qml_global())
+        if (proxy->var()->IsUnallocated() && proxy->var()->is_qml_global())
             return;
     }
 
