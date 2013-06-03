@@ -11710,6 +11710,7 @@ class SymbolKey : public HashTableKey {
     if (map != NULL) {
       string_->set_map_no_write_barrier(map);
       ASSERT(string_->IsSymbol());
+      SeqString::cast(string_)->set_symbol_id(0);
       return string_;
     }
     // Otherwise allocate a new symbol.
