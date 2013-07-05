@@ -1548,8 +1548,9 @@ int OS::ActivationFrameAlignment() {
   // With gcc 4.4 the tree vectorization optimizer can generate code
   // that requires 16 byte alignment such as movdqa on x86.
   return 16;
-#endif
+#else
   return 8;  // Floating-point math runs faster with 8-byte alignment.
+#endif
 }
 
 
