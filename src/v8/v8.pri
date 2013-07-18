@@ -7,17 +7,19 @@ isEmpty(QT_ARCH) {
 
 isEmpty(V8_TARGET_ARCH) {
     # Detect target
-    equals(QT_ARCH, x86_64)|contains(CONFIG, x86_64):V8_TARGET_ARCH = x64
-    else:equals(QT_ARCH, "i386"):                    V8_TARGET_ARCH = ia32
-    else:equals(QT_ARCH, "mips"):                    V8_TARGET_ARCH = mips
-    else:equals(QT_ARCH, "arm"):                     V8_TARGET_ARCH = arm
-    else:equals(QMAKE_HOST.arch, armv7l):            V8_TARGET_ARCH = arm
-    else:equals(QMAKE_HOST.arch, armv5tel):          V8_TARGET_ARCH = arm
-    else:equals(QMAKE_HOST.arch, x86_64):            V8_TARGET_ARCH = x64
-    else:equals(QMAKE_HOST.arch, x86):               V8_TARGET_ARCH = ia32
-    else:equals(QMAKE_HOST.arch, i386):              V8_TARGET_ARCH = ia32
-    else:equals(QMAKE_HOST.arch, i686):              V8_TARGET_ARCH = ia32
-    else:error("Couldn't detect supported v8 architecture ($$QMAKE_HOST.arch/$$QT_ARCH). Currently supported architectures are: x64, x86 and arm")
+    isEmpty(QT_TARGET_ARCH): \   # not a host build => current arch is target arch
+        QT_TARGET_ARCH = $$QT_ARCH
+
+    equals(QT_TARGET_ARCH, x86_64): \
+        V8_TARGET_ARCH = x64
+    else: equals(QT_TARGET_ARCH, "i386"): \
+        V8_TARGET_ARCH = ia32
+    else: equals(QT_TARGET_ARCH, "mips"): \
+        V8_TARGET_ARCH = mips
+    else: equals(QT_TARGET_ARCH, "arm"): \
+        V8_TARGET_ARCH = arm
+    else: \
+        error("Architecture $$QT_TARGET_ARCH is not supported by v8. Currently supported architectures are: x64, x86 and arm")
 }
 
 include($$PWD/v8base.pri)
