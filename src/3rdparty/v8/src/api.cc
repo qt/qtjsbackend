@@ -4421,11 +4421,13 @@ void v8::Object::SetPointerInInternalField(int index, void* value) {
 void v8::Object::SetExternalResource(v8::Object::ExternalResource *resource) {
   i::Isolate* isolate = Utils::OpenHandle(this)->GetIsolate();
   ENTER_V8(isolate);
+  HandleScope scope;
   i::Handle<i::JSObject> obj = Utils::OpenHandle(this);
   if (CanBeEncodedAsSmi(resource)) {
     obj->SetExternalResourceObject(EncodeAsSmi(resource));
   } else {
-    obj->SetExternalResourceObject(*isolate->factory()->NewForeign(static_cast<i::Address>((void *)resource)));
+    i::Handle<i::Foreign> foreign = isolate->factory()->NewForeign(static_cast<i::Address>((void *)resource));
+    obj->SetExternalResourceObject(*foreign);
   }
   if (!obj->IsSymbol()) {
     isolate->heap()->external_string_table()->AddObject(*obj);
